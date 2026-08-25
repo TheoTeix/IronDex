@@ -227,7 +227,7 @@ function autoBackup(tag) {
     .catch(() => false);
 }
 function collectionSnapshot() {
-  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, investMode: state.investMode, setDates: state.setDates, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
+  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, investMode: state.investMode, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
 }
 
 // Sauvegarde DÉBOUNCÉE (fusionne les écritures rapprochées) — écrit dans IDB.
@@ -283,12 +283,34 @@ function pulseSaveDot() {
 // si CE code tourne (drapeau `data-actions`) : si le JS échoue, les boutons
 // restent visibles plutôt qu'inatteignables.
 let _actionsOn = false;
+// L'ARC est posé en JS, pas en CSS : les positions sont CALCULÉES depuis le
+// centre réel du logo (donc justes quel que soit le gabarit d'écran), et un
+// style inline ne peut être écrasé par aucune règle du projet — la version CSS
+// se faisait neutraliser par une autre feuille et les icônes restaient
+// empilées sur le logo.
+const ARC = [{ a: -4 }, { a: 24 }, { a: 56 }, { a: 88 }];   // degrés : 0° = à droite, 90° = en dessous
+const ARC_R = 66;                                            // rayon, en pixels
 function setHeaderActions(on) {
   _actionsOn = !!on;
   const root = document.documentElement;
   root.dataset.actions = _actionsOn ? 'on' : 'off';
   const brand = document.getElementById('tb-brand');
   if (brand) brand.setAttribute('aria-expanded', _actionsOn ? 'true' : 'false');
+  const btns = [...document.querySelectorAll('.header-actions > .btn')];
+  btns.forEach((b, i) => {
+    const cfg = ARC[i] || ARC[ARC.length - 1];
+    const rad = (cfg.a * Math.PI) / 180;
+    if (_actionsOn) {
+      b.style.transitionDelay = `${20 + i * 42}ms`;
+      b.style.transform = `translate(${Math.round(Math.cos(rad) * ARC_R)}px,${Math.round(Math.sin(rad) * ARC_R)}px) scale(1)`;
+      b.style.opacity = '1';
+    } else {
+      // Repli : tout retombe DANS le logo, dans l'ordre inverse.
+      b.style.transitionDelay = `${(btns.length - 1 - i) * 24}ms`;
+      b.style.transform = 'translate(0,0) scale(.34)';
+      b.style.opacity = '0';
+    }
+  });
 }
 function bindBrandReveal() {
   const brand = document.getElementById('tb-brand');
@@ -346,6 +368,7 @@ function applyLoaded(d) {
   state.investCards = (d.investCards || []).map(p => ({ id: p.id || sealedUid(), cardId: p.cardId || null, name: p.name || '', setId: p.setId || '', setName: p.setName || 'Série inconnue', logo: p.logo || null, number: p.number || '', localId: p.localId || '', rarity: p.rarity || '', type: p.type || '', qty: Math.max(1, Number(p.qty) || 1), image: p.image || '', buyPrice: p.buyPrice != null ? p.buyPrice : null }));
   state.investMode = d.investMode === 'cards' ? 'cards' : 'sealed';
   state.setDates = d.setDates || {};
+  state.setBlocs = d.setBlocs || {};
   state.investSeriesOpen = null;
   state.heroRef = (d.heroRef && d.heroRef.type === 'loose') ? d.heroRef : null;
 }
@@ -2912,7 +2935,7 @@ function watchSoft() {
 
 // Titre contextuel de la barre haute : dire OÙ l'on est, à tout moment.
 const VIEW_META = {
-  home:              { eyebrow: 'MiloDex',      name: 'Le Coffre' },
+  home:              { eyebrow: 'MiloDex',      name: 'Accueil' },
   wishlists:         { eyebrow: 'Recherche',    name: 'Wishlists' },
   'wishlist-detail': { eyebrow: 'Wishlists',    name: 'Détail de la liste' },
   invest:            { eyebrow: 'Suivi',        name: 'Portefeuille' },
@@ -3157,7 +3180,8 @@ function renderHome() {
       <div class="strip"><div class="strip-track" id="featured-rail">${strip.map((e, i) => renderTopCardTile(e, i)).join('')}</div></div>
     </section>` : ''}
 
-    ${homeMiloTeaser()}
+    <!-- Le teaser Milobellus a été retiré de l'accueil : les classeurs ont
+         leur onglet, et l'accueil n'a pas à dupliquer une porte d'entrée. -->
 
     <section class="panel reveal" style="--i:3">
       <div class="ed-head" style="margin-bottom:var(--s4)">
@@ -3474,6 +3498,7 @@ function renderWishlistCard(w) {
         <span class="wl-drag-handle" aria-hidden="true" title="Glisser pour réordonner">${ICO.drag}</span>
         <div class="wishlist-card-name">${esc(w.name)}</div>
         <button class="title-edit-btn wl-card-rename" title="Renommer" aria-label="Renommer ${esc(w.name)}" onclick="event.stopPropagation();openRenameWishlist('${w.id}')">${ICO.edit}</button>
+        <button class="title-edit-btn wl-card-del" title="Supprimer la wishlist" aria-label="Supprimer ${esc(w.name)}" onclick="event.stopPropagation();confirmDeleteWishlist('${w.id}')">${ICO.trash}</button>
         <div class="wishlist-card-count">${w.cards.length}</div></div>
       <div class="wishlist-preview">
         ${preview.map((c, k) => c.image
@@ -3516,17 +3541,13 @@ function renderWishlistDetail() {
   const sorted = sortCardsBySeries(w.cards);
   const el = document.getElementById('view-wishlist-detail');
   el.innerHTML = `
-    <div class="wishlist-detail-header">
-      <button class="back-btn" onclick="navigate('wishlists')">${ICO.left}<span>Wishlists</span></button>
-      <h1 class="page-title">${esc(w.name)}</h1>
-      <button class="title-edit-btn" title="Renommer la wishlist" onclick="openRenameWishlist('${w.id}')" aria-label="Renommer la wishlist">${ICO.edit}</button>
-      <span class="tag tag-wish">${w.cards.length} carte${w.cards.length>1?'s':''}</span>
-      ${w.cards.length ? `<span class="tag tag-value" title="Valeur loose des cartes non obtenues">Reste · <span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></span>` : ''}
-      ${w.cards.length ? `<div class="progress-wrap"><span class="progress-label">${owned}/${w.cards.length} · ${pct}%</span><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div>` : ''}
-      <div style="display:flex;gap:8px;margin-left:auto">
-        <button class="btn btn-wish btn-sm" onclick="openCardPicker('wish')">${PLUS}<span>Ajouter</span></button>
-        <button class="btn btn-danger btn-sm" onclick="confirmDeleteWishlist('${w.id}')">${ICO.trash}<span>Supprimer</span></button>
-      </div>
+    <div class="wl-head">
+      <button class="cardser-back" onclick="navigate('wishlists')" title="Toutes les wishlists" aria-label="Retour aux wishlists">${ICO.left}</button>
+      <h1 class="wl-head-name">${esc(w.name)}</h1>
+      <button class="title-edit-btn wl-head-rename" title="Renommer la wishlist" onclick="openRenameWishlist('${w.id}')" aria-label="Renommer la wishlist">${ICO.edit}</button>
+      <button class="cardser-add" onclick="openCardPicker('wish')" title="Ajouter une carte" aria-label="Ajouter une carte">${ICO.plus}</button>
+    </div>
+    ${w.cards.length ? `<div class="wl-head-progress"><div class="progress-wrap"><span class="progress-label">${owned}/${w.cards.length} · ${pct}% · reste <span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></span><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div></div>` : ''}
     </div>
     ${w.cards.length === 0
       ? `<div class="empty-state"><div class="empty-state-icon">${ICO.heart}</div><div class="empty-state-title">Wishlist vide</div><div class="empty-state-sub">Parcours les séries et ajoute les cartes que tu recherches.</div><button class="btn btn-wish" onclick="openCardPicker('wish')">${PLUS}<span>Ajouter des cartes</span></button></div>`
@@ -4494,7 +4515,7 @@ function buildBinder(slots) {
   const bctx = binderCtx();
   const coverTitle = bctx.owned ? 'Milobellus' : esc(bctx.binder ? bctx.binder.name : 'Classeur');
   wrap.innerHTML = `
-    <button class="milo-nav-btn milo-nav-side milo-nav-prev" id="milo-prev" onclick="miloTurn(-1)" aria-label="Pages précédentes" disabled>
+    <button class="milo-nav-btn milo-nav-side milo-nav-prev milo-nav-hidden" id="milo-prev" onclick="miloTurn(-1)" aria-label="Pages précédentes" disabled>
       <svg viewBox="0 0 24 24" fill="none"><path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <div class="milo-binder ${reduce ? '' : 'closed'}" id="milo-binder">
@@ -4522,7 +4543,7 @@ function buildBinder(slots) {
         </div>
       </div>
     </div>
-    <button class="milo-nav-btn milo-nav-side milo-nav-next" id="milo-next" onclick="miloTurn(1)" aria-label="Pages suivantes">
+    <button class="milo-nav-btn milo-nav-side milo-nav-next milo-nav-hidden" id="milo-next" onclick="miloTurn(1)" aria-label="Pages suivantes">
       <svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <span class="milo-spread-ind" id="milo-spread-ind"></span>`;
@@ -7056,11 +7077,19 @@ async function fillMissingCardImages(list, onDone) {
 function setReleaseDate(setId) { return (state.setDates && state.setDates[setId]) || ''; }
 async function ensureSetDates(onReady) {
   state.setDates = state.setDates || {};
-  const ids = [...new Set(state.investCards.map(p => p.setId).filter(id => id && !String(id).startsWith('?') && !state.setDates[id]))];
+  // Le BLOC (« Écarlate et Violet », « Épée et Bouclier »…) vient du MÊME appel
+  // /sets/{id} que la date : regrouper les séries ne coûte aucune requête de
+  // plus. Un set déjà daté mais sans bloc est donc redemandé une fois.
+  state.setBlocs = state.setBlocs || {};
+  const ids = [...new Set(state.investCards.map(p => p.setId)
+    .filter(id => id && !String(id).startsWith('?') && (!state.setDates[id] || !state.setBlocs[id])))];
   if (!ids.length) return;
   await runPool(ids, async id => {
-    try { const s = await apiFetch('/sets/' + id); const d = s?.releaseDate; if (d) state.setDates[id] = String(d).replace(/\//g, '-'); }
-    catch {}
+    try {
+      const s = await apiFetch('/sets/' + id);
+      const d = s?.releaseDate; if (d) state.setDates[id] = String(d).replace(/\//g, '-');
+      if (s?.serie?.id) state.setBlocs[id] = { id: String(s.serie.id), name: s.serie.name || String(s.serie.id) };
+    } catch {}
   }, 6);
   save();
   if (onReady) onReady();
@@ -7091,33 +7120,81 @@ function investCardsBodyHTML() {
   // n'ont plus rien à y faire. On ne garde que le logo, le retour et le « + ».
   if (nCards && state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen);
   return `
-    <div class="inv-hero spot">
-      <div class="inv-hero-glow" aria-hidden="true"></div>
-      <div class="inv-hero-top">
-        <div><h1 class="page-title">Portefeuille cartes</h1><div class="inv-sub">Tes séries de la plus récente à la plus ancienne — clique une série pour voir ses cartes, triées par valeur.</div></div>
-        <div class="inv-hero-actions">
-          <button class="btn btn-ghost btn-icon btn-sync" onclick="syncPrices()"
-            title="Mettre à jour les cotes" aria-label="Mettre à jour les cotes">${SYNC_ICO}</button>
-          <label class="btn btn-ghost btn-import" title="Importer un CSV Pokécardex">
-            <svg viewBox="0 0 24 24" fill="none" width="15" height="15" aria-hidden="true"><path d="M12 15V4m0 0 4 4m-4-4L8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span>Importer CSV</span><input type="file" accept=".csv,.txt" hidden onchange="onCardsFile(this)">
-          </label>
-          <button class="btn btn-primary" onclick="addInvestCard()">${PLUS}Ajouter une carte</button>
-        </div>
-      </div>
-      <div class="inv-kpis">
-        <div class="inv-kpi"><span class="inv-kpi-val" id="inv-kpi-value">${fmt(total)}</span><span class="inv-kpi-lab">Valeur des cartes</span></div>
-        <div class="inv-kpi"><span class="inv-kpi-val">${nCards}</span><span class="inv-kpi-lab">Carte${nCards > 1 ? 's' : ''}</span></div>
-        <div class="inv-kpi"><span class="inv-kpi-val">${groups.length}</span><span class="inv-kpi-lab">Série${groups.length > 1 ? 's' : ''}</span></div>
-        ${invested > 0 ? `<div class="inv-kpi"><span class="inv-kpi-val ${total - invested >= 0 ? 'pos' : 'neg'}">${fmtSign(total - invested)}</span><span class="inv-kpi-lab">Plus-value</span></div>` : ''}
-      </div>
+    <!-- Ni titre de page, ni texte d'explication, ni bouton d'import CSV : ils
+         mangeaient un demi-écran pour ne rien apprendre à qui ouvre son propre
+         portefeuille. L'import reste dans l'état vide — c'est là qu'il sert.
+         Les compteurs restent : ce sont des chiffres, pas du décor. -->
+    <div class="inv-kpis inv-kpis-solo">
+      <div class="inv-kpi"><span class="inv-kpi-val" id="inv-kpi-value">${fmt(total)}</span><span class="inv-kpi-lab">Valeur des cartes</span></div>
+      <div class="inv-kpi"><span class="inv-kpi-val">${nCards}</span><span class="inv-kpi-lab">Carte${nCards > 1 ? 's' : ''}</span></div>
+      <div class="inv-kpi"><span class="inv-kpi-val">${groups.length}</span><span class="inv-kpi-lab">Série${groups.length > 1 ? 's' : ''}</span></div>
+      ${invested > 0 ? `<div class="inv-kpi"><span class="inv-kpi-val ${total - invested >= 0 ? 'pos' : 'neg'}">${fmtSign(total - invested)}</span><span class="inv-kpi-lab">Plus-value</span></div>` : ''}
     </div>
     ${nCards
-      ? (state.investSeriesOpen ? cardsSeriesDetailHTML(state.investSeriesOpen) : cardsSeriesGridHTML(groups))
+      ? (state.investSeriesOpen ? cardsSeriesDetailHTML(state.investSeriesOpen) : cardsBlocsHTML(groups))
       : `<div class="empty-state"><div class="empty-state-icon">${ICO.card}</div><div class="empty-state-title">Aucune carte suivie</div>
           <div class="empty-state-sub">Importe ton export Pokécardex (CSV) — j'ajoute toutes les cartes (hors communes, peu communes et holo), avec leur visuel et leur cote. Ou ajoute-les à la main.</div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px"><label class="btn btn-primary btn-import"><span>Importer un CSV</span><input type="file" accept=".csv,.txt" hidden onchange="onCardsFile(this)"></label>
           <button class="btn btn-ghost" onclick="addInvestCard()">${PLUS}Ajouter une carte</button></div></div>`}`;
+}
+// Volets par BLOC. Un portefeuille de 40 séries en grille plate ne se lit
+// pas ; par bloc, on retrouve « ses » séries d'un coup d'œil. Le bloc le plus
+// récent est ouvert, les autres sont repliés (état runtime : on ne persiste pas
+// un pli d'interface).
+let _blocsOpen = null;
+function cardsBlocsHTML(groups) {
+  const map = new Map();
+  for (const g of groups) {
+    const b = (state.setBlocs || {})[g.setId];
+    const id = b ? b.id : '_autres';
+    const name = b ? b.name : 'Autres séries';
+    if (!map.has(id)) map.set(id, { id, name, series: [], value: 0, count: 0, date: '' });
+    const e = map.get(id);
+    e.series.push(g); e.value += g.value; e.count += g.count;
+    if ((g.date || '') > e.date) e.date = g.date || '';
+  }
+  const blocs = [...map.values()].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  // Le pli est un état RUNTIME, et il doit rester cohérent quand la liste des
+  // blocs change : au premier rendu les blocs ne sont pas encore connus (une
+  // seule entrée « Autres séries »), et sans ce garde-fou c'est elle qui
+  // restait ouverte une fois les vrais blocs arrivés.
+  if (!_blocsOpen || !blocs.some(b => _blocsOpen.has(b.id)))
+    _blocsOpen = new Set(blocs.length ? [blocs[0].id] : []);
+  const CHEV = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return blocs.map(b => {
+    const open = _blocsOpen.has(b.id);
+    return `<section class="bloc ${open ? 'open' : ''}" data-bloc="${esc(b.id)}">
+      <button class="bloc-head" onclick="toggleBloc('${esc(b.id)}')" aria-expanded="${open}">
+        <span class="bloc-chev" aria-hidden="true">${CHEV}</span>
+        <span class="bloc-name">${esc(b.name)}</span>
+        <span class="bloc-meta">${b.series.length} série${b.series.length > 1 ? 's' : ''} · ${b.count} carte${b.count > 1 ? 's' : ''}</span>
+        <span class="bloc-val">${fmt(b.value)}</span>
+      </button>
+      <div class="bloc-body"${open ? '' : ' hidden'}>${cardsSeriesGridHTML(b.series)}</div>
+    </section>`;
+  }).join('');
+}
+// Dépliage EN PLACE (pas de re-render) : les vignettes arrivent en cascade,
+// comme les icônes de l'en-tête. `hidden` est retiré avant de mesurer, sinon la
+// hauteur cible vaut zéro.
+function toggleBloc(id) {
+  const sec = document.querySelector(`.bloc[data-bloc="${id}"]`);
+  if (!sec) return;
+  const body = sec.querySelector('.bloc-body');
+  const open = !sec.classList.contains('open');
+  _blocsOpen = _blocsOpen || new Set();
+  open ? _blocsOpen.add(id) : _blocsOpen.delete(id);
+  sec.querySelector('.bloc-head')?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    body.hidden = false;
+    sec.classList.add('open');
+    body.style.maxHeight = body.scrollHeight + 'px';
+    setTimeout(() => { if (sec.classList.contains('open')) body.style.maxHeight = 'none'; }, 420);
+  } else {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    requestAnimationFrame(() => { body.style.maxHeight = '0px'; sec.classList.remove('open'); });
+    setTimeout(() => { if (!sec.classList.contains('open')) body.hidden = true; }, 420);
+  }
 }
 function cardsSeriesGridHTML(groups) {
   return `<div class="cardser-grid">${groups.map(g => `
@@ -7131,7 +7208,7 @@ function cardsSeriesGridHTML(groups) {
 function cardsSeriesDetailHTML(setId) {
   const groups = cardsGrouped();
   const g = groups.find(x => String(x.setId) === String(setId));
-  if (!g) { state.investSeriesOpen = null; return cardsSeriesGridHTML(groups); }
+  if (!g) { state.investSeriesOpen = null; return cardsBlocsHTML(groups); }
   const cards = g.cards.slice().sort((a, b) => (cardCote(b) ?? -1) - (cardCote(a) ?? -1));
   return `
     <div class="cardser-bar">

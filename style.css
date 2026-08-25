@@ -1658,9 +1658,14 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardser-bubble:hover{transform:translateY(-4px);border-color:color-mix(in srgb,var(--acc) 40%,transparent);
   box-shadow:var(--e3)}
 .cardser-bubble:active{transform:translateY(-1px) scale(.99);transition-duration:var(--dur-0)}
-/* Les logos de sets sont souvent très sombres → fond clair obligatoire. */
-.cardser-logo,.cardser-detail-logo{display:grid;place-items:center;padding:9px 12px;border-radius:var(--r);
-  background:linear-gradient(180deg,#F4F6FA,#D8DEE9);box-shadow:var(--e1)}
+/* Plus de plaque claire derrière les logos : elle sautait aux yeux comme une
+   étiquette collée. Les logos sombres restent lisibles grâce à une lueur
+   blanche portée (drop-shadow) — l'ombre suit la FORME du logo, pas un
+   rectangle. */
+.cardser-logo,.cardser-detail-logo{display:grid;place-items:center;padding:6px 8px;border-radius:var(--r);
+  background:none;box-shadow:none}
+.cardser-logo img,.cardser-detail-logo img{
+  filter:drop-shadow(0 0 6px rgba(255,255,255,.30)) drop-shadow(0 2px 8px rgba(0,0,0,.55))}
 .cardser-logo{height:56px;width:100%}
 .cardser-logo img{max-height:38px;width:auto;object-fit:contain}
 /* `.cardser-detail-logo` est un WRAPPER, comme `.cardser-logo` : la plaque
@@ -1685,6 +1690,21 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardser-detail-title{flex:1;min-width:200px;display:flex;flex-direction:column;gap:4px}
 .cardser-detail-title h2{font-size:clamp(21px,2.6vw,28px);font-weight:900;letter-spacing:-.03em}
 .cardser-detail-meta{font-size:12.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+
+/* ── Bandeau d'une wishlist ouverte ───────────────────────────────────
+   Même grammaire que le bandeau de série : retour, nom, ajouter. Le nom est
+   volontairement plus petit qu'un titre de page — on sait déjà où on est, la
+   place doit aller aux cartes. La barre de progression tient la ligne d'après,
+   et rien d'autre : le bouton « Supprimer » a rejoint la LISTE (on ne détruit
+   pas une wishlist depuis son intérieur, c'est trop facile à toucher). */
+.wl-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.wl-head-name{flex:1;min-width:0;font-size:clamp(17px,2.2vw,21px);font-weight:800;letter-spacing:-.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-head-rename{flex:none;opacity:.75}
+.wl-head-progress{margin-bottom:var(--s5)}
+.wl-head-progress .progress-wrap{width:100%}
+.wl-card-del{color:var(--danger,#ff5c5c);opacity:.72}
+.wl-card-del:hover{opacity:1}
 
 /* ── Bandeau d'une série ouverte (portefeuille › cartes) ──────────────
    Dans une série, on est DANS la série : plus de titre de section, plus de
@@ -2800,7 +2820,10 @@ body::before{display:none}
     transition:opacity var(--dur-1) var(--ease-out),max-width var(--dur-2) var(--ease-out)}
   /* Ouvert : le nom s'efface et laisse la place aux icônes, qui semblent
      sortir du logo (origine de transformation à gauche). */
-  :root[data-actions="on"] .brand-word{opacity:0;max-width:0;overflow:hidden}
+  /* Le mot disparaît mais GARDE sa place : sinon la marque rétrécit et tout le
+     reste de la barre (le nom de la vue) se décale — l'utilisateur a demandé
+     que rien ne bouge. */
+  :root[data-actions="on"] .brand-word{opacity:0;visibility:hidden}
   .brand-chev{display:grid;place-items:center;width:13px;height:13px;color:var(--t3);
     transition:transform var(--dur-2) var(--ease-out),color var(--dur-1) linear}
   .brand-chev svg{width:11px;height:11px}
@@ -2814,30 +2837,29 @@ body::before{display:none}
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     transition:opacity var(--dur-1) var(--ease-out)}
 
-  /* Les actions : repliées seulement si le JS a posé le drapeau (sinon elles
-     restent accessibles, quoi qu'il arrive). Elles arrivent en cascade. */
-  :root[data-actions] .header-actions{gap:8px;margin-left:auto}
-  /* Ouvert, les icônes se collent au logo (elles en « sortent ») et le nom de
-     la vue file à l'autre bout : sinon le titre, en flex:1, s'insérait entre
-     les deux et les icônes finissaient à droite, loin de leur point d'origine. */
-  :root[data-actions] .header-actions{transform-origin:left center}
-  :root[data-actions="on"] .header-actions{margin-right:0}
-  :root[data-actions="on"] .tb-title{flex:0 1 auto;margin-left:auto}
-  :root[data-actions="off"] .header-actions{
-    opacity:0;pointer-events:none;width:0;overflow:hidden;
-    transform:translateX(-14px) scale(.86)}
-  :root[data-actions="on"] .header-actions{opacity:1;transform:none}
+  /* Les actions : un ARC sous le logo, pas une rangée dans la barre.
+     Elles sont sorties du flux (position:absolute) — c'est ce qui garantit que
+     RIEN ne bouge dans la topbar quand elles apparaissent : le nom de la vue
+     reste exactement où il est, seul le mot « MiloDex » s'efface. Repliées,
+     elles sont écrasées AU CENTRE DU LOGO : à l'ouverture elles semblent en
+     jaillir, l'une après l'autre. Le drapeau `data-actions` n'existe que si le
+     JS tourne — sinon les boutons restent en rangée, accessibles. */
   :root[data-actions] .header-actions{
-    transition:opacity var(--dur-2) var(--ease-out),transform var(--dur-2) var(--ease-out)}
-  :root[data-actions] .header-actions>*{transition:opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out)}
-  :root[data-actions="off"] .header-actions>*{opacity:0;transform:translateX(-12px) scale(.7)}
-  :root[data-actions="on"] .header-actions>*{opacity:1;transform:none}
-  :root[data-actions="on"] .header-actions>*:nth-child(1){transition-delay:20ms}
-  :root[data-actions="on"] .header-actions>*:nth-child(2){transition-delay:60ms}
-  :root[data-actions="on"] .header-actions>*:nth-child(3){transition-delay:100ms}
-  :root[data-actions="on"] .header-actions>*:nth-child(4){transition-delay:140ms}
+    position:absolute;z-index:60;margin:0;gap:0;width:0;height:0;overflow:visible;
+    left:calc(var(--gutter) + 17px);top:calc(env(safe-area-inset-top) + 26px)}
+  :root[data-actions] .header-actions>.btn{
+    position:absolute;left:-19px;top:-19px;
+    transition:transform 340ms var(--ease-out),opacity 200ms var(--ease-out)}
+  :root[data-actions="off"] .header-actions{pointer-events:none}
+  /* Les POSITIONS de l'arc sont posées en style inline par setHeaderActions()
+     (calculées depuis le centre du logo) : ici on ne garde que l'ancrage et la
+     transition. */
+  /* La pastille d'enregistrement est un ÉTAT, pas une action : elle n'a rien à
+     faire dans l'arc (et le nuage dit déjà où en est la sauvegarde). */
+  :root[data-actions] .header-actions>.save-dot{display:none}
   .header-actions .btn-icon{width:38px;min-height:38px}
+  /* Rien ne doit bouger : le nom de la vue garde sa place, ouvert ou fermé. */
+  .app-header{overflow:visible}
 
   /* ══ TAB BAR ═══════════════════════════════════════════════════ */
   .tabbar{padding:7px 6px max(7px,env(safe-area-inset-bottom))}
@@ -2875,6 +2897,12 @@ body::before{display:none}
   .vstat-v{grid-column:3;grid-row:1/span 2;font-size:21px;text-align:right;letter-spacing:-.025em}
   .vault-note{margin-top:16px;padding-top:14px;font-size:12px;line-height:1.45;
     border-top:1px solid color-mix(in srgb,var(--line) 62%,transparent)}
+
+  /* Respiration entre les blocs de l'accueil : un `gap` sur le conteneur, plutôt
+     que des marges section par section (elles se compensaient et l'ensemble
+     paraissait tassé). */
+  #view-home{display:flex;flex-direction:column;gap:26px}
+  #view-home>*{margin:0}
 
   /* La pièce maîtresse : la carte prend la largeur, le reste s'efface. */
   .showpiece{padding:18px 16px 20px;border-radius:24px}
@@ -3020,3 +3048,50 @@ body::before{display:none}
 .cloud-remote{margin-top:8px;padding:10px 14px;border-radius:12px;font-size:12.5px;line-height:1.5;
   background:rgba(255,255,255,.03);border:1px dashed var(--line);color:var(--t2)}
 .cloud-remote span{color:var(--t3)}
+
+/* Les flèches de page du classeur sont RETIRÉES de l'écran (le classeur se
+   feuillette au doigt : on glisse sur le livre, comme un vrai). Les boutons
+   restent dans le DOM — `miloTurn`, les flèches du clavier et l'état
+   « désactivé » en dépendent — mais ils ne sont plus visibles ni cliquables. */
+.milo-nav-hidden{display:none!important}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BLOCS DU PORTEFEUILLE — volets dépliables
+   Quarante séries en grille plate ne se lisent pas. Regroupées par bloc
+   (« Écarlate et Violet »…), on retrouve les siennes d'un coup d'œil. Le
+   dépliage reprend la cascade des icônes de l'en-tête : même grammaire de
+   mouvement dans toute l'app.
+   ═══════════════════════════════════════════════════════════════════ */
+.bloc{margin-bottom:14px;border-radius:var(--r);border:1px solid var(--line);
+  background:rgba(255,255,255,.022);overflow:hidden}
+.bloc-head{width:100%;display:flex;align-items:center;gap:12px;padding:15px 16px;
+  background:none;border:0;cursor:pointer;text-align:left;color:var(--t1);font-family:inherit}
+.bloc-chev{flex:none;display:grid;place-items:center;width:18px;height:18px;color:var(--t3);
+  transition:transform var(--dur-2) var(--ease-out),color var(--dur-1) linear}
+.bloc-chev svg{width:16px;height:16px}
+.bloc.open .bloc-chev{transform:rotate(180deg);color:var(--acc)}
+.bloc-name{flex:1;min-width:0;font-size:15.5px;font-weight:750;letter-spacing:-.015em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bloc-meta{flex:none;font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+.bloc-val{flex:none;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.bloc-body{max-height:0;overflow:hidden;padding:0 14px;
+  transition:max-height 400ms var(--ease-out)}
+.bloc.open .bloc-body{padding-bottom:16px}
+/* Cascade des vignettes : même ressort que l'arc de l'en-tête. */
+.bloc-body .cardser-bubble{opacity:0;transform:translateY(10px) scale(.97);
+  transition:opacity 260ms var(--ease-out),transform 320ms var(--ease-out)}
+.bloc.open .bloc-body .cardser-bubble{opacity:1;transform:none}
+.bloc.open .bloc-body .cardser-bubble:nth-child(1){transition-delay:30ms}
+.bloc.open .bloc-body .cardser-bubble:nth-child(2){transition-delay:70ms}
+.bloc.open .bloc-body .cardser-bubble:nth-child(3){transition-delay:110ms}
+.bloc.open .bloc-body .cardser-bubble:nth-child(4){transition-delay:150ms}
+.bloc.open .bloc-body .cardser-bubble:nth-child(5){transition-delay:190ms}
+.bloc.open .bloc-body .cardser-bubble:nth-child(n+6){transition-delay:220ms}
+/* Les compteurs seuls (sans le bandeau de titre) respirent un peu plus. */
+.inv-kpis-solo{margin-bottom:var(--s5)}
+@media (max-width:767px){
+  .bloc-head{padding:14px 13px;gap:10px}
+  .bloc-meta{display:none}
+  .bloc-name{font-size:14.5px}
+  .bloc-body{padding:0 10px}
+}
