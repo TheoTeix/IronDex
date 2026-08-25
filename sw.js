@@ -11,8 +11,8 @@
  * Les données (collection, cotes) ne passent JAMAIS par ici : elles viennent de
  * l'API GitHub / raw.githubusercontent, où une réponse périmée serait grave.
  */
-const V = 'irondex-v15';
-const SHELL = ['./', './index.html', './app.js?v=ui22', './style.css?v=ui22', './cm-slugs.js',
+const V = 'irondex-v16';
+const SHELL = ['./', './index.html', './app.js?v=ui23', './style.css?v=ui23', './cm-slugs.js',
                './manifest.json', './logo.png', './favicon.png'];
 
 self.addEventListener('install', e => {
