@@ -1305,9 +1305,33 @@ async function resolveMissingImage(setId, localId) {
     if (map.has(normNum(localId))) { found = map.get(normNum(localId)); break; }
   }
   if (!found) found = await fetchExternalImage(setId, localId);
+  // DERNIER RECOURS : le recto sur la fiche Cardmarket. TCGdex n'a aucun visuel
+  // pour certains sets entiers (toutes les Galeries de Dresseurs : swsh12tg &
+  // co, 30 cartes sans image en FR comme en EN), et l'app affichait des trous.
+  // Demande le pont local ; sans lui, on reste sur le placeholder.
+  if (!found) found = await cmCardImage(setId, localId);
   fallbackCache[key] = found;
   if (found) persistImgFallbackSoon();
   return found;
+}
+// Recto de la carte tel que Cardmarket l'affiche (og:image de la fiche), via
+// le pont local. L'URL est absolue et s'affiche telle quelle ; elle est
+// enregistrée comme les autres visuels de repli, et pour les cartes du
+// portefeuille elle rejoint la collection — donc le dépôt, donc l'iPhone.
+async function cmCardImage(setId, localId) {
+  if (!cmBridgeUp()) return null;
+  const cardId = `${setId}-${localId}`;
+  let url = null;
+  try { url = await resolveCmUrl(cardId, true); } catch {}
+  if (!url || !CM_PRODUCT_RE.test(url)) return null;
+  try {
+    const r = await fetchTimeout(`${cmBridgeBase()}/price?url=${encodeURIComponent(url)}`, 45000);
+    if (!r.ok) return null;
+    const d = await r.json();
+    // Convention de l'app : une URL absolue se déclare avec `DIRECT::`, sinon
+    // IMG() lui accolerait « /low.webp » et l'image serait cassée.
+    return (d && typeof d.img === 'string' && /^https?:\/\//.test(d.img)) ? 'DIRECT::' + d.img : null;
+  } catch { return null; }
 }
 // Cherche les placeholders "visuel indisponible" dans root et les remplace en
 // douceur si un visuel de repli est trouvé (voir resolveMissingImage). N'est
@@ -3760,7 +3784,7 @@ function confirmRenameWishlist() {
 }
 
 async function openCardPicker(mode, slot) {
-  Object.assign(state, { pickerMode: mode, pickerSeries: null, pickerSet: null, pickerCards: [], pickerSearch: '', sessionAdded: 0, pickerBinderSlot: (slot == null ? null : slot) });
+  Object.assign(state, { pickerMode: mode, pickerSeries: null, pickerSet: null, pickerCards: [], pickerSearch: '', pickerSetIds: null, pickerSubsets: [], sessionAdded: 0, pickerBinderSlot: (slot == null ? null : slot) });
   const title = mode === 'wish' || mode === 'binder' ? 'Ajouter des cartes' : mode === 'hero' ? 'Choisir la pièce maîtresse' : 'Choisir une carte';
   document.getElementById('picker-title').textContent = title;
   document.getElementById('picker-footer').style.display = (mode === 'wish' || mode === 'binder') ? 'flex' : 'none';
@@ -3794,7 +3818,9 @@ function bindPickerDelegation() {
 function pickCardFromCatalog(id) {
   const c = state.pickerCards.find(x => String(x.id) === String(id));
   if (!c) return;
-  pickCard(c.id, c.name, c.image || '', state.pickerSetName, state.pickerSet, c.localId);
+  // `__set` quand la carte vient d'une sous-série (Galerie de Dresseurs…) :
+  // elle doit garder son vrai set, pas celui du parent affiché.
+  pickCard(c.id, c.name, c.image || '', c.__setName || state.pickerSetName, c.__set || state.pickerSet, c.localId);
 }
 function updatePickerFooter() {
   const el = document.getElementById('picker-added-count');
@@ -3843,6 +3869,7 @@ async function pickSeries(serieId, serieName) {
     const serie = await apiFetch(`/series/${serieId}`);
     // Blocs les plus récents en premier (l'API les classe du plus ancien au plus récent).
     const sets = (serie.sets || []).slice().reverse();
+    state.pickerSetIds = sets.map(x => x.id);   // sert à trouver les sous-séries (voir pickSet)
     body.innerHTML = `
       ${pickerSteps(1)}
       <div class="picker-nav">
@@ -3860,13 +3887,41 @@ async function pickSeries(serieId, serieName) {
       </div>`;
   } catch (e) { console.error('[picker] sets', e); body.innerHTML = errBox('retryPicker()', e); }
 }
+// Sous-séries : chez TCGdex, la « Galerie de Dresseurs » (TG), la « Galerie
+// Galaroise » (GG) et le « Shiny Vault » (SV) sont des SETS À PART
+// (`swsh12tg`…), alors que pour le collectionneur ce sont les mêmes boosters.
+// Ouvrir « Tempête Argentée » ne montrait donc pas ses 30 cartes TG, et il n'y
+// avait aucun moyen d'y arriver depuis là — surtout depuis le « + » d'une
+// série, qui entre directement dans le set.
+const SUBSET_SUFFIXES = ['tg', 'gg', 'sv'];
 async function pickSet(setId) {
   state.pickerSet = setId; state.pickerSearch = '';
   const body = document.getElementById('picker-body');
   body.innerHTML = `<div class="loading-state"><div class="spinner"></div> Chargement des cartes…</div>`;
   try {
     const set = await apiFetch(`/sets/${setId}`);
-    state.pickerCards = set.cards || []; state.pickerSetName = set.name;
+    state.pickerSetName = set.name;
+    // Chaque carte garde SON set d'origine (`__set`) : une carte TG doit être
+    // enregistrée sous `swsh12tg`, sinon sa cote et son lien Cardmarket
+    // pointeraient sur la mauvaise fiche.
+    let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId, __setName: set.name }));
+    // On ne devine pas les sets : on regarde ceux qui existent VRAIMENT dans la
+    // série (un /sets/inexistant coûterait 3 tentatives et ~3 s chacun).
+    let known = state.pickerSetIds;
+    if (!known && set.serie?.id) {
+      const serie = await apiFetch(`/series/${set.serie.id}`).catch(() => null);
+      known = (serie?.sets || []).map(x => x.id);
+    }
+    for (const suf of SUBSET_SUFFIXES) {
+      const subId = setId + suf;
+      if (setId.endsWith(suf) || !known || !known.includes(subId)) continue;
+      const sub = await apiFetch(`/sets/${subId}`).catch(() => null);
+      if (sub?.cards?.length) {
+        cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: sub.id, __setName: sub.name })));
+        state.pickerSubsets = (state.pickerSubsets || []).concat(sub.name);
+      }
+    }
+    state.pickerCards = cards;
     renderPickerCards();
   } catch (e) { console.error('[picker] cartes', e); body.innerHTML = errBox('retryPicker()', e); }
 }
@@ -7193,15 +7248,25 @@ function toggleBloc(id) {
   _blocsOpen = _blocsOpen || new Set();
   open ? _blocsOpen.add(id) : _blocsOpen.delete(id);
   sec.querySelector('.bloc-head')?.setAttribute('aria-expanded', String(open));
+  // L'animation se fait sur une hauteur INLINE, posée le temps de la
+  // transition puis retirée : au repos, un corps ouvert n'a aucune contrainte
+  // de hauteur (il grandit si les cotes arrivent) et un corps replié est
+  // simplement `hidden`. C'est ce qui manquait : la hauteur figée à 0 en CSS
+  // s'appliquait aussi au bloc ouvert d'entrée de jeu.
+  if (body._blocTimer) { clearTimeout(body._blocTimer); body._blocTimer = null; }
   if (open) {
     body.hidden = false;
     sec.classList.add('open');
-    body.style.maxHeight = body.scrollHeight + 'px';
-    setTimeout(() => { if (sec.classList.contains('open')) body.style.maxHeight = 'none'; }, 420);
+    const h = body.scrollHeight;
+    body.style.maxHeight = '0px';
+    requestAnimationFrame(() => { body.style.maxHeight = h + 'px'; });
+    body._blocTimer = setTimeout(() => { body.style.maxHeight = ''; body._blocTimer = null; }, 420);
   } else {
     body.style.maxHeight = body.scrollHeight + 'px';
     requestAnimationFrame(() => { body.style.maxHeight = '0px'; sec.classList.remove('open'); });
-    setTimeout(() => { if (!sec.classList.contains('open')) body.hidden = true; }, 420);
+    body._blocTimer = setTimeout(() => {
+      body.hidden = true; body.style.maxHeight = ''; body._blocTimer = null;
+    }, 420);
   }
 }
 function cardsSeriesGridHTML(groups) {

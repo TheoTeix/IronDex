@@ -1784,17 +1784,22 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .buy-chip:hover{color:var(--t1);border-color:var(--line-3);background:rgba(255,255,255,.09)}
 .buy-chip.set{border-style:solid;color:var(--t2)}
 .cardtile-pnl{font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
-.cardtile-foot{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:8px;
-  border-top:1px solid var(--line)}
+/* Le pied doit pouvoir RÉTRÉCIR : sur une colonne de 268 px, quantité + lien
+   Cardmarket + corbeille dépassaient de la tuile. Il passe donc à la ligne
+   plutôt que de déborder, et ses éléments sont un cran plus compacts. */
+.cardtile-foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:8px;
+  border-top:1px solid var(--line);min-width:0}
+.cardtile-foot>*{min-width:0}
 .qty{display:inline-flex;align-items:center;gap:1px;border-radius:var(--pill);
   background:rgba(255,255,255,.05);border:1px solid var(--line);padding:2px}
-.qty-btn{width:28px;height:28px;display:grid;place-items:center;border-radius:var(--pill);
+.qty-btn{width:26px;height:26px;display:grid;place-items:center;border-radius:var(--pill);
   font-size:15px;font-weight:700;color:var(--t2);
   transition:background var(--dur-0) var(--ease-out),color var(--dur-0) var(--ease-out)}
 .qty-btn:hover:not(:disabled){background:rgba(255,255,255,.12);color:var(--t1)}
 .qty-btn:disabled{opacity:.3}
 .qty-val{min-width:22px;text-align:center;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
-.cm-link{display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:0 10px;
+.cm-link{display:inline-flex;align-items:center;gap:4px;min-height:26px;max-width:100%;padding:0 8px;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
   border-radius:var(--pill);background:rgba(255,255,255,.05);border:1px solid var(--line);
   font-size:11px;font-weight:700;color:var(--t2);
   transition:background var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out),
@@ -1802,7 +1807,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cm-link svg{width:13px;height:13px}
 .cm-link:hover{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--t1);
   border-color:color-mix(in srgb,var(--acc) 40%,transparent)}
-.cardtile-del{width:30px;height:30px;margin-left:auto;flex:none;display:grid;place-items:center;
+.cardtile-del{width:26px;height:26px;margin-left:auto;flex:none;display:grid;place-items:center;
   border-radius:9px;color:var(--t3);opacity:0;
   transition:opacity var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out)}
 .cardtile-del svg{width:15px;height:15px}
@@ -3079,8 +3084,15 @@ body::before{display:none}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bloc-meta{flex:none;font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums}
 .bloc-val{flex:none;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.bloc-body{max-height:0;overflow:hidden;padding:0 14px;
-  transition:max-height 400ms var(--ease-out)}
+/* Le corps replié est masqué par l'attribut `hidden` (donc display:none) : on
+   ne met AUCUNE `max-height` au repos. C'était le bug — `.bloc-body{max-height:0}`
+   s'appliquait aussi au bloc ouvert au chargement (le plus récent), dont le
+   contenu se retrouvait écrasé à zéro : « le dossier de Méga est bugué dès
+   qu'on arrive ». Les hauteurs d'animation sont posées en inline par
+   toggleBloc(), le temps de la transition, puis retirées. */
+.bloc-body{overflow:hidden;padding:0 14px;
+  transition:max-height 380ms var(--ease-out)}
+.bloc-body[hidden]{display:none}
 .bloc.open .bloc-body{padding-bottom:16px}
 /* Cascade des vignettes : même ressort que l'arc de l'en-tête. */
 .bloc-body .cardser-bubble{opacity:0;transform:translateY(10px) scale(.97);

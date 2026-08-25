@@ -120,6 +120,12 @@ JS_EXTRACT = r"""
     qty: parseInt(((row.querySelector('.item-count') || {}).textContent || '').trim(), 10) || null,
     title,
     offers: doc.querySelectorAll('.article-row').length,
+    // Visuel du produit : TCGdex n'a pas d'image pour certains sets (toutes
+    // les Galeries de Dresseurs, par exemple) et l'app affichait un trou.
+    // `og:image` est présent dans le HTML BRUT et pointe le recto de la carte.
+    img: (doc.querySelector('meta[property="og:image"]') || {}).content
+         || (doc.querySelector('.card-image img.is-front') || {}).src
+         || null,
   };
 }
 """
@@ -210,7 +216,16 @@ class Bridge:
                   '--no-first-run', '--no-default-browser-check'],
         )
         self.page = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
+        # Un seul onglet : le contexte persistant en ouvre un (about:blank) et
+        # une relance pouvait en laisser d'autres — d'où les fenêtres qui
+        # s'empilaient.
+        for extra in self.ctx.pages[1:]:
+            try: await extra.close()
+            except Exception: pass
         await self._clear()
+        # Le travail est en FOND : la fenêtre doit exister (Cloudflare refuse le
+        # headless) mais pas encombrer l'écran. On la réduit dans le Dock.
+        await self.window('minimized')
 
     async def _slot(self):
         """Espace les départs de requête (cadence globale, tous appels confondus)."""
@@ -255,6 +270,26 @@ class Bridge:
             self.ready = False
             print('  clearance non obtenue : les cartes suivantes retombent sur '
                   'les moyennes (relancer plus tard pour les recoter)', flush=True)
+            return False
+
+    async def window(self, want: str):
+        """Réduit ou réaffiche la fenêtre du pont (CDP `Browser.setWindowBounds`).
+
+        Il n'existe aucun drapeau Chromium pour démarrer minimisé, et le mode
+        headless est refusé par Cloudflare : on lance donc une vraie fenêtre,
+        puis on la met dans le Dock. Elle revient à l'écran si Cloudflare
+        réclame une action humaine — c'est le seul moment où l'utilisateur a
+        quelque chose à y faire.
+        """
+        try:
+            cdp = await self.ctx.new_cdp_session(self.page)
+            info = await cdp.send('Browser.getWindowForTarget')
+            await cdp.send('Browser.setWindowBounds',
+                           {'windowId': info['windowId'], 'bounds': {'windowState': want}})
+            await cdp.detach()
+            return True
+        except Exception as e:
+            print(f'  fenêtre {want} impossible : {str(e)[:80]}', flush=True)
             return False
 
     def _kill_orphans(self):
@@ -302,10 +337,13 @@ class Bridge:
             ok = await self._clear(patience=45)
             fails = 0 if ok else fails + 1
             if fails == 2:
-                print('  Cloudflare insiste : REGARDE LA FENÊTRE BRAVE du pont — '
+                print('  Cloudflare insiste : la fenêtre du pont revient à l\'écran — '
                       's\'il y a une case « Vérifiez que vous êtes humain », coche-la, '
                       'la synchro repartira toute seule.', flush=True)
+                await self.window('normal')          # elle a quelque chose à montrer
             self.needs_human = fails >= 2
+            if ok:
+                await self.window('minimized')       # rien à voir : retour en fond
 
     async def alive(self) -> bool:
         """La fenêtre du navigateur répond-elle encore ?
