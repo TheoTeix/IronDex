@@ -2013,7 +2013,7 @@ function pingCmBridge(force) {
     let st = { at: Date.now(), up: false, ready: false };
     for (const base of cmBridgeHosts()) {
       try {
-        const r = await fetchTimeout(`${base}/health`, 2500);
+        const r = await fetchTimeout(`${base}/health`, 4000);
         if (!r.ok) continue;
         const d = await r.json();
         _cmBridgeBase = base;
@@ -2418,7 +2418,7 @@ async function syncPrices() {
         ? (ghCfg().owner
             ? 'Pas de pont ici et le dépôt n\u2019a rien de plus récent : lance la synchro depuis la machine qui a le pont. (Re-cliquer = cotes moyennes.)'
             : 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)')
-        : 'Accès Cardmarket expiré : lance « cm_price_bridge.py --login » (une fenêtre, 10 s), puis re-clique.', 'error');
+        : 'Cardmarket a demandé une vérification humaine : lance « cm_price_bridge.py --login » une fois, puis re-clique.', 'error');
       return;
     }
     _syncForceUntil = 0;

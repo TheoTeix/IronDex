@@ -144,8 +144,12 @@ l'app ; la ligne sous « Synchronisation des cotes » doit dire « premier prix
 FR · Near Mint ». Compte ~20 min pour 1 300 cartes. À la fin, les cotes partent
 dans le dépôt : l'iPhone les aura sans rien faire.
 
-Quand l'accès expire (Cloudflare le fait tourner), le pont le dit et l'app
-aussi. Une seule commande, une fenêtre de 10 s, et c'est reparti :
+Quand l'accès Cardmarket expire, le pont le **renouvelle tout seul**, sans
+fenêtre (~1,5 s) : tu cliques Sync, ça marche. Il entretient aussi sa session
+toutes les 8 minutes pour que ça n'arrive presque jamais en pleine synchro.
+
+La commande manuelle ne sert plus que si Cloudflare exige une vérification
+humaine — l'app te le dira explicitement dans ce cas :
 
 ```bash
 python3 scripts/cm_price_bridge.py --login
