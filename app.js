@@ -640,6 +640,28 @@ function openCloud() {
     </div>
     <div id="cloud-report" class="cloud-report">État : ${esc(st)}${_ghErr ? ` — ${esc(_ghErr)}` : ''}</div>`;
   openModal('modal-cloud');
+  cloudShowRemote();
+}
+// Ce que contient le dépôt, LU depuis le dépôt (pas depuis ce que l'app croit
+// avoir envoyé). C'est ce chiffre-là qui prouve que la sauvegarde existe.
+async function cloudShowRemote() {
+  const c = ghCfg();
+  if (!c.owner || !c.repo) return;
+  const el = document.getElementById('cloud-remote');
+  const remote = await ghRead(GH_PATHS.collection);
+  const box = document.getElementById('cloud-report');
+  if (!box) return;
+  const line = document.createElement('div');
+  line.className = 'cloud-remote';
+  if (!remote) {
+    line.innerHTML = ghLocalEmpty()
+      ? 'Dépôt : <b>aucune collection</b> — et cet appareil n’en a pas non plus (restaure d’abord un .json avec ⇧⌘R).'
+      : 'Dépôt : <b>aucune collection pour l’instant</b> — clique « Vérifier et enregistrer » pour y envoyer celle de cet appareil.';
+  } else {
+    const d = String(remote.lastUpdated || '').replace('T', ' à ').slice(0, 16);
+    line.innerHTML = `Dépôt : ${(remote.wishlists || []).length} wishlists · ${(remote.investCards || []).length} cartes · ${(remote.sealed || []).length} produits scellés <span>(${esc(d)})</span>`;
+  }
+  box.after(line);
 }
 function cloudReport(html, kind) {
   const el = document.getElementById('cloud-report');
@@ -670,6 +692,23 @@ async function cloudCheck() {
   const w = await ghWrite('data/.irondex-ping.json', { at: new Date().toISOString(), from: navigator.platform || 'appareil' }, 'IronDex : test de connexion');
   if (!w.ok) return cloudReport(`Lecture OK, mais l’écriture échoue : ${esc(w.reason)}`, 'bad');
   ghPaintStatus('ok');
+  // 3) et on ENVOIE tout de suite si c'est ce qu'il faut faire. Sans ça,
+  //    quelqu'un qui restaure sa collection PUIS colle son jeton se retrouve
+  //    avec un dépôt vide et un écran tout vert : l'envoi automatique ne se
+  //    déclenche qu'à la modification SUIVANTE. « Enregistrer » doit vouloir
+  //    dire « ma collection est en ligne », pas « le jeton est valide ».
+  if (!ghLocalEmpty()) {
+    const remote = await ghRead(GH_PATHS.collection);
+    const rt = remote ? (Date.parse(remote.lastUpdated || 0) || 0) : 0;
+    const lt = Date.parse(collectionSnapshot().lastUpdated) || Date.now();
+    if (!remote || rt < lt) {
+      cloudReport('<span class="spinner spinner-sm"></span> Jeton validé — envoi de la collection…');
+      const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
+      if (!a.ok) return cloudReport(`Jeton valide, mais l’envoi de la collection échoue : ${esc(a.reason)}`, 'bad');
+      await ghWrite(GH_PATHS.prices, { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }, 'IronDex : cotes mises à jour');
+      return cloudReport(`Tout est en place, et ta collection est <b>en ligne</b> : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} produits scellés. Les prochaines modifications partiront toutes seules.`, 'good');
+    }
+  }
   cloudReport(`Tout est en place. Branche <b>${esc(repo.default_branch || c.branch)}</b>${repo.private ? ' · dépôt privé' : ' · dépôt public'}. Tes prochaines modifications partiront automatiquement.`, 'good');
 }
 async function cloudPushNow() {
