@@ -606,14 +606,15 @@ function ghPaintStatus(st) {
   const el = document.getElementById('cloud-dot');
   if (el) {
     el.dataset.state = st;
-    el.title = { off: 'Coffre en ligne non configuré', pending: 'Envoi au dépôt dans quelques secondes…',
+    el.title = { off: 'Coffre en ligne non configuré', warn: 'Coffre en ligne NON configuré : rien n\u2019est envoyé depuis cet appareil',
+      pending: 'Envoi au dépôt dans quelques secondes…',
       saving: 'Envoi au dépôt…', ok: 'Collection sauvegardée dans le dépôt', error: `Échec d'envoi : ${_ghErr}` }[st] || '';
   }
 }
 // ── Relecture au démarrage ────────────────────────────────────────
 // Règle : le plus RÉCENT gagne, et l'appareil vierge se remplit tout seul
 // (ouvrir le site sur l'iPhone suffit à y retrouver la collection).
-let _localUpdated = 0;
+let _localUpdated = 0, _ghLastPull = 0;
 function ghLocalEmpty() {
   return !state.wishlists.length && !state.binders.length && !state.investCards.length
     && !state.sealed.length && !Object.keys(state.milobellus || {}).length;
@@ -621,6 +622,7 @@ function ghLocalEmpty() {
 async function ghPull() {
   const c = ghCfg();
   if (!c.owner || !c.repo) return;
+  _ghLastPull = Date.now();
   const remote = await ghRead(GH_PATHS.collection);
   if (!remote || typeof remote !== 'object') return;
   const rt = Date.parse(remote.lastUpdated || 0) || 0;
@@ -773,6 +775,15 @@ async function cloudCheck() {
     const remote = await ghRead(GH_PATHS.collection);
     const rt = remote ? (Date.parse(remote.lastUpdated || 0) || 0) : 0;
     const lt = Date.parse(collectionSnapshot().lastUpdated) || Date.now();
+    // Garde-fou du moment le plus risqué : brancher un appareil dont la copie
+    // locale est plus PAUVRE que le dépôt (une vieille session, un import
+    // partiel) écraserait la bonne collection. On demande alors confirmation.
+    const nLocal = state.investCards.length + state.wishlists.length + state.sealed.length;
+    const nRemote = remote ? ((remote.investCards || []).length + (remote.wishlists || []).length + (remote.sealed || []).length) : 0;
+    if (remote && nRemote > nLocal * 1.1 + 5 && !window._cloudForcePush) {
+      window._cloudForcePush = true;
+      return cloudReport(`Attention : le dépôt contient <b>${nRemote}</b> entrées, cet appareil seulement <b>${nLocal}</b>. Envoyer écraserait la version en ligne. Clique « Relire le dépôt » pour récupérer la bonne, ou « Vérifier » à nouveau pour envoyer quand même.`, 'bad');
+    }
     if (!remote || rt < lt) {
       cloudReport('<span class="spinner spinner-sm"></span> Jeton validé — envoi de la collection…');
       const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
@@ -1970,7 +1981,7 @@ function pingCmBridge(force) {
         if (!r.ok) continue;
         const d = await r.json();
         _cmBridgeBase = base;
-        st = { at: Date.now(), up: true, ready: !!d.ready, needsHuman: !!d.needsHuman, base };
+        st = { at: Date.now(), up: true, ready: !!d.ready, needsLogin: !!d.needsLogin, base };
         break;
       } catch {}
     }
@@ -2298,13 +2309,13 @@ async function syncPrices() {
   if (!cmBridgeUp()) {
     if (Date.now() > _syncForceUntil) {
       _syncForceUntil = Date.now() + 20000;
-      // Deux pannes très différentes : le pont pas lancé, ou lancé mais bloqué
-      // par Cloudflare (une case à cocher attend dans SA fenêtre). Dire
-      // « éteint » dans le second cas envoie l'utilisateur chercher au mauvais
-      // endroit.
-      toast(_cmBridge.up
-        ? 'Pont bloqué par Cloudflare : va cocher la case dans sa fenêtre Brave, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)'
-        : 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)', 'error');
+      // Trois pannes distinctes, trois consignes différentes : le pont n'est pas
+      // lancé, il tourne mais son accès Cardmarket a expiré, ou il est
+      // injoignable. Dire « éteint » dans le deuxième cas envoyait chercher au
+      // mauvais endroit.
+      toast(!_cmBridge.up
+        ? 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)'
+        : 'Accès Cardmarket expiré : lance « cm_price_bridge.py --login » (une fenêtre, 10 s), puis re-clique.', 'error');
       return;
     }
     _syncForceUntil = 0;
@@ -3008,8 +3019,17 @@ function render() {
 }
 // Onglets (Coffre/Wishlists/…) : fondu croisé symétrique. Détail de
 // wishlist : push/pop façon iOS (on y entre en avançant, on en sort en reculant).
+// Ordre des onglets : sur téléphone, passer d'un onglet à l'autre GLISSE dans
+// le sens de la barre (comme n'importe quelle app iOS), au lieu d'un fondu
+// qu'on ne voit pas. Sur desktop le fondu reste : la navigation s'y fait par
+// un rail vertical, un glissement horizontal n'y voudrait rien dire.
+const TAB_ORDER = ['home', 'wishlists', 'invest', 'binders'];
 function transitionKind(fromView, toView) {
   if (fromView === toView) return 'none';
+  if (isPhone()) {
+    const a = TAB_ORDER.indexOf(fromView), b = TAB_ORDER.indexOf(toView);
+    if (a >= 0 && b >= 0) return b > a ? 'forward' : 'backward';
+  }
   if (toView === 'wishlist-detail' && fromView !== 'wishlist-detail') return 'forward';
   if (fromView === 'wishlist-detail' && toView !== 'wishlist-detail') return 'backward';
   if (toView === 'binder-detail' && fromView === 'binders') return 'forward';
@@ -6584,14 +6604,35 @@ function runIntro(onReveal) {
   };
   const teardown = () => { try { intro && intro.remove(); } catch {} };
 
-  // Repli : pas de 3D possible → court fondu de marque puis app
+  // Repli : pas de 3D (téléphone, mouvement réduit, WebGL indisponible) →
+  // fondu de marque. La BARRE DE PROGRESSION vit ici aussi : sur ce chemin elle
+  // restait figée à 0 % puis l'app apparaissait d'un coup, ce qui donnait
+  // l'impression d'un chargement cassé. Elle suit maintenant les vraies étapes
+  // du démarrage (catalogue relu, cotes prêtes, premier rendu).
   if (reduce || !canvas || !THREE) {
-    setTimeout(() => {
+    const bar0 = document.getElementById('intro-bar'), pct0 = document.getElementById('intro-pct');
+    const set0 = v => { if (bar0) bar0.style.width = v + '%'; if (pct0) pct0.textContent = Math.round(v) + '%'; };
+    let p = 6; set0(p);
+    // Montée continue et honnête : on avance vers 92 % pendant le vrai travail
+    // (lecture IndexedDB, relecture du dépôt, préparation du rendu), et on
+    // termine à 100 % au moment où l'app se révèle.
+    const tick = setInterval(() => { p = Math.min(92, p + (92 - p) * 0.18 + 1.5); set0(p); }, 90);
+    const done = () => {
+      clearInterval(tick); set0(100);
       const flash = document.getElementById('intro-flash');
       if (flash) flash.classList.add('bloom');
-      setTimeout(() => { intro && intro.classList.add('exit'); reveal(); }, 260);
-      setTimeout(teardown, 1100);
-    }, reduce ? 900 : 1800);
+      setTimeout(() => { intro && intro.classList.add('exit'); reveal(); }, 220);
+      setTimeout(teardown, 1000);
+    };
+    // On attend deux choses : que l'app soit PRÊTE (`_introReady`, résolu par le
+    // démarrage) et qu'un minimum de temps se soit écoulé. Sans ce plancher, la
+    // barre passerait de 6 à 100 % en un tiers de seconde — un clignotement,
+    // pas un chargement. Plafond à 4 s pour ne jamais retenir l'utilisateur.
+    const MIN_MS = reduce ? 500 : 950;
+    const t0 = performance.now();
+    const wait = window._introReady || Promise.resolve();
+    Promise.race([wait, new Promise(r => setTimeout(r, 4000))])
+      .then(() => setTimeout(done, Math.max(0, MIN_MS - (performance.now() - t0))));
     return;
   }
 
@@ -7758,6 +7799,9 @@ function confirmSealedImport() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Promesse « prêt à peindre », consommée par la barre de progression de
+  // l'intro sur le chemin sans 3D.
+  window._introReady = new Promise(res => { window._introReadyResolve = res; });
   ensureSoftButtonAssets();    // matériau des boutons prêt avant le 1er rendu
   loadApiCache();   // réinjecte les séries/sets déjà connus (navigation instantanée)
   loadPriceCache(); // cotes de la dernière session → valeur du coffre instantanée
@@ -7769,8 +7813,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (ghCfg().owner) {
     ghPull().catch(e => console.warn('ghPull', e));
     ghPullPrices().catch(e => console.warn('ghPullPrices', e));
+    // …et à CHAQUE retour au premier plan. Sur iPhone une app installée n'est
+    // jamais « rechargée » : sans ça, les cartes ajoutées depuis un autre
+    // appareil n'arrivaient qu'après une fermeture complète.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      if (Date.now() - _ghLastPull < 20000) return;   // pas à chaque va-et-vient
+      ghPull().catch(() => {});
+      ghPullPrices().catch(() => {});
+    });
   }
   ghPaintStatus(ghOn() ? 'ok' : 'off');
+  // Signal pour la barre de l'intro (chemin sans 3D) : le catalogue est relu,
+  // les cotes sont là, on peut peindre.
+  try { window._introReadyResolve && window._introReadyResolve(); } catch {}
+  // AVERTISSEMENT FRANC : une machine qui a des données mais pas de jeton
+  // travaille dans le vide — c'est exactement ce qui est arrivé (des cartes
+  // ajoutées sur un poste, jamais envoyées, invisibles ailleurs). La pastille
+  // grise ne suffisait pas.
+  setTimeout(() => {
+    if (!ghOn() && !ghLocalEmpty()) {
+      ghPaintStatus('warn');
+      toast('Coffre en ligne non configuré ici : tes modifications restent sur cet appareil.', 'error');
+    }
+  }, 2600);
   // Service worker : rend l'app installable sur l'iPhone et lisible hors ligne.
   // Inutile (et interdit) en file://.
   //

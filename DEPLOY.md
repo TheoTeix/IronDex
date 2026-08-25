@@ -138,10 +138,18 @@ Sur le **Mac** uniquement :
 python3 scripts/cm_price_bridge.py
 ```
 
-Laisse la fenêtre Brave ouverte (elle se rouvre seule si elle se ferme), puis
-clique **Sync** dans l'app. La ligne sous « Synchronisation des cotes » doit
-dire « premier prix FR · Near Mint ». Compte ~20 min pour 1 300 cartes. À la
-fin, les cotes partent dans le dépôt : l'iPhone les aura sans rien faire.
+Aucune fenêtre ne s'ouvre : le pont fait des requêtes HTTP, avec l'accès
+Cardmarket enregistré dans `~/.irondex/cm-cookies.json`. Clique **Sync** dans
+l'app ; la ligne sous « Synchronisation des cotes » doit dire « premier prix
+FR · Near Mint ». Compte ~20 min pour 1 300 cartes. À la fin, les cotes partent
+dans le dépôt : l'iPhone les aura sans rien faire.
+
+Quand l'accès expire (Cloudflare le fait tourner), le pont le dit et l'app
+aussi. Une seule commande, une fenêtre de 10 s, et c'est reparti :
+
+```bash
+python3 scripts/cm_price_bridge.py --login
+```
 
 Si tu cliques Sync sans le pont, l'app refuse et te le dit — elle ne remplacera
 pas tes vrais prix français par des moyennes toutes langues sans te demander.

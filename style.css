@@ -2764,6 +2764,9 @@ body::before{display:none}
 .btn-cloud[data-state="ok"]::after{background:#3ddc97}
 .btn-cloud[data-state="pending"]::after,.btn-cloud[data-state="saving"]::after{background:#f5c344;animation:cloudPulse 1.1s ease-in-out infinite}
 .btn-cloud[data-state="error"]::after{background:#ff5c5c}
+/* « warn » : des données locales, aucun jeton — l'appareil travaille dans le
+   vide. Ça doit se voir sans lire l'infobulle. */
+.btn-cloud[data-state="warn"]::after{background:#f5c344;animation:cloudPulse 1.8s ease-in-out infinite}
 @keyframes cloudPulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.btn-cloud[data-state]::after{animation:none}}
 
@@ -2939,6 +2942,18 @@ body::before{display:none}
   .cards-grid>*{min-width:0}
   .cards-grid .card-thumb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cardser-grid{grid-template-columns:repeat(2,1fr);gap:var(--s4) var(--s3)}
+  /* Compteurs du portefeuille : une seule LIGNE, pas une grille de carrés.
+     Quatre pavés de 90 px de haut pour quatre nombres, c'était un demi-écran
+     avant même de voir une carte. */
+  .inv-kpis{display:flex;flex-wrap:nowrap;gap:0;border-radius:14px;overflow:hidden;
+    margin-top:var(--s4);background:var(--line)}
+  .inv-kpi{flex:1;min-width:0;flex-direction:column;align-items:flex-start;gap:1px;
+    padding:10px 11px}
+  .inv-kpi-val{font-size:15px;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;max-width:100%}
+  .inv-kpi-lab{font-size:8.5px;letter-spacing:.09em;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;max-width:100%}
+
   /* Bandeau de série : trois cibles au pouce, le logo au centre. */
   .cardser-bar{gap:10px;margin-bottom:var(--s4)}
   .cardser-back,.cardser-add{width:40px;height:40px;border-radius:13px}
