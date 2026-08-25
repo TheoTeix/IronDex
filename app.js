@@ -514,6 +514,12 @@ async function ghFlush() {
     const obj = job === 'prices'
       ? { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }
       : collectionSnapshot();
+    // GARDE-FOU : on n'envoie JAMAIS une collection vide. Sur un appareil qui
+    // vient d'ouvrir le site (l'iPhone la première fois), une écriture locale
+    // peut partir avant que ghPull ait fini de rapatrier le dépôt : sans ce
+    // test, ce néant écraserait la vraie collection. Un instantané vide n'a de
+    // toute façon aucune valeur de sauvegarde.
+    if (job === 'collection' && ghLocalEmpty()) { console.warn('envoi ignoré : collection vide'); continue; }
     const label = job === 'prices' ? 'cotes' : 'collection';
     const res = await ghWrite(GH_PATHS[job], obj, `IronDex : ${label} mises à jour`);
     if (!res.ok) { fail = res; _ghPend[job] = true; }   // on retentera
@@ -668,6 +674,7 @@ async function cloudCheck() {
 }
 async function cloudPushNow() {
   if (!ghOn()) return cloudReport('Configure d’abord le jeton et le dépôt.', 'bad');
+  if (ghLocalEmpty()) return cloudReport('Cet appareil n’a aucune collection à envoyer : il écraserait celle du dépôt. Utilise « Relire le dépôt » pour la récupérer ici.', 'bad');
   cloudReport('<span class="spinner spinner-sm"></span> Envoi de la collection…');
   const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
   if (!a.ok) { ghPaintStatus('error'); return cloudReport(`Échec : ${esc(a.reason)}`, 'bad'); }
