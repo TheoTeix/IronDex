@@ -1,0 +1,22 @@
+# ── Système
+.DS_Store
+
+# ── Sauvegardes de travail (restent en local, inutiles en ligne)
+*.bak
+.redesign-backup/
+.impeccable/
+sauvegardes-recuperees/
+irondex-restauration-*.json
+milodex-sauvegarde.json
+
+# ── Doublon : l'app charge cm-slugs.js (balise <script>), le .json ne sert
+#    qu'au repli http et pèse 2 Mo pour rien.
+cm-slugs.json
+
+# ── Outils locaux
+scripts/__pycache__/
+venv/
+
+# ── Outillage Claude Code local (ne concerne pas le site)
+.claude/skills/
+.claude/settings.local.json

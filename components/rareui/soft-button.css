@@ -1,0 +1,202 @@
+/* ════════════════════════════════════════════════════════════════════
+   SOFT BUTTON — le matériau des boutons
+   Portage vanilla du composant RareUI `SoftButton`
+   (registre officiel https://rareui.in/r/SoftButton.json).
+
+   ── CE QUI EST REPRIS DU COMPOSANT (c'est lui qui fait l'effet) ──
+   Le relief « soft » vient d'une ombre à QUATRE COUCHES en diagonale :
+   deux extérieures opposées (lumière d'un côté, ombre de l'autre) et deux
+   intérieures opposées. C'est la recette exacte du composant, y compris ses
+   ordres de grandeur (décalages ~3-4 px, flou ~6-10 px) et ses alphas de
+   mode sombre (lumière très faible ~.05, ombre profonde ~.5-.6). On garde
+   aussi ses filets haut/bas, sa lueur de survol (`0 0 20px accent/.6`) et
+   son `scale(.98)` à la pression.
+
+   ── CE QUI EST DÉLIBÉRÉMENT CHANGÉ, ET POURQUOI ──
+   · `transition-all duration-[600ms]` → 180 ms au survol, 110 ms à la
+     pression, et seulement sur `box-shadow` / `border-color` / `transform`.
+     Une transition de 600 ms sur *toutes* les propriétés est exactement ce
+     qui donne l'impression de coller au doigt. Ici on veut fluide.
+   · `group-hover:tracking-[2px]` → SUPPRIMÉ. Animer l'interlettrage
+     remet le libellé en page à chaque survol et change la largeur propre du
+     bouton : le texte tremble et la mise en page se recalcule. Rédhibitoire
+     sur des centaines de boutons.
+   · `group-hover:scale-[1.05]` → SUPPRIMÉ. Un agrandissement de 5 % au
+     survol fait sauter les grilles denses et rend le texte flou pendant la
+     transition. Le survol se lit ici à la RESPIRATION de l'ombre et à la
+     lueur d'accent — plus calme, plus juste, et gratuit à composer.
+   · `group-hover:bg-black` / `dark:hover:bg-white text-black` → SUPPRIMÉ.
+     Inverser la surface au survol rendrait le primaire, le danger et le
+     secondaire IDENTIQUES dès qu'on les touche : la hiérarchie disparaît.
+     Les couleurs restent celles de style.css (voir la règle 1 ci-dessous).
+   · La LUMIÈRE VIENT DU HAUT-GAUCHE. Le composant met son halo clair en
+     `+4px +4px` (donc en bas à droite). MiloDex éclaire déjà tout son verre
+     par un reflet intérieur HAUT (`--lg-shine`) : deux sources de lumière
+     contradictoires sur le même écran, c'est le ratage classique du
+     neumorphisme. On garde la structure, on retourne la direction.
+   · `h-[50px] w-[160px] rounded-[30px]` → les tailles et le rayon de l'app.
+
+   ── DEUX RÈGLES DE MISE EN ŒUVRE ──
+   1. ON NE TOUCHE NI À `color` NI À `background`. Uniquement `box-shadow`,
+      `border-color` et `transform`. L'accent PRISME du primaire, le rouge du
+      danger, le verre du ghost restent ceux de style.css — donc la hiérarchie
+      et tous les contrastes déjà réglés sont intacts, par construction.
+   2. AUCUN pseudo-élément, aucun `position`, aucun `overflow`, aucun bitmap,
+      aucune boucle. Le matériau entier tient dans une ombre : rien de
+      nouveau à peindre au repos, rien à composer, rien à animer.
+
+   Spécificité : tout est en `.sb[data-soft]` (0,2,0). style.css est chargée
+   après cette feuille et ses `.btn-*` (0,1,0) gagneraient à égalité.
+   ════════════════════════════════════════════════════════════════════ */
+
+:root{
+  /* Les quatre couches, en variables : un calibre ne change que ces valeurs. */
+  --sb-hi:rgba(255,255,255,.05);      /* halo clair, haut-gauche, EXTÉRIEUR */
+  --sb-lo:rgba(0,0,0,.50);            /* ombre portée, bas-droite, EXTÉRIEUR */
+  --sb-in-hi:rgba(255,255,255,.075);  /* reflet intérieur haut-gauche */
+  --sb-in-lo:rgba(0,0,0,.40);         /* ombre intérieure bas-droite */
+  --sb-glow:0 0 0 0 rgba(0,0,0,0);    /* la lueur d'accent : rien au repos */
+  --sb-dur:180ms;                     /* survol */
+  --sb-dur-press:110ms;               /* pression */
+}
+
+/* ══════════════ LE MATÉRIAU ══════════════ */
+.sb[data-soft]{
+  box-shadow:
+    var(--sb-glow),
+    -3px -3px 8px 0 var(--sb-hi),
+     3px  4px 10px 0 var(--sb-lo),
+    inset 2px 2px 5px 0 var(--sb-in-hi),
+    inset -2px -3px 6px 0 var(--sb-in-lo);
+  /* Les filets du composant : une arête claire en haut, sombre en bas. On ne
+     touche QUE ces deux côtés — la couleur de bordure de style.css tient les
+     deux autres. */
+  border-top-color:rgba(255,255,255,.10);
+  border-bottom-color:rgba(0,0,0,.28);
+  transition:box-shadow var(--sb-dur) var(--ease-out),
+             border-color var(--sb-dur) var(--ease-out),
+             background-color var(--sb-dur) var(--ease-out),
+             color var(--sb-dur) var(--ease-out),
+             transform var(--sb-dur-press) var(--ease-out);
+}
+
+/* ── Survol : l'ombre RESPIRE et la lueur d'accent s'allume ──
+   Pas d'agrandissement, pas de saut : le bouton se détache du fond, c'est
+   tout. C'est la version fluide du `scale(1.05)` du composant. */
+.sb[data-soft]:hover:not(:disabled),
+.sb[data-soft]:focus-visible{
+  --sb-glow:0 0 20px -4px color-mix(in srgb,var(--acc) 46%,transparent);
+  --sb-lo:rgba(0,0,0,.58);
+  --sb-hi:rgba(255,255,255,.08);
+  border-top-color:rgba(255,255,255,.18);
+}
+
+/* ── Pression : le bouton s'ENFONCE ──
+   L'ombre extérieure disparaît, les deux couches intérieures se creusent et
+   s'inversent. C'est le geste signature du matériau soft, et c'est aussi la
+   seule chose qui bouge. `scale(.98)` est la valeur du composant (style.css
+   dit .97 ; on prend la plus douce, elle se lit mieux à l'écran). */
+.sb[data-soft]:active:not(:disabled){
+  transform:scale(.98);
+  box-shadow:
+    inset 4px 4px 9px 0 rgba(0,0,0,.50),
+    inset -3px -3px 7px 0 rgba(255,255,255,.06);
+  border-top-color:rgba(0,0,0,.30);
+  border-bottom-color:rgba(255,255,255,.08);
+  transition-duration:var(--sb-dur-press);
+}
+
+/* Un bouton inerte n'a pas de relief : la forme reste, le modelé part. */
+.sb[data-soft]:disabled,.sb[data-soft][disabled]{
+  box-shadow:inset 0 1px 0 0 rgba(255,255,255,.05);
+  border-top-color:transparent;border-bottom-color:transparent;
+}
+
+/* ══════════════ RÔLES ══════════════
+   Un rôle ne règle QUE l'intensité du modelé et la couleur de la lueur.
+   Les couleurs de fond et de texte ne bougent pas d'un iota. */
+
+/* Primaire (accent PRISME) : surface bombée et lueur franche — c'est le seul
+   bouton de l'écran qui a le droit de briller. */
+.sb[data-soft].sb-primary{
+  --sb-in-hi:rgba(255,255,255,.34);
+  --sb-in-lo:rgba(0,0,0,.22);
+  --sb-lo:rgba(0,0,0,.42);
+  border-top-color:rgba(255,255,255,.42);
+  border-bottom-color:rgba(0,0,0,.20);
+}
+.sb[data-soft].sb-primary:hover:not(:disabled),
+.sb[data-soft].sb-primary:focus-visible{
+  --sb-glow:0 0 24px -3px color-mix(in srgb,var(--acc) 62%,transparent);
+  border-top-color:rgba(255,255,255,.56);
+}
+.sb[data-soft].sb-primary:active:not(:disabled){
+  box-shadow:
+    inset 4px 4px 10px 0 rgba(0,0,0,.34),
+    inset -3px -3px 7px 0 rgba(255,255,255,.22);
+}
+
+/* Danger : même modelé que le secondaire, lueur ROUGE — l'action reste
+   visuellement séparée même au survol. */
+.sb[data-soft].sb-danger:hover:not(:disabled),
+.sb[data-soft].sb-danger:focus-visible{
+  --sb-glow:0 0 20px -4px rgba(255,84,112,.50);
+  border-top-color:rgba(255,150,168,.30);
+}
+
+/* ══════════════ CALIBRE DENSE ══════════════
+   Les micro-contrôles se comptent par CENTAINES sur une vue (un `.cm-link` et
+   deux `.qty-btn` par carte suivie, une loupe par vignette…). Quatre ombres
+   floutées × 500 éléments, c'est du temps de peinture pour un relief qu'on ne
+   voit pas à 26 px de haut. Deux couches suffisent, le rendu est le même à
+   l'œil et le coût redevient nul. */
+.sb[data-soft].sb-micro{
+  box-shadow:
+    var(--sb-glow),
+    inset 0 1px 0 0 rgba(255,255,255,.08),
+    0 1px 3px 0 rgba(0,0,0,.38);
+}
+.sb[data-soft].sb-micro:hover:not(:disabled),
+.sb[data-soft].sb-micro:focus-visible{
+  --sb-glow:0 0 12px -4px color-mix(in srgb,var(--acc) 42%,transparent);
+}
+.sb[data-soft].sb-micro:active:not(:disabled){
+  box-shadow:inset 0 2px 4px 0 rgba(0,0,0,.42);
+}
+
+/* ══════════════ ONGLETS DE NAVIGATION ══════════════
+   Nus au repos : un rail dont chaque onglet est un coussin en relief noie
+   l'état actif. L'onglet ACTIF n'a rien non plus — sa pastille d'accent est
+   déjà dessinée par `#nav-indicator` qui glisse derrière. Le modelé n'apparaît
+   donc qu'au survol, comme un affordance : « ceci est un bouton ». */
+.sb[data-soft].sb-nav{
+  box-shadow:none;
+  border-top-color:transparent;border-bottom-color:transparent;
+}
+.sb[data-soft].sb-nav:hover:not(.active):not(:disabled),
+.sb[data-soft].sb-nav:focus-visible{
+  box-shadow:
+    inset 0 1px 0 0 rgba(255,255,255,.09),
+    0 1px 3px 0 rgba(0,0,0,.30);
+  border-top-color:rgba(255,255,255,.10);
+}
+.sb[data-soft].sb-nav:active:not(:disabled){
+  transform:none;                       /* le rail ne doit pas tressauter */
+  box-shadow:inset 0 2px 4px 0 rgba(0,0,0,.28);
+}
+
+/* ══════════════ GARDE-FOUS ══════════════ */
+/* Mouvement réduit : le relief RESTE (c'est une matière), le geste part. */
+@media(prefers-reduced-motion:reduce){
+  .sb[data-soft]{transition:none}
+  .sb[data-soft]:active:not(:disabled){transform:none}
+}
+/* Tactile : sans survol, la lueur resterait « collée » après un tap. */
+@media(hover:none){
+  .sb[data-soft]:hover{--sb-glow:0 0 0 0 rgba(0,0,0,0)}
+}
+/* Échappatoire (débogage / machine très lente) : plus aucun relief. */
+:root[data-buttons="flat"] .sb[data-soft]{
+  box-shadow:none!important;transform:none!important;
+  border-top-color:inherit;border-bottom-color:inherit;
+}

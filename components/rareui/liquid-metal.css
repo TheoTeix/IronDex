@@ -1,0 +1,248 @@
+/* ════════════════════════════════════════════════════════════════════
+   LIQUID METAL — le matériau des boutons
+   ────────────────────────────────────────────────────────────────────
+   Les pixels du chrome viennent du composant RareUI `LiquidMetal`
+   (liquid-metal.js) : `LiquidMetal.bake()` rend le shader UNE fois hors
+   écran, en tire quelques PLAQUES (bitmaps) et les publie dans
+   `--lm-plate` / `--lm-stud` / `--lm-slab` (+ variantes claires `-hi`).
+   Cette feuille ne réinvente donc plus la recette : elle POSE le film et
+   dessine ce que le shader ne peut pas voir (l'arête, la pression, le
+   balayage au survol).
+
+   ── TROIS RÈGLES QUI EXPLIQUENT TOUT LE FICHIER ──
+
+   1. LE MÉTAL EST UN FILM, PAS DE LA PEINTURE. On ne touche qu'à
+      `background-image` : la `background-color` du bouton (l'accent doré du
+      primaire, le rouge du danger, le verre du ghost) reste celle de
+      style.css, et le chrome se pose PAR-DESSUS en semi-transparent. C'est
+      ce qui garde la hiérarchie ET les contrastes déjà réglés — la version
+      précédente empilait une teinte sur un dégradé zébré et sortait des
+      boutons gris à texte sombre. On ne déclare ici NI `color`, NI
+      `background-color`.
+
+   2. AUCUN `position`, AUCUN pseudo-élément, AUCUN `overflow`. Le balayage
+      spéculaire est une COUCHE DE FOND de plus, dont on anime la position.
+      Un `::after` flouté crée un calque peint même à `opacity:0` (mesuré :
+      ~500 calques inutiles sur une vue), et poser `position:relative` sur
+      un bouton écrasait la mise en page de ceux qui sont en `absolute`.
+      Le fond est clippé par `border-box` tout seul : rien à masquer.
+
+   3. AU REPOS, C'EST STATIQUE. Le film est un bitmap figé ; seul le bouton
+      réellement survolé (ou marqué `.lm-flow`) anime son balayage. Un seul
+      bouton en mouvement à la fois.
+
+   Spécificité : tous les sélecteurs sont en `.lm[data-lm]` (0,2,0). style.css
+   est chargée après cette feuille et ses `.btn-*` (0,1,0) gagnaient à
+   spécificité égale — le chrome n'apparaissait pas.
+   ════════════════════════════════════════════════════════════════════ */
+
+:root{
+  /* ── Replis : ce que voient les boutons AVANT (ou SANS) le bake ──
+     Même lecture que la plaque : une longue retombée sombre, un éclat
+     spéculaire vers 42 %, ses deux franges irisées, un retour d'ombre.
+     Sans WebGL2 le rendu reste crédible ; avec, il est remplacé par les
+     vrais pixels du shader (variables posées sur <html> par app.js). */
+  --lm-plate:linear-gradient(104deg,
+    rgba(255,255,255,.015) 0%, rgba(255,255,255,.055) 22%,
+    rgba(214,232,255,.14) 36%, rgba(255,255,255,.42) 43%,
+    rgba(255,238,222,.20) 48%, rgba(255,255,255,.05) 60%,
+    rgba(0,0,0,.10) 82%, rgba(0,0,0,.20) 100%);
+  --lm-plate-hi:linear-gradient(104deg,
+    rgba(255,255,255,.10) 0%, rgba(255,255,255,.18) 22%,
+    rgba(226,240,255,.34) 36%, rgba(255,255,255,.72) 43%,
+    rgba(255,240,224,.40) 48%, rgba(255,255,255,.16) 60%,
+    rgba(255,255,255,.04) 82%, rgba(0,0,0,.10) 100%);
+  --lm-stud:var(--lm-plate);
+  --lm-stud-hi:var(--lm-plate-hi);
+  --lm-slab:var(--lm-plate);
+  --lm-slab-hi:var(--lm-plate-hi);
+
+  /* Le balayage : la seule chose qui bouge. */
+  --lm-sweep-dur:2.4s;
+}
+
+/* La position du balayage est une propriété ENREGISTRÉE : sans `@property`,
+   un pourcentage personnalisé n'est pas interpolable et l'animation
+   saccaderait d'une keyframe à l'autre. */
+@property --lm-x{ syntax:'<percentage>'; inherits:false; initial-value:-70% }
+
+/* ══════════════ LE MATÉRIAU ══════════════ */
+.lm[data-lm]{
+  --lm-film:var(--lm-plate);
+  /* Couche 1 = le balayage (absent au repos), couche 2 = le film de chrome.
+     `background-color` n'est PAS touchée : voir règle 1 en tête de fichier. */
+  background-image:var(--lm-sheen,none),var(--lm-film);
+  background-repeat:no-repeat,no-repeat;
+  background-size:62% 130%,100% 100%;
+  background-position:var(--lm-x) 50%,50% 50%;
+  border:1px solid var(--lm-edge,rgba(255,255,255,.17));
+  /* Le biseau : arête haute vive, retour bas sombre. C'est lui qui donne
+     l'épaisseur — le shader rend une surface, pas un bord. */
+  box-shadow:
+    inset 0 1px 0 0 rgba(255,255,255,var(--lm-rim,.24)),
+    inset 0 -1px 0 0 rgba(0,0,0,.26),
+    var(--e1);
+  transition:background-color var(--dur-1) var(--ease-out),
+             border-color var(--dur-1) var(--ease-out),
+             box-shadow var(--dur-1) var(--ease-out),
+             color var(--dur-1) var(--ease-out),
+             transform var(--dur-0) var(--ease-out);
+}
+
+/* ── Le balayage spéculaire ──
+   Il n'existe QUE sur le bouton survolé / focalisé : `--lm-sheen` est
+   indéfini partout ailleurs, donc la couche vaut `none` et ne coûte rien. */
+@keyframes lm-sweep{ from{--lm-x:-70%} to{--lm-x:170%} }
+.lm[data-lm]:hover:not(:disabled),
+.lm[data-lm]:focus-visible,
+.lm[data-lm].lm-flow{
+  --lm-sheen:linear-gradient(100deg,
+    transparent 0%, rgba(255,255,255,.16) 30%, rgba(255,255,255,.50) 50%,
+    rgba(255,255,255,.16) 70%, transparent 100%);
+  animation:lm-sweep var(--lm-sweep-dur) var(--ease-in-out) infinite;
+}
+.lm[data-lm]:hover:not(:disabled){--lm-rim:.38;--lm-edge:rgba(255,255,255,.28)}
+/* Quelques CTA méritent de couler en permanence — à utiliser avec parcimonie. */
+.lm[data-lm].lm-flow{--lm-sweep-dur:5.5s}
+.lm[data-lm].lm-flow:not(:hover){--lm-sheen:linear-gradient(100deg,
+  transparent 0%, rgba(255,255,255,.10) 30%, rgba(255,255,255,.30) 50%,
+  rgba(255,255,255,.10) 70%, transparent 100%)}
+
+/* ── Pression : le métal s'enfonce, biseau inversé, pas de rebond ──
+   (le `scale(.97)` vient de `.btn:active` dans style.css) */
+.lm[data-lm]:active:not(:disabled){
+  --lm-sheen:none;
+  box-shadow:
+    inset 0 2px 5px 0 rgba(0,0,0,.40),
+    inset 0 -1px 0 0 rgba(255,255,255,.16),
+    var(--e1);
+}
+/* Un bouton inerte n'a pas de reflet : le métal disparaît, la forme reste. */
+.lm[data-lm]:disabled,.lm[data-lm][disabled]{--lm-film:none;--lm-rim:.08}
+
+/* ══════════════ ALLIAGES — la hiérarchie survit au métal ══════════════
+   Tous les boutons sont en chrome, mais l'ALLIAGE porte le rôle. Un alliage
+   ne choisit que deux choses : le TON du film et la vivacité de l'arête.
+   Les couleurs, elles, restent celles de style.css. */
+
+/* Primaire (accent PRISME) et succès : film CLAIR. Mesuré sur la version
+   précédente : un film sombre sur l'accent faisait tomber le libellé à
+   2,76:1 (échec AA franc). Un métal poli n'a de toute façon pas de noirs —
+   seul l'acier sombre en a. */
+.lm[data-lm].lm-primary,
+.lm[data-lm].lm-ok{
+  --lm-film:var(--lm-plate-hi);
+  --lm-rim:.46;
+  --lm-edge:rgba(255,255,255,.30);
+  text-shadow:0 1px 0 rgba(255,255,255,.30);
+}
+.lm[data-lm].lm-primary:hover:not(:disabled){--lm-rim:.60}
+
+/* Acier — secondaire, ghost : film sombre sur le verre. */
+.lm[data-lm].lm-steel{--lm-film:var(--lm-plate);--lm-rim:.20}
+
+/* Danger — le rouge de style.css reste la couleur, le métal l'habille. */
+.lm[data-lm].lm-danger{
+  --lm-film:var(--lm-plate);
+  --lm-rim:.22;
+  --lm-edge:rgba(255,138,158,.40);
+}
+
+/* ══════════════ CALIBRES ══════════════
+   Le film est un bitmap étiré à 100 % du bouton : il n'y a donc plus de
+   « période » à recaler par taille (l'ancienne feuille avait trois réglages
+   de zébrures). Reste l'ASPECT : une plaque 4:1 écrasée sur une pastille
+   ronde ou étirée sur une tuile haute devient méconnaissable. D'où deux
+   géométries de plus, cuites au bon ratio. */
+.lm[data-lm].lm-stud{--lm-film:var(--lm-stud);--lm-rim:.20}
+.lm[data-lm].lm-stud.lm-primary,.lm[data-lm].lm-stud.lm-ok{--lm-film:var(--lm-stud-hi)}
+.lm[data-lm].lm-slab{--lm-film:var(--lm-slab);--lm-rim:.18;--lm-sweep-dur:3.6s}
+.lm[data-lm].lm-slab.lm-primary{--lm-film:var(--lm-slab-hi)}
+
+/* ══════════════ ONGLETS DE NAVIGATION ══════════════
+   Ce sont des boutons, ils reçoivent donc un alliage — mais PAS le film de
+   chrome, et c'est un choix mesuré :
+   · au repos, une nav en métal permanent noierait l'état actif et rendrait
+     le rail illisible ;
+   · sur l'onglet ACTIF, la pastille d'accent est déjà dessinée par
+     `#nav-indicator` (`.rail-ind`) qui glisse derrière : y superposer une
+     plaque donnait une tache blanche qui doublait l'indicateur ;
+   · la plaque claire est un film SIGNÉ, fait pour poser de la lumière sur une
+     couleur — sur le presque-noir du rail, elle ne pose que du blanc.
+   Reste donc ce qu'un onglet doit avoir : une arête qui s'allume et un
+   soupçon de lumière rasante au survol. */
+.lm[data-lm].lm-nav{
+  --lm-film:none;
+  --lm-sheen:none;
+  animation:none;
+  border-color:transparent;
+  box-shadow:none;
+  text-shadow:none;
+}
+.lm[data-lm].lm-nav:hover:not(.active),
+.lm[data-lm].lm-nav:focus-visible{
+  --lm-film:linear-gradient(104deg,
+    rgba(255,255,255,.11) 0%, rgba(255,255,255,.03) 52%, rgba(255,255,255,.08) 100%);
+  border-color:rgba(255,255,255,.11);
+  box-shadow:inset 0 1px 0 0 rgba(255,255,255,.16);
+}
+.lm[data-lm].lm-nav:active:not(:disabled){box-shadow:inset 0 2px 4px 0 rgba(0,0,0,.30)}
+
+/* ══════════════ LE MOT EN CHROME (pièce maîtresse) ══════════════
+   Même plaque que les boutons, mais opaque et claire, découpée par le texte.
+   `background-clip:text` se moque de l'épaisseur du trait : les déliés fins
+   du Bodoni reçoivent du chrome, là où le champ de distance du shader n'avait
+   rien à mordre (voir dressMetalWord dans app.js).
+   La plaque GLISSE lentement — c'est le seul endroit de l'app où le métal
+   coule en continu, et il n'y a qu'un élément concerné. */
+/* Repli OPAQUE : les plaques des boutons sont des films semi-transparents,
+   inutilisables en remplissage de texte (le mot serait fantomatique). */
+:root{ --lm-word:linear-gradient(104deg,
+  #8E97A6 0%, #B7C0CE 20%, #E6EDF7 38%, #FFFFFF 45%,
+  #F2E7DC 50%, #C6CFDC 62%, #9AA3B2 80%, #7C8494 100%); }
+@keyframes lm-drift{ to{ background-position:100% 50% } }
+.lm-text{
+  background:var(--lm-word) no-repeat;
+  /* 140 % : la fenêtre montre ~70 % de la plaque, donc TOUJOURS l'arête
+     spéculaire et ses deux versants. À 210 % on ne voyait qu'un versant et le
+     mot retombait en aplat clair. */
+  background-size:140% 100%;
+  background-position:0% 50%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  animation:lm-drift 11s linear infinite;
+  /* La lueur colorée du hub reste : c'est elle qui pose le mot sur la page. */
+}
+@media(prefers-reduced-motion:reduce){ .lm-text{animation:none} }
+
+/* Le canvas du composant, si on l'instancie quelque part (API conservée). */
+.lm-canvas{display:block;width:100%;height:100%;position:absolute;inset:0;pointer-events:none}
+.lm-host{position:relative;display:inline-block;line-height:1}
+/* Le texte reste dans le DOM (lecteurs d'écran, sélection) ET VISIBLE tant
+   que le canvas n'a pas peint sa première frame : un effet qui échoue ne
+   doit jamais faire disparaître un titre. */
+.lm-host > .lm-label{opacity:1}
+.lm-host.lm-painted > .lm-label{opacity:0}
+.lm-fallback > .lm-label{opacity:1}
+
+/* ══════════════ GARDE-FOUS ══════════════ */
+/* Mouvement réduit : le chrome RESTE (c'est une matière, pas un mouvement),
+   il ne coule plus. Aucune boucle, aucune couche de balayage. */
+@media(prefers-reduced-motion:reduce){
+  .lm[data-lm],.lm[data-lm]:hover,.lm[data-lm]:focus-visible,.lm[data-lm].lm-flow{
+    --lm-sheen:none!important;animation:none!important;
+  }
+}
+/* Tactile : sans survol, le balayage resterait « collé » après un tap.
+   Il n'apparaît qu'à la pression, et une seule fois. */
+@media(hover:none){
+  .lm[data-lm]:hover{--lm-sheen:none;animation:none}
+  .lm[data-lm]:active:not(:disabled){
+    --lm-sheen:linear-gradient(100deg,transparent,rgba(255,255,255,.34) 50%,transparent);
+    animation:lm-sweep .7s var(--ease-out) 1;
+  }
+}
+/* Échappatoire (débogage / machine très lente) : plus aucun métal. */
+:root[data-metal="off"] .lm[data-lm]{
+  --lm-film:none;--lm-sheen:none;animation:none;box-shadow:var(--e1);
+}

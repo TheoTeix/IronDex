@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#06070A">
+  <meta name="description" content="MiloDex — le coffre de ta collection Pokémon : valeur, wishlists, portefeuille et classeurs 3D.">
+  <title>MiloDex — Le Coffre</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=milo">
+  <link rel="apple-touch-icon" href="favicon.png?v=milo">
+  <link rel="stylesheet" href="style.css?v=ui8">
+</head>
+<body>
+
+<a class="skip-link" href="#main">Aller au contenu</a>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     LIQUID GLASS — filtres de réfraction
+     Technique : lucasromerodb/liquid-glass-effect-macos (via freefrontend).
+     Une nappe de bruit fractal sert de carte de déplacement : le fond déjà
+     flouté par backdrop-filter est PLIÉ, ce qui donne la réfraction du verre
+     (au lieu d'un simple flou de glassmorphism).
+
+     Deux écarts ASSUMÉS par rapport à la source :
+     1. Dans l'original, `feComponentTransfer` (→ mapped) et `feComposite`
+        (→ litImage) ne sont JAMAIS consommés : feDisplacementMap repart de
+        SourceGraphic. Le feSpecularLighting y est donc inerte, et le reflet
+        vient uniquement du box-shadow CSS. Ici le spéculaire est CÂBLÉ :
+        on déplace d'abord, puis on ajoute la lumière par-dessus.
+     2. `scale` de l'original = 150 : magnifique sur un dock de 400 px posé
+        sur une photo chargée, illisible sur des panneaux pleine largeur (le
+        déplacement va chercher des pixels 150 px plus loin → bavures). D'où
+        trois intensités, choisies selon la TAILLE de la surface.
+     ══════════════════════════════════════════════════════════════════ -->
+<svg class="lg-defs" aria-hidden="true" focusable="false">
+  <defs>
+    <!-- Verre doux : petites surfaces (cartes, tuiles, contrôles) -->
+    <filter id="lg-soft" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.012" numOctaves="1" seed="5" result="noise"/>
+      <feGaussianBlur in="noise" stdDeviation="3" result="softMap"/>
+      <feDisplacementMap in="SourceGraphic" in2="softMap" scale="16" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feSpecularLighting in="softMap" surfaceScale="3" specularConstant="0.5" specularExponent="95" lighting-color="#ffffff" result="spec">
+        <fePointLight x="-160" y="-160" z="260"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="displaced" operator="in" result="specClipped"/>
+      <feComposite in="specClipped" in2="displaced" operator="arithmetic" k1="0" k2="1" k3="0.6" k4="0"/>
+    </filter>
+
+    <!-- Verre moyen : chrome de l'app (rail, barre haute, tab bar, modales) -->
+    <filter id="lg-med" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.008" numOctaves="1" seed="14" result="noise"/>
+      <feGaussianBlur in="noise" stdDeviation="4" result="softMap"/>
+      <feDisplacementMap in="SourceGraphic" in2="softMap" scale="38" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feSpecularLighting in="softMap" surfaceScale="4" specularConstant="0.55" specularExponent="90" lighting-color="#ffffff" result="spec">
+        <fePointLight x="-200" y="-200" z="300"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="displaced" operator="in" result="specClipped"/>
+      <feComposite in="specClipped" in2="displaced" operator="arithmetic" k1="0" k2="1" k3="0.7" k4="0"/>
+    </filter>
+
+    <!-- Verre franc : le héro, la seule très grande surface de verre -->
+    <filter id="lg-strong" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.005 0.006" numOctaves="2" seed="17" result="noise"/>
+      <feGaussianBlur in="noise" stdDeviation="5" result="softMap"/>
+      <feDisplacementMap in="SourceGraphic" in2="softMap" scale="70" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feSpecularLighting in="softMap" surfaceScale="5" specularConstant="0.6" specularExponent="100" lighting-color="#ffffff" result="spec">
+        <fePointLight x="-220" y="-200" z="320"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="displaced" operator="in" result="specClipped"/>
+      <feComposite in="specClipped" in2="displaced" operator="arithmetic" k1="0" k2="1" k3="0.8" k4="0"/>
+    </filter>
+  </defs>
+</svg>
+
+<!-- ══ INTRO : chargement réel (modèles 3D) puis révélation ══ -->
+<div id="intro">
+  <canvas id="intro-canvas"></canvas>
+  <div class="intro-strike" id="intro-strike"></div>
+  <div class="intro-vignette"></div>
+  <div class="intro-hud">
+    <span class="intro-mark" aria-hidden="true"><img src="logo.png?v=milo" alt=""></span>
+    <div class="intro-logo">Milo<span>Dex</span></div>
+    <div class="intro-tag">Le coffre</div>
+    <div class="intro-bar-wrap"><div class="intro-bar" id="intro-bar"></div></div>
+    <div class="intro-pct" id="intro-pct" role="status" aria-live="polite">0%</div>
+  </div>
+  <div class="intro-flash" id="intro-flash"></div>
+</div>
+
+<!-- ══ AURORA — la matière que le verre réfracte ══
+     Le liquid glass ne « lit » que s'il y a quelque chose de riche DERRIÈRE :
+     le demo d'origine est posé sur une photo florale chargée. Sur l'acier
+     quasi-noir de MiloDex il n'y avait rien à plier, donc le verre paraissait
+     être un simple calque gris. Ces trois nappes colorées (pilotées par
+     PRISME, donc par la carte regardée) dérivent lentement derrière toute
+     l'app : c'est elles que la carte de déplacement tord. -->
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<div class="app">
+
+  <!-- ══ RAIL (≥1024px) — navigation principale ══
+       Sur petit écran il disparaît au profit de la tab bar du bas ; les deux
+       portent les MÊMES boutons .nav-btn (même état actif, un seul code JS). -->
+  <aside class="rail">
+    <div class="rail-brand">
+      <span class="brand-mark" aria-hidden="true"><img src="logo.png?v=milo" alt=""></span>
+      <span class="brand-word">Milo<i>Dex</i></span>
+    </div>
+
+    <nav class="rail-nav" aria-label="Navigation principale">
+      <span class="rail-ind" id="nav-indicator" aria-hidden="true"></span>
+      <button class="nav-btn active" data-view="home" onclick="navigate('home')">
+        <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 8.5 12 13l8-4.5M12 13v7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity=".55"/></svg></span>
+        <span class="nav-label">Coffre</span>
+      </button>
+      <button class="nav-btn" data-view="wishlists" onclick="navigate('wishlists')">
+        <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M12 20.3S3.3 15.4 3.3 9.2C3.3 6.3 5.4 4.3 8 4.3c1.9 0 3.1 1 4 2.2.9-1.2 2.1-2.2 4-2.2 2.6 0 4.7 2 4.7 4.9 0 6.2-8.7 11.1-8.7 11.1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+        <span class="nav-label">Wishlists</span>
+        <span class="nav-badge" id="badge-wishlists">0</span>
+      </button>
+      <button class="nav-btn" data-view="invest" onclick="navigate('invest')">
+        <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m7 14 3.4-3.6 3 2.4L20.5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 6h4v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg></span>
+        <span class="nav-label">Portefeuille</span>
+        <span class="nav-badge" id="badge-invest">0</span>
+      </button>
+      <button class="nav-btn" data-view="binders" onclick="navigate('binders')">
+        <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 4v16M11 8.5h5.5M11 12h5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+        <span class="nav-label">Classeurs</span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <!-- Palette de commandes : sauter à une vue, retrouver n'importe quelle
+           carte de la collection, lancer la synchro. Voir openPalette(). -->
+      <button class="rail-cmd" onclick="openPalette()" aria-label="Rechercher une carte ou une commande">
+        <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <span>Rechercher…</span>
+        <kbd class="kbd">⌘K</kbd>
+      </button>
+    </div>
+  </aside>
+
+  <div class="frame">
+    <!-- ══ BARRE HAUTE ══ Contextuelle : dit où l'on est, offre les actions
+         globales. Son bas est mesuré par syncMiloHeadroom() (classeur 3D). -->
+    <header class="app-header">
+      <div class="tb-brand">
+        <span class="brand-mark" aria-hidden="true"><img src="logo.png?v=milo" alt=""></span>
+        <span class="brand-word">Milo<i>Dex</i></span>
+      </div>
+      <div class="tb-title">
+        <span class="tb-eyebrow" id="tb-eyebrow">MiloDex</span>
+        <span class="tb-name" id="tb-name">Le Coffre</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openPalette()" title="Rechercher (⌘K)" aria-label="Rechercher">
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        </button>
+        <!-- Sync : recote TOUTES les cartes de l'app puis enregistre. Les cotes
+             sont relues du disque au démarrage → valeurs instantanées, hors
+             ligne comprise. Voir syncPrices(). -->
+        <button class="btn btn-grade btn-sm btn-icon btn-sync" id="btn-sync" onclick="syncPrices()"
+          title="Mettre à jour les cotes" aria-label="Mettre à jour les cotes">
+          <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn btn-ghost btn-sm btn-icon btn-refresh" id="btn-refresh" onclick="refreshSeries()"
+          title="Chercher les nouvelles séries" aria-label="Chercher les nouvelles séries">
+          <svg class="refresh-ico" viewBox="0 0 24 24" fill="none" width="15" height="15" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <!-- Enregistrement AUTOMATIQUE : aucun bouton de sauvegarde. La pastille
+             pulse à chaque écriture ; seul un ÉCHEC parle (toast).
+             Secours clavier jamais affiché : ⌘S = export, ⇧⌘R = récupération. -->
+        <span class="save-dot" id="save-dot" title="Enregistré automatiquement" aria-hidden="true"></span>
+      </div>
+    </header>
+
+    <main class="main" id="main">
+      <div class="wrap">
+        <div id="view-home" class="view active"></div>
+        <div id="view-wishlists" class="view"></div>
+        <div id="view-wishlist-detail" class="view"></div>
+        <div id="view-invest" class="view"></div>
+        <div id="view-binders" class="view"></div>
+        <div id="view-binder-detail" class="view"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ══ TAB BAR (mobile) — mêmes 4 destinations, en bas, dans le pouce ══ -->
+  <nav class="tabbar" aria-label="Navigation principale">
+    <button class="nav-btn active" data-view="home" onclick="navigate('home')">
+      <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 8.5 12 13l8-4.5M12 13v7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity=".55"/></svg></span>
+      <span class="nav-label">Coffre</span>
+    </button>
+    <button class="nav-btn" data-view="wishlists" onclick="navigate('wishlists')">
+      <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M12 20.3S3.3 15.4 3.3 9.2C3.3 6.3 5.4 4.3 8 4.3c1.9 0 3.1 1 4 2.2.9-1.2 2.1-2.2 4-2.2 2.6 0 4.7 2 4.7 4.9 0 6.2-8.7 11.1-8.7 11.1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+      <span class="nav-label">Wishlists</span>
+      <span class="nav-badge" id="badge-wishlists-m">0</span>
+    </button>
+    <button class="nav-btn" data-view="invest" onclick="navigate('invest')">
+      <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m7 14 3.4-3.6 3 2.4L20.5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="nav-label">Portefeuille</span>
+      <span class="nav-badge" id="badge-invest-m">0</span>
+    </button>
+    <button class="nav-btn" data-view="binders" onclick="navigate('binders')">
+      <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 4v16M11 8.5h5.5M11 12h5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <span class="nav-label">Classeurs</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Les toasts n'attrapent jamais le focus ; aria-live poli pour les lecteurs d'écran. -->
+<div id="toast-container" role="status" aria-live="polite"></div>
+
+<!-- ══ PALETTE DE COMMANDES (⌘K) ══ -->
+<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Recherche et commandes" onclick="if(event.target===this)closePalette()">
+  <div class="palette-box">
+    <div class="palette-top">
+      <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      <input class="palette-input" id="palette-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Une carte, une wishlist, une commande…" aria-label="Rechercher"
+             aria-controls="palette-list" role="combobox" aria-expanded="true">
+      <button class="modal-close" onclick="closePalette()" aria-label="Fermer">✕</button>
+    </div>
+    <div class="palette-list" id="palette-list" role="listbox" aria-label="Résultats"></div>
+    <div class="palette-foot">
+      <span><kbd class="kbd">↑</kbd><kbd class="kbd">↓</kbd> naviguer</span>
+      <span><kbd class="kbd">↵</kbd> ouvrir</span>
+      <span><kbd class="kbd">esc</kbd> fermer</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Lightbox : visuel de carte en grand ══ -->
+<div class="lightbox" id="photo-lightbox" onclick="closePhotoLightbox()">
+  <button class="lightbox-close" aria-label="Fermer" onclick="event.stopPropagation();closePhotoLightbox()">✕</button>
+  <figure class="lightbox-figure" onclick="event.stopPropagation()">
+    <img id="lightbox-img" class="lightbox-img" alt="Carte en grand">
+    <figcaption class="lightbox-cap" id="lightbox-cap"></figcaption>
+  </figure>
+</div>
+
+<!-- ══ Overlay : synchro (séries + cotes) ══ -->
+<div class="refresh-overlay" id="refresh-overlay" role="status" aria-live="polite">
+  <canvas class="refresh-canvas" id="refresh-canvas"></canvas>
+  <canvas class="refresh-canvas refresh-canvas-3d" id="refresh-canvas-3d"></canvas>
+  <div class="refresh-core">
+    <div class="refresh-ring" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="refresh-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="refresh-title" id="refresh-title">Synchronisation</div>
+    <div class="refresh-sub" id="refresh-sub">Recherche de nouvelles séries…</div>
+    <!-- Progression carte par carte, affichée seulement pendant syncPrices() -->
+    <div class="refresh-prog" id="refresh-prog"><i></i></div>
+  </div>
+</div>
+
+<!-- ══ Modale : nouvelle wishlist ══ -->
+<div class="modal-overlay" id="modal-create-wishlist" role="dialog" aria-modal="true" aria-labelledby="t-cw">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title" id="t-cw">Nouvelle wishlist</div><button class="modal-close" onclick="closeModal('modal-create-wishlist')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body">
+      <div class="input-group stagger" style="--i:0;margin-bottom:0">
+        <label class="input-label" for="wishlist-name-input">Nom de la wishlist</label>
+        <input id="wishlist-name-input" class="input" placeholder="ex : Dracaufeu, EX à compléter…" onkeydown="if(event.key==='Enter')createWishlist()">
+        <span class="input-help">Tu pourras la renommer à tout moment.</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-create-wishlist')">Annuler</button>
+      <button class="btn btn-wish" onclick="createWishlist()">Créer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Modale : nouveau classeur ══ -->
+<div class="modal-overlay" id="modal-create-binder" role="dialog" aria-modal="true" aria-labelledby="t-cb">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><div class="modal-title" id="t-cb">Nouveau classeur</div><button class="modal-close" onclick="closeModal('modal-create-binder')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body">
+      <div class="input-group stagger" style="--i:0">
+        <label class="input-label" for="binder-name-input">Nom du classeur</label>
+        <input id="binder-name-input" class="input" placeholder="ex : Dracaufeu, Full arts, Vintage…" onkeydown="if(event.key==='Enter')createBinder()">
+      </div>
+      <div class="input-group stagger" style="--i:1;margin-bottom:0">
+        <label class="input-label">Cartes par page</label>
+        <div class="seg" id="binder-pp-seg" role="group" aria-label="Cartes par page">
+          <button class="seg-btn active" data-pp="4" onclick="setBinderPerPage(4,this)">4 · pochettes 2×2</button>
+          <button class="seg-btn" data-pp="9" onclick="setBinderPerPage(9,this)">9 · pochettes 3×3</button>
+        </div>
+        <span class="input-help">Ce réglage fixe la mise en page des pochettes du classeur.</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-create-binder')">Annuler</button>
+      <button class="btn btn-milo" onclick="createBinder()">Créer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Modale : renommer un classeur ══ -->
+<div class="modal-overlay" id="modal-rename-binder" role="dialog" aria-modal="true" aria-labelledby="t-rb">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title" id="t-rb">Renommer le classeur</div><button class="modal-close" onclick="closeModal('modal-rename-binder')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body">
+      <div class="input-group stagger" style="--i:0;margin-bottom:0">
+        <label class="input-label" for="binder-rename-input">Nom</label>
+        <input id="binder-rename-input" class="input" onkeydown="if(event.key==='Enter')renameBinder()">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-rename-binder')">Annuler</button>
+      <button class="btn btn-milo" onclick="renameBinder()">Renommer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Modale : renommer une wishlist ══ -->
+<div class="modal-overlay" id="modal-rename-wishlist" role="dialog" aria-modal="true" aria-labelledby="t-rw">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title" id="t-rw">Renommer la wishlist</div><button class="modal-close" onclick="closeModal('modal-rename-wishlist')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="rename-wishlist-id">
+      <div class="input-group stagger" style="--i:0;margin-bottom:0">
+        <label class="input-label" for="rename-wishlist-input">Nouveau nom</label>
+        <input id="rename-wishlist-input" class="input" placeholder="Nom de la wishlist" onkeydown="if(event.key==='Enter')confirmRenameWishlist()">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-rename-wishlist')">Annuler</button>
+      <button class="btn btn-wish" onclick="confirmRenameWishlist()">Renommer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Modale : choisir la pièce maîtresse ══ -->
+<div class="modal-overlay" id="modal-feature-picker" role="dialog" aria-modal="true" aria-labelledby="feature-picker-title">
+  <div class="modal" style="max-width:660px">
+    <div class="modal-header"><div class="modal-title" id="feature-picker-title">Pièce maîtresse du coffre</div><button class="modal-close" onclick="closeModal('modal-feature-picker')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body" id="feature-picker-body" style="min-height:200px"></div>
+  </div>
+</div>
+
+<!-- ══ Modale : fiche de carte ══ -->
+<div class="modal-overlay detail-layer" id="modal-card-detail" role="dialog" aria-modal="true" aria-label="Détail de la carte">
+  <div class="modal detail-modal">
+    <div class="modal-header"><div class="modal-title">Détail de la carte</div><button class="modal-close" onclick="closeModal('modal-card-detail')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body" id="detail-body" style="min-height:260px"></div>
+  </div>
+</div>
+
+<!-- ══ Modale : catalogue (ajout de cartes) ══ -->
+<div class="modal-overlay picker-layer" id="modal-card-picker" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+  <div class="modal" style="max-width:820px">
+    <div class="modal-header"><div class="modal-title" id="picker-title">Choisir une carte</div><button class="modal-close" onclick="closeModal('modal-card-picker')" aria-label="Fermer">✕</button></div>
+    <div class="modal-body" id="picker-body" style="min-height:340px"></div>
+    <div class="modal-footer" id="picker-footer" style="display:none">
+      <span class="picker-count" id="picker-added-count" style="margin-right:auto">Clique les cartes à ajouter</span>
+      <button class="btn btn-wish" onclick="finishPicker()">Terminé</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- SheetJS : lecture des .xlsx/.csv importés dans le Portefeuille.
+     defer : ne bloque pas le rendu ; window.XLSX est prêt avant interaction. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="model-data.js"></script>
+<!-- Base locale des fiches Cardmarket (idProduct/numéro → slug exact). -->
+<script src="cm-slugs.js" defer></script>
+<script src="app.js?v=ui8"></script>
+</body>
+</html>
