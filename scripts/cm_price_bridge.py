@@ -47,11 +47,26 @@ except ImportError:
 HOME_URL = 'https://www.cardmarket.com/fr/Pokemon'
 COOKIE_FILE = os.path.expanduser('~/.irondex/cm-cookies.json')
 PROFILE = os.path.expanduser('~/.irondex/cm-bridge-profile')
+# `--login` a besoin d'un navigateur INSTALLÉ (le Chromium de Playwright ne
+# passe pas Cloudflare). On couvre macOS, Windows et Linux : le pont peut ainsi
+# tourner sur un PC tour comme sur le Mac.
 BROWSERS = [
+    # macOS
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    # Windows
+    r'C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe',
+    r'C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe',
+    r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+    r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+    r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+    os.path.expandvars(r'%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+    os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
+    # Linux
+    '/usr/bin/brave-browser', '/usr/bin/google-chrome', '/usr/bin/chromium',
+    '/usr/bin/chromium-browser', '/snap/bin/chromium',
 ]
 UA_FALLBACK = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
                '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36')

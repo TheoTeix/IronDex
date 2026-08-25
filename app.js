@@ -677,13 +677,15 @@ async function ghPull() {
 }
 // Les cotes voyagent aussi : le pont Cardmarket ne tourne que sur le Mac,
 // l'iPhone se contente de lire le résultat de la dernière synchro.
+// Renvoie le NOMBRE de cotes reprises (0 si le dépôt n'a rien de plus récent) :
+// le bouton Sync s'en sert pour savoir s'il a pu rendre service.
 async function ghPullPrices() {
   const c = ghCfg();
-  if (!c.owner || !c.repo) return;
+  if (!c.owner || !c.repo) return 0;
   const remote = await ghRead(GH_PATHS.prices);
-  if (!remote || !remote.prices) return;
+  if (!remote || !remote.prices) return 0;
   const rt = Number(remote.syncedAt) || 0;
-  if (rt <= priceSyncedAt()) return;
+  if (rt <= priceSyncedAt()) return 0;
   let n = 0;
   for (const k in remote.prices) {
     const v = remote.prices[k];
@@ -695,6 +697,7 @@ async function ghPullPrices() {
     window._vaultCounted = false; window._investCountedCards = false;
     renderViewContent(state.view);
   }
+  return n;
 }
 
 // ── Réglages du coffre en ligne ───────────────────────────────────
@@ -2383,10 +2386,6 @@ function syncPricesBusy() { return _syncBusy; }
 async function syncPrices() {
   if (_syncBusy) return;
   if (_refreshBusy) { toast('Actualisation des séries en cours…'); return; }
-  // Des identifiants faux ne se corrigent pas avec des cotes : on répare la
-  // donnée d'abord, sinon la synchro cherche des cartes qui n'existent pas.
-  const repaired = await repairInvestCardIds().catch(() => 0);
-  if (repaired) toast(`${repaired} carte${repaired > 1 ? 's' : ''} recollée${repaired > 1 ? 's' : ''} à la bonne série`, 'success');
   const ids = trackedCardIds();
   if (!ids.length) { toast('Aucune carte à synchroniser pour l\u2019instant'); return; }
   // Le pont Cardmarket est interrogé AVANT de commencer : c'est lui qui décide
@@ -2399,6 +2398,16 @@ async function syncPrices() {
   // s'arrête et on le dit ; un second clic dans les 20 s passe outre (parfois
   // on veut juste des valeurs, n'importe lesquelles).
   if (!cmBridgeUp()) {
+    // Sur une machine sans pont (un PC sous Windows, par exemple), recalculer
+    // n'a aucun sens : les cotes se calculent là où le pont tourne et voyagent
+    // par le dépôt. Le geste utile ici est donc de les RÉCUPÉRER. C'est ce que
+    // le bouton fait maintenant, au lieu de refuser avec un message de 2 s.
+    const got = await ghPullPrices().catch(() => 0);
+    if (got) {
+      refreshSyncMeta();
+      toast(`${got.toLocaleString('fr-FR')} cotes récupérées depuis le dépôt`, 'success');
+      return;
+    }
     if (Date.now() > _syncForceUntil) {
       _syncForceUntil = Date.now() + 20000;
       // Trois pannes distinctes, trois consignes différentes : le pont n'est pas
@@ -2406,13 +2415,20 @@ async function syncPrices() {
       // injoignable. Dire « éteint » dans le deuxième cas envoyait chercher au
       // mauvais endroit.
       toast(!_cmBridge.up
-        ? 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)'
+        ? (ghCfg().owner
+            ? 'Pas de pont ici et le dépôt n\u2019a rien de plus récent : lance la synchro depuis la machine qui a le pont. (Re-cliquer = cotes moyennes.)'
+            : 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)')
         : 'Accès Cardmarket expiré : lance « cm_price_bridge.py --login » (une fenêtre, 10 s), puis re-clique.', 'error');
       return;
     }
     _syncForceUntil = 0;
   }
   const srcLabel = cmBridgeUp() ? 'premier prix FR · Near Mint' : 'moyennes — pont Cardmarket éteint';
+  // Des identifiants faux ne se corrigent pas avec des cotes : on répare la
+  // donnée juste avant de coter, sinon la synchro cherche des cartes qui
+  // n'existent pas (voir repairInvestCardIds).
+  const repaired = await repairInvestCardIds().catch(() => 0);
+  if (repaired) toast(`${repaired} carte${repaired > 1 ? 's' : ''} recollée${repaired > 1 ? 's' : ''} à la bonne série`, 'success');
   _syncBusy = true;
   document.querySelectorAll('.btn-sync').forEach(b => { b.classList.add('spinning'); b.disabled = true; });
   const overlay = document.getElementById('refresh-overlay');
