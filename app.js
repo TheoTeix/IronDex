@@ -537,21 +537,46 @@ async function ghRead(path) {
   } catch {}
   return null;
 }
-async function ghWrite(path, obj, message) {
+// `sha` du dernier état ÉCRIT par nous, renvoyé par le PUT. L'utiliser évite
+// à la fois un appel de listing et la course qui provoquait le 409 :
+// « data/collection.json does not match <sha> » — l'API GitHub sert parfois un
+// listing d'il y a quelques secondes, et le sha était déjà périmé au moment du
+// PUT.
+const _ghSha = {};
+async function ghWrite(path, obj, message, attempt = 0) {
   const c = ghCfg();
   if (!c.on) return { ok: false, reason: 'coffre en ligne non configuré' };
-  const sha = await ghSha(path).catch(() => null);
+  let sha = _ghSha[path];
+  if (!sha) sha = await ghSha(path).catch(() => null);
   const body = JSON.stringify(Object.assign(
     { message, content: ghB64(JSON.stringify(obj)), branch: c.branch }, sha ? { sha } : {}));
   let r;
   try { r = await ghApi(`/contents/${path}`, { method: 'PUT', body, ms: 90000 }); }
   catch (e) { return { ok: false, reason: 'réseau injoignable' }; }
-  if (r.ok) return { ok: true };
+  if (r.ok) {
+    // On garde le sha renvoyé : le prochain envoi part avec la bonne référence.
+    try { const d = await r.json(); if (d?.content?.sha) _ghSha[path] = d.content.sha; } catch {}
+    return { ok: true };
+  }
   let msg = '';
   try { msg = (await r.json()).message || ''; } catch {}
-  // 409 = quelqu'un d'autre (l'autre appareil) a écrit entre-temps : ce n'est
-  // pas une erreur à masquer, c'est un conflit qui doit remonter.
-  return { ok: false, status: r.status, reason: msg || `HTTP ${r.status}`, conflict: r.status === 409 };
+  // 409 (ou « does not match ») = le fichier a bougé depuis notre référence.
+  // Ce n'est pas une erreur à afficher : c'est une référence à rafraîchir. On
+  // relit le sha et on réessaie — jusqu'à 3 fois, avec un court répit.
+  const stale = r.status === 409 || /does not match|sha/i.test(msg);
+  if (stale) {
+    delete _ghSha[path];
+    if (attempt < 2) {
+      await new Promise(res => setTimeout(res, 700 * (attempt + 1)));
+      return ghWrite(path, obj, message, attempt + 1);
+    }
+    // Trois échecs : ce n'est plus une course, c'est un autre appareil qui a
+    // vraiment écrit. On lui laisse la main s'il est plus récent (même règle
+    // que partout : le plus récent gagne) au lieu de l'écraser.
+    return { ok: false, status: r.status, conflict: true,
+             reason: 'un autre appareil a écrit entre-temps' };
+  }
+  return { ok: false, status: r.status, reason: msg || `HTTP ${r.status}` };
 }
 // ── Envoi débouncé ────────────────────────────────────────────────
 // Une modification déclenche un commit 4 s plus tard : assez pour fusionner
@@ -589,7 +614,14 @@ async function ghFlush() {
     if (!res.ok) { fail = res; _ghPend[job] = true; }   // on retentera
   }
   _ghBusy = false;
-  if (fail) {
+  if (fail && fail.conflict) {
+    // Conflit assumé : on relit le dépôt (le plus récent gagne) et on ne
+    // réécrit pas par-dessus. Silencieux exprès — c'est le fonctionnement
+    // normal de deux appareils, pas une panne à signaler à chaque fois.
+    _ghErr = '';
+    await ghPull().catch(() => {});
+    ghPaintStatus('ok');
+  } else if (fail) {
     _ghErr = fail.reason || '';
     ghPaintStatus('error');
     // Un échec d'envoi n'est PAS silencieux : sinon l'utilisateur croit que
@@ -623,6 +655,7 @@ async function ghPull() {
   const c = ghCfg();
   if (!c.owner || !c.repo) return;
   _ghLastPull = Date.now();
+  delete _ghSha[GH_PATHS.collection];   // notre référence n'est plus fiable
   const remote = await ghRead(GH_PATHS.collection);
   if (!remote || typeof remote !== 'object') return;
   const rt = Date.parse(remote.lastUpdated || 0) || 0;
