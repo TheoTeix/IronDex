@@ -6861,6 +6861,11 @@ function setInvestMode(m) {
 }
 function renderInvestBody() {
   const body = document.getElementById('inv-mode-body'); if (!body) return;
+  // Dans une série ouverte, le sélecteur Scellé/Cartes fait partie du « haut de
+  // section » qui n'a plus lieu d'être : la flèche de retour ramène à la grille,
+  // et il réapparaît là. Un attribut, pas un re-render (la bascule est animée).
+  document.getElementById('view-invest')?.toggleAttribute('data-series-open',
+    !!(state.investMode === 'cards' && state.investSeriesOpen));
   // La lumière au curseur et les révélations sont (ré)attachées après chaque
   // rendu du volet : les deux moteurs ignorent les nœuds déjà équipés.
   setTimeout(() => { attachSpotlights(body); attachReveals(body); }, 0);
@@ -7081,6 +7086,10 @@ function investCardsBodyHTML() {
   const total = cardsTotalValue(), invested = cardsTotalInvested();
   const groups = cardsGrouped();
   const nCards = state.investCards.length;
+  // Série ouverte = on est DANS une série : le titre « Portefeuille cartes »,
+  // son texte d'explication, les boutons d'import et les compteurs globaux
+  // n'ont plus rien à y faire. On ne garde que le logo, le retour et le « + ».
+  if (nCards && state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen);
   return `
     <div class="inv-hero spot">
       <div class="inv-hero-glow" aria-hidden="true"></div>
@@ -7125,13 +7134,13 @@ function cardsSeriesDetailHTML(setId) {
   if (!g) { state.investSeriesOpen = null; return cardsSeriesGridHTML(groups); }
   const cards = g.cards.slice().sort((a, b) => (cardCote(b) ?? -1) - (cardCote(a) ?? -1));
   return `
-    <div class="cardser-detail-head">
-      <button class="picker-back" onclick="closeInvestSeries()">${ICO.left}<span>Toutes les séries</span></button>
-      ${g.logo ? `<div class="cardser-detail-logo"><img src="${g.logo}.png" alt="" onerror="this.closest('.cardser-detail-logo').remove()"></div>` : ''}
-      <div class="cardser-detail-title">
-        <h2>${esc(g.setName)}</h2>
-        <span class="cardser-detail-meta">${g.count} carte${g.count > 1 ? 's' : ''} · ${fmt(g.value)}</span>
-      </div>
+    <div class="cardser-bar">
+      <button class="cardser-back" onclick="closeInvestSeries()" title="Toutes les séries" aria-label="Retour aux séries">${ICO.left}</button>
+      ${g.logo
+        ? `<div class="cardser-bar-logo"><img src="${g.logo}.png" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
+        : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
+      <button class="cardser-add" onclick="addInvestCard('${esc(String(g.setId))}')" title="Ajouter une carte à ${esc(g.setName)}" aria-label="Ajouter une carte à cette série">${ICO.plus || PLUS}</button>
+      <span class="cardser-bar-meta">${g.count} · ${fmt(g.value)}</span>
     </div>
     <div class="cardlist">${cards.map(cardTileHTML).join('')}</div>`;
 }
@@ -7252,9 +7261,13 @@ function refreshSealedTotalsUI() {
 // ── Édition CARTES ──────────────────────────────────────────────
 // « Ajouter une carte » n'crée RIEN tant qu'une carte n'a pas été choisie :
 // annuler le sélecteur ne doit pas laisser de ligne vide « Série inconnue ».
-function addInvestCard() {
+// `setId` : on entre directement dans les cartes de CETTE série. Cliquer « + »
+// depuis une série et devoir la re-choisir dans une liste de 200 était un
+// détour absurde.
+async function addInvestCard(setId) {
   state._investCardTarget = null;   // mode création (voir pickCard)
-  openCardPicker('investCard');
+  await openCardPicker('investCard');
+  if (setId) { try { await pickSet(String(setId)); } catch (e) { console.warn('pickSet', e); } }
 }
 function deleteInvestCard(id) {
   const i = state.investCards.findIndex(x => x.id === id); if (i < 0) return;
