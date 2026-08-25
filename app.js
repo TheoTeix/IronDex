@@ -2263,11 +2263,14 @@ async function syncPrices() {
 // inconnues) et rapporte la progression réelle (0→1). Chaque tâche a un délai
 // de sécurité pour ne jamais bloquer le loader.
 function preloadEverything(onProgress) {
-  const total = 2;                    // l'intro n'attend QUE les 2 modèles 3D
+  // Sur téléphone il n'y a AUCUN modèle à attendre : la barre part directement
+  // à 100 % au lieu de faire patienter sur 9 Mo qui ne seront pas affichés.
+  const phone = isPhone();
+  const total = phone ? 1 : 2;
   let done = 0;
   const bump = () => { done++; if (onProgress) onProgress(done / total); };
   const withTimeout = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), new Promise(r => setTimeout(r, ms))]);
-  const modelJobs = [
+  const modelJobs = phone ? [Promise.resolve().then(bump)] : [
     withTimeout(loadModelSource('milotic', window.MILOTIC_GLB_BASE64, 'milotic.glb'), 15000).then(bump),
     withTimeout(loadModelSource('giratina', window.GIRATINA_GLB_BASE64, 'giratina.glb'), 15000).then(bump),
   ];
@@ -5813,6 +5816,7 @@ function stopRefreshFX() {
 // arrière-plan des anneaux du HUD. Rend l'attente spectaculaire.
 let _refresh3D = null;
 function startRefresh3D() {
+  if (isPhone()) return;   // pas de modèles chargés sur téléphone (voir isPhone)
   const canvas = document.getElementById('refresh-canvas-3d');
   const THREE = window.THREE;
   if (!canvas || !THREE || !THREE.GLTFLoader) return;
@@ -6377,7 +6381,11 @@ function runIntro(onReveal) {
   const shell = document.querySelector('.app');
   shell?.classList.add('booting');
 
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Sur téléphone on prend la MÊME sortie que « mouvement réduit » : un court
+  // fondu de marque. L'intro 3D coûte un contexte WebGL et le clonage des deux
+  // modèles (9 Mo) pour deux secondes d'écran — sur mobile, ce n'est pas un
+  // moment premium, c'est une attente.
+  const reduce = isPhone() || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const canvas = document.getElementById('intro-canvas');
   const THREE = window.THREE;
 
