@@ -1906,6 +1906,16 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out)}
 .card-picker-item.added{border-color:color-mix(in srgb,var(--ok) 60%,transparent)}
 .card-picker-item.added .card-picker-check{opacity:1;transform:none}
+/* Déjà possédée : la pastille verte ne suffit pas si on parcourt 200 vignettes
+   au pouce — le visuel s'assombrit un peu et porte une étiquette. La couleur
+   n'informe donc jamais seule. */
+.card-picker-item.added img,.card-picker-item.added .card-noimg{opacity:.55}
+.card-picker-have{position:absolute;left:5px;bottom:26px;z-index:3;
+  padding:2px 7px;border-radius:var(--pill);
+  background:color-mix(in srgb,var(--ok) 88%,#04120C);color:#04120C;
+  font-size:9px;font-weight:900;letter-spacing:.03em;text-transform:uppercase;
+  box-shadow:0 1px 4px rgba(0,0,0,.45)}
+.card-picker-check{min-width:22px;padding:0 4px;width:auto}
 @keyframes just-added{0%{transform:scale(1)}40%{transform:scale(1.05)}100%{transform:scale(1)}}
 .card-picker-item.just-added{animation:just-added var(--dur-2) var(--ease-out)}
 

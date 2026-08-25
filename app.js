@@ -3954,8 +3954,19 @@ function renderPickerCards() {
   // NB : les cartes d'un binder peuvent être null (pochettes vides) → on GARDE
   // le `c &&`, sans quoi .some lève un TypeError qui remontait en « Erreur de
   // chargement » sur TOUT le picker dès qu'un binder avait une pochette vide.
+  // Cartes DÉJÀ possédées, par identifiant : en mode portefeuille, l'info
+  // n'existait qu'APRÈS le clic (un toast, et le sélecteur se fermait). On la
+  // montre maintenant sur la vignette, avec la quantité quand il y en a
+  // plusieurs — c'est ce qu'on veut savoir en parcourant un set de 200 cartes.
+  const invQty = {};
+  if (state.pickerMode === 'investCard') {
+    for (const p of state.investCards) {
+      if (p && p.cardId) invQty[p.cardId] = (invQty[p.cardId] || 0) + (Number(p.qty) || 1);
+    }
+  }
   const inList = id => (state.pickerMode === 'wish' && w?.cards.some(c => c && c.id === id))
-    || (state.pickerMode === 'binder' && bndr?.cards.some(c => c && c.id === id));
+    || (state.pickerMode === 'binder' && bndr?.cards.some(c => c && c.id === id))
+    || (state.pickerMode === 'investCard' && !!invQty[id]);
   body.innerHTML = `
     ${pickerSteps(2)}
     <div class="picker-nav">
@@ -3964,12 +3975,14 @@ function renderPickerCards() {
     </div>
     <div class="search-bar"><div class="search-input-wrap"><span class="search-icon">🔍</span>
       <input class="input" placeholder="Rechercher dans ce set…" value="${esc(state.pickerSearch)}" oninput="searchPicker(this.value)"></div></div>
-    <div class="picker-toolbar"><span class="picker-count">${filtered.length} carte${filtered.length>1?'s':''}${(state.pickerMode==='wish'||state.pickerMode==='binder')?' · clique pour ajouter / retirer':''}</span></div>
+    <div class="picker-toolbar"><span class="picker-count">${filtered.length} carte${filtered.length>1?'s':''}${state.pickerMode==='investCard' ? ` · ${filtered.filter(x=>invQty[x.id]).length} déjà à toi` : ''}${(state.pickerMode==='wish'||state.pickerMode==='binder')?' · clique pour ajouter':''}</span></div>
     <div class="card-picker-grid">
       ${filtered.map((c, i) => {
         const u = IMG(c.image, 'low');
-        return `<div class="card-picker-item ${inList(c.id)?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}">
-          <span class="card-picker-check" aria-hidden="true">${ICO.check}</span>
+        const have = inList(c.id), q = invQty[c.id] || 0;
+        return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}"${have?' title="Déjà dans ton portefeuille"':''}>
+          <span class="card-picker-check" aria-hidden="true">${q > 1 ? '×' + q : ICO.check}</span>
+          ${have && state.pickerMode === 'investCard' ? '<span class="card-picker-have">Déjà à toi</span>' : ''}
           ${u ? `<img src="${u}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(state.pickerSet||'')}','${jss(c.name)}')" alt="" loading="lazy">` : noImgHTML(c.localId, c.name, state.pickerSet)}
           <div class="card-picker-name">${esc(c.name)}</div></div>`;
       }).join('')}
@@ -4000,7 +4013,9 @@ function pickCard(id, name, image, setName, setId, localId) {
     const isNew = !p;
     if (isNew) {
       if (state.investCards.some(x => x.cardId === id)) {
-        closeModal('modal-card-picker');
+        // On NE ferme plus le sélecteur : fermer toute la fenêtre parce qu'on a
+        // touché une carte déjà possédée, au milieu d'un set de 200, était une
+        // punition. La vignette est de toute façon marquée « Déjà à toi ».
         toast('Cette carte est déjà dans ton portefeuille', 'error');
         return;
       }
