@@ -2901,7 +2901,12 @@ body::before{display:none}
   /* Respiration entre les blocs de l'accueil : un `gap` sur le conteneur, plutôt
      que des marges section par section (elles se compensaient et l'ensemble
      paraissait tassé). */
-  #view-home{display:flex;flex-direction:column;gap:26px}
+  /* `#view-home` est un sélecteur d'ID : sans `.active`, il écrasait
+     `.view{display:none}` et l'accueil restait affiché SOUS toutes les autres
+     vues. Le `display` d'une vue appartient au mécanisme de navigation — on ne
+     le touche que dans l'état actif. */
+  #view-home.active{display:flex;flex-direction:column;gap:26px}
+  #view-home.exiting{display:flex}
   #view-home>*{margin:0}
 
   /* La pièce maîtresse : la carte prend la largeur, le reste s'efface. */
