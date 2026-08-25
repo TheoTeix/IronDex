@@ -668,6 +668,14 @@ async function ghPullPrices() {
 // (lecture du dépôt + écriture d'un fichier témoin) et dit ce qui bloque —
 // c'est la seule façon de savoir que la sauvegarde marche AVANT d'y confier
 // sa collection.
+// La version RÉELLEMENT chargée, lue sur la balise <script> : c'est la seule
+// façon de savoir si un appareil sert encore du code périmé.
+function appVersion() {
+  try {
+    const src = document.querySelector('script[src*="app.js"]')?.src || '';
+    return new URL(src, location.href).searchParams.get('v') || '?';
+  } catch { return '?'; }
+}
 function ensureCloudModal() {
   let m = document.getElementById('modal-cloud');
   if (m) return m;
@@ -702,7 +710,7 @@ function openCloud() {
       <button class="btn btn-ghost" onclick="cloudPushNow()">Envoyer maintenant</button>
       <button class="btn btn-ghost" onclick="cloudPullNow()">Relire le dépôt</button>
     </div>
-    <div id="cloud-report" class="cloud-report">État : ${esc(st)}${_ghErr ? ` — ${esc(_ghErr)}` : ''}</div>`;
+    <div id="cloud-report" class="cloud-report">État : ${esc(st)}${_ghErr ? ` — ${esc(_ghErr)}` : ''} · version ${esc(appVersion())}</div>`;
   openModal('modal-cloud');
   cloudShowRemote();
 }
@@ -7698,10 +7706,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     ghPullPrices().catch(e => console.warn('ghPullPrices', e));
   }
   ghPaintStatus(ghOn() ? 'ok' : 'off');
-  // Service worker : rend l'app installable sur l'iPhone et lisible hors
-  // ligne. Inutile (et interdit) en file://.
+  // Service worker : rend l'app installable sur l'iPhone et lisible hors ligne.
+  // Inutile (et interdit) en file://.
+  //
+  // ATTENTION, leçon apprise à la dure : une app installée peut rester collée
+  // à un ANCIEN service worker et servir l'ancien code indéfiniment — un bug
+  // corrigé et déployé restait visible sur l'iPhone après plusieurs
+  // réouvertures. On force donc la vérification à chaque démarrage, et quand
+  // un nouveau worker prend la main on recharge UNE fois (le garde-fou
+  // `controller` évite la boucle : on ne recharge que si on était déjà piloté
+  // par une version précédente).
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+    const wasControlled = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (wasControlled && !reloading) { reloading = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js')
+      .then(reg => { try { reg.update(); } catch {} })
+      .catch(e => console.warn('sw', e));
   }
   warmupModels();  // parse les GLB au plus tôt → cache chaud avant la fin de l'intro
   runIntro(() => {
