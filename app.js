@@ -122,14 +122,27 @@ const state = {
 //     ne télécharge donc plus jamais ces 12 Mo.
 //  `mobile` sert aussi de crochet CSS (<html data-mobile>).
 // ══════════════════════════════════════════════════════════════════
-const IS_PHONE = matchMedia('(max-width:767px)').matches
-  || (matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(innerWidth, innerHeight) < 500);
-try { document.documentElement.dataset.mobile = IS_PHONE ? 'on' : 'off'; } catch {}
+// Fonction, pas constante : un onglet encore masqué peut annoncer
+// `innerWidth === 0` (on passerait pour un téléphone et on priverait le
+// desktop de sa 3D), et une fenêtre se redimensionne. On relit donc à chaque
+// fois, avec des replis quand la mesure est absurde.
+function isPhone() {
+  const w = innerWidth || screen.width || 1280;
+  const h = innerHeight || screen.height || 800;
+  if (w <= 767) return true;
+  // Téléphone en paysage : large mais court, et tactile sans survol.
+  return matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(w, h) < 500;
+}
+function paintDeviceFlag() {
+  try { document.documentElement.dataset.mobile = isPhone() ? 'on' : 'off'; } catch {}
+}
+paintDeviceFlag();
+addEventListener('resize', paintDeviceFlag);
 let _modelDataPromise = null;
 function ensureModelData() {
   if (_modelDataPromise) return _modelDataPromise;
   return (_modelDataPromise = (async () => {
-    if (IS_PHONE) return false;
+    if (isPhone()) return false;
     if (window.MILOTIC_GLB_BASE64) return true;
     if (location.protocol !== 'file:') return false;   // les .glb se chargent très bien
     return await new Promise(res => {
@@ -5941,7 +5954,7 @@ function getModelClone(key, b64, file) {
 // Lance le parsing des modèles au plus tôt (dès que THREE est prêt), pour que
 // le cache soit chaud avant même la fin de l'intro.
 function warmupModels() {
-  if (IS_PHONE) return;   // ~9 Mo de modèles que le mobile n'affiche pas
+  if (isPhone()) return;   // ~9 Mo de modèles que le mobile n'affiche pas
   loadModelSource('milotic', window.MILOTIC_GLB_BASE64, 'milotic.glb').catch(() => {});
   loadModelSource('giratina', window.GIRATINA_GLB_BASE64, 'giratina.glb').catch(() => {});
 }
@@ -5956,7 +5969,7 @@ function destroyHero3D() {
   _hero = null;
 }
 function initHero3D() {
-  if (IS_PHONE) return;   // scène d'ambiance réservée au desktop (voir IS_PHONE)
+  if (isPhone()) return;   // scène d'ambiance réservée au desktop (voir isPhone)
   const canvas = document.getElementById('hero-canvas');
   if (!canvas || !window.THREE) return;
   const loadEl0 = document.getElementById('hero3d-loading'); if (loadEl0) loadEl0.style.display = 'none';
