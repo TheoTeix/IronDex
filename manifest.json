@@ -1,0 +1,17 @@
+{
+  "name": "IronDex — Le Coffre",
+  "short_name": "IronDex",
+  "description": "Le coffre-fort d'une collection Pokémon : valeur, wishlists, portefeuille.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#06070A",
+  "theme_color": "#06070A",
+  "lang": "fr",
+  "icons": [
+    { "src": "favicon.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "logo.png", "sizes": "608x608", "type": "image/png", "purpose": "any" },
+    { "src": "logo.png", "sizes": "608x608", "type": "image/png", "purpose": "maskable" }
+  ]
+}

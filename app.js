@@ -110,6 +110,38 @@ const state = {
   heroRef: null,     // { type:'loose', cardId, name, … } — pièce maîtresse choisie à la main
 };
 
+// ══════════════════════════════════════════════════════════════════
+//  TÉLÉPHONE — un contexte, pas une fenêtre étroite
+//  L'iPhone n'est pas « le desktop en plus petit » : écran tactile, réseau
+//  mobile, batterie. Deux décisions prises ici une fois pour toutes :
+//   · la créature 3D d'ambiance (2 modèles GLB, ~9 Mo, un contexte WebGL
+//     permanent) ne se charge PAS sur téléphone — la vedette y est la carte ;
+//   · `model-data.js` (12 Mo de GLB en base64) n'a de raison d'être QUE pour
+//     l'app ouverte en file://, où fetch() ne peut pas lire un fichier local.
+//     Servie en https (GitHub Pages), l'app charge les .glb directement : on
+//     ne télécharge donc plus jamais ces 12 Mo.
+//  `mobile` sert aussi de crochet CSS (<html data-mobile>).
+// ══════════════════════════════════════════════════════════════════
+const IS_PHONE = matchMedia('(max-width:767px)').matches
+  || (matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(innerWidth, innerHeight) < 500);
+try { document.documentElement.dataset.mobile = IS_PHONE ? 'on' : 'off'; } catch {}
+let _modelDataPromise = null;
+function ensureModelData() {
+  if (_modelDataPromise) return _modelDataPromise;
+  return (_modelDataPromise = (async () => {
+    if (IS_PHONE) return false;
+    if (window.MILOTIC_GLB_BASE64) return true;
+    if (location.protocol !== 'file:') return false;   // les .glb se chargent très bien
+    return await new Promise(res => {
+      const sc = document.createElement('script');
+      sc.src = 'model-data.js';
+      sc.onload = () => res(true);
+      sc.onerror = () => { sc.remove(); res(false); };
+      document.head.appendChild(sc);
+    });
+  })());
+}
+
 // ── STOCKAGE FIABLE (IndexedDB) ────────────────────────────────────
 // localStorage plafonne à ~5 Mo : une collection un peu fournie (classeurs,
 // wishlists, portefeuille) suffit à faire ÉCHOUER toute l'écriture → plus rien
@@ -199,7 +231,7 @@ function writeNow() {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   const snap = collectionSnapshot();
   return idbSet(DB_KEY, snap)
-    .then(() => { _lastSaveOk = true; pulseSaveDot(); autoBackupDaily(); return true; })
+    .then(() => { _lastSaveOk = true; pulseSaveDot(); autoBackupDaily(); ghPushSoon('collection'); return true; })
     .catch(err => {
       // Repli localStorage (peut échouer sur quota si grosses photos)
       console.warn('IDB save échoué, repli localStorage', err);
@@ -264,10 +296,10 @@ function applyLoaded(d) {
   state.heroRef = (d.heroRef && d.heroRef.type === 'loose') ? d.heroRef : null;
 }
 async function load() {
-  // 1) IndexedDB (source principale)
+  // 1) IndexedDB (copie de travail locale — le dépôt reste l'arbitre, voir ghPull)
   try {
     const d = await idbGet(DB_KEY);
-    if (d) { applyLoaded(d); return; }
+    if (d) { applyLoaded(d); _localUpdated = Date.parse(d.lastUpdated || 0) || 0; return; }
   } catch (e) { console.warn('Lecture IDB échouée', e); }
   // 2) Migration depuis l'ancienne sauvegarde localStorage
   try {
@@ -336,6 +368,316 @@ function importData(file) {
   r.readAsText(file);
 }
 function pickRestoreFile(input) { const f = input.files && input.files[0]; input.value = ''; importData(f); }
+
+// ══════════════════════════════════════════════════════════════════
+//  COFFRE EN LIGNE — la collection vit dans le DÉPÔT GitHub
+//  Le navigateur n'est PLUS la source de vérité : il en est une copie de
+//  travail. Chaque enregistrement local est suivi d'un commit dans le dépôt
+//  (data/collection.json), et chaque ouverture commence par relire le dépôt.
+//  Conséquences directes : vider un navigateur ne perd plus rien, le Mac et
+//  l'iPhone voient la MÊME collection, et git garde l'historique de chaque
+//  état — donc une machine à remonter le temps gratuite.
+//
+//  Le jeton d'accès ne vit QUE dans le localStorage de l'appareil : il n'est
+//  jamais écrit dans un fichier du dépôt (qui est public). Voir openCloud().
+//
+//  Les cotes suivent le même chemin (data/prices.json) : le pont Cardmarket
+//  tourne sur le Mac, et l'iPhone lit simplement le résultat.
+// ══════════════════════════════════════════════════════════════════
+const GH_KEY = 'irondex-gh-v1';
+const GH_PATHS = { collection: 'data/collection.json', prices: 'data/prices.json' };
+let _ghCfg = null;
+function ghCfg() {
+  if (_ghCfg) return _ghCfg;
+  let d = {};
+  try { d = JSON.parse(localStorage.getItem(GH_KEY) || '{}') || {}; } catch {}
+  // Sur GitHub Pages, le dépôt se DEVINE depuis l'URL
+  // (theoteixeira.github.io/IronDex/ → owner « theoteixeira », repo « IronDex »)
+  // : l'utilisateur n'a donc qu'un jeton à coller, pas trois champs à remplir.
+  let owner = d.owner || '', repo = d.repo || '';
+  const host = location.hostname, seg = location.pathname.split('/').filter(Boolean);
+  if (!owner && /\.github\.io$/i.test(host)) owner = host.replace(/\.github\.io$/i, '');
+  if (!repo && /\.github\.io$/i.test(host)) {
+    const first = seg[0] || '';
+    repo = (first && !/\.\w+$/.test(first)) ? first : `${owner}.github.io`;
+  }
+  return (_ghCfg = {
+    token: d.token || '', owner, repo, branch: d.branch || 'main',
+    on: !!(d.token && owner && repo),
+  });
+}
+function ghSave(patch) {
+  const cur = ghCfg();
+  const next = { token: cur.token, owner: cur.owner, repo: cur.repo, branch: cur.branch };
+  Object.assign(next, patch || {});
+  try { localStorage.setItem(GH_KEY, JSON.stringify(next)); } catch {}
+  _ghCfg = null;
+  return ghCfg();
+}
+function ghOn() { return ghCfg().on; }
+// Base64 d'un texte UTF-8 (btoa ne prend que du latin-1, et la collection
+// contient des accents : « Poissirène » cassait l'encodage).
+function ghB64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let out = '';
+  const CH = 0x8000;   // par tranches : String.fromCharCode explose au-delà
+  for (let i = 0; i < bytes.length; i += CH) out += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  return btoa(out);
+}
+function ghApi(path, opts) {
+  const c = ghCfg(), o = opts || {};
+  const h = { 'Accept': o.accept || 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  if (c.token) h.Authorization = `Bearer ${c.token}`;
+  if (o.body) h['Content-Type'] = 'application/json';
+  return fetchTimeout(`https://api.github.com/repos/${c.owner}/${c.repo}${path}`, o.ms || 25000,
+    { method: o.method || 'GET', headers: h, body: o.body });
+}
+// SHA du fichier à remplacer, SANS télécharger son contenu : on lit le
+// listing du dossier (l'API /contents renvoie le contenu en base64 seulement
+// sous 1 Mo — la collection en fait 5, elle ne passerait pas par là).
+async function ghSha(path) {
+  const c = ghCfg();
+  const dir = path.split('/').slice(0, -1).join('/'), name = path.split('/').pop();
+  const r = await ghApi(`/contents/${encodeURIComponent(dir).replace(/%2F/g, '/')}?ref=${encodeURIComponent(c.branch)}`);
+  if (!r.ok) return null;                    // dossier absent au premier envoi
+  const list = await r.json().catch(() => null);
+  const hit = Array.isArray(list) ? list.find(e => e && e.name === name) : null;
+  return hit ? hit.sha : null;
+}
+// Lecture : raw.githubusercontent d'abord (aucun quota d'API, aucun jeton
+// nécessaire sur un dépôt public), avec anti-cache car le CDN garde ~5 min.
+async function ghRead(path) {
+  const c = ghCfg();
+  if (!c.owner || !c.repo) return null;
+  try {
+    const r = await fetchTimeout(`https://raw.githubusercontent.com/${c.owner}/${c.repo}/${c.branch}/${path}?t=${Date.now()}`, 25000);
+    if (r.ok) return await r.json();
+    if (r.status === 404) return null;
+  } catch {}
+  try {   // dépôt privé, ou CDN en retard : on repasse par l'API avec le jeton
+    const r = await ghApi(`/contents/${path}?ref=${encodeURIComponent(c.branch)}`, { accept: 'application/vnd.github.raw' });
+    if (r.ok) return await r.json();
+  } catch {}
+  return null;
+}
+async function ghWrite(path, obj, message) {
+  const c = ghCfg();
+  if (!c.on) return { ok: false, reason: 'coffre en ligne non configuré' };
+  const sha = await ghSha(path).catch(() => null);
+  const body = JSON.stringify(Object.assign(
+    { message, content: ghB64(JSON.stringify(obj)), branch: c.branch }, sha ? { sha } : {}));
+  let r;
+  try { r = await ghApi(`/contents/${path}`, { method: 'PUT', body, ms: 90000 }); }
+  catch (e) { return { ok: false, reason: 'réseau injoignable' }; }
+  if (r.ok) return { ok: true };
+  let msg = '';
+  try { msg = (await r.json()).message || ''; } catch {}
+  // 409 = quelqu'un d'autre (l'autre appareil) a écrit entre-temps : ce n'est
+  // pas une erreur à masquer, c'est un conflit qui doit remonter.
+  return { ok: false, status: r.status, reason: msg || `HTTP ${r.status}`, conflict: r.status === 409 };
+}
+// ── Envoi débouncé ────────────────────────────────────────────────
+// Une modification déclenche un commit 4 s plus tard : assez pour fusionner
+// une rafale de clics, assez court pour qu'un onglet fermé juste après ne
+// perde rien (l'écriture locale, elle, est déjà faite).
+let _ghTimer = null, _ghBusy = false, _ghPend = {}, _ghStatus = 'off', _ghErr = '';
+function ghStatus() { return { state: _ghStatus, err: _ghErr, cfg: ghCfg() }; }
+function ghPushSoon(what) {
+  if (!ghOn()) return;
+  _ghPend[what || 'collection'] = true;
+  ghPaintStatus('pending');
+  if (_ghTimer) return;
+  _ghTimer = setTimeout(ghFlush, 4000);
+}
+async function ghFlush() {
+  _ghTimer = null;
+  if (_ghBusy || !ghOn()) return;
+  const jobs = Object.keys(_ghPend);
+  if (!jobs.length) return;
+  _ghPend = {}; _ghBusy = true;
+  ghPaintStatus('saving');
+  let fail = null;
+  for (const job of jobs) {
+    const obj = job === 'prices'
+      ? { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }
+      : collectionSnapshot();
+    const label = job === 'prices' ? 'cotes' : 'collection';
+    const res = await ghWrite(GH_PATHS[job], obj, `IronDex : ${label} mises à jour`);
+    if (!res.ok) { fail = res; _ghPend[job] = true; }   // on retentera
+  }
+  _ghBusy = false;
+  if (fail) {
+    _ghErr = fail.reason || '';
+    ghPaintStatus('error');
+    // Un échec d'envoi n'est PAS silencieux : sinon l'utilisateur croit que
+    // tout est en ligne alors que seul son navigateur a la donnée.
+    toast(`Coffre en ligne : ${_ghErr}`, 'error');
+    if (!_ghTimer) _ghTimer = setTimeout(ghFlush, 30000);   // nouvelle tentative
+  } else {
+    _ghErr = '';
+    ghPaintStatus('ok');
+  }
+}
+function ghPaintStatus(st) {
+  _ghStatus = st;
+  const el = document.getElementById('cloud-dot');
+  if (el) {
+    el.dataset.state = st;
+    el.title = { off: 'Coffre en ligne non configuré', pending: 'Envoi au dépôt dans quelques secondes…',
+      saving: 'Envoi au dépôt…', ok: 'Collection sauvegardée dans le dépôt', error: `Échec d'envoi : ${_ghErr}` }[st] || '';
+  }
+}
+// ── Relecture au démarrage ────────────────────────────────────────
+// Règle : le plus RÉCENT gagne, et l'appareil vierge se remplit tout seul
+// (ouvrir le site sur l'iPhone suffit à y retrouver la collection).
+let _localUpdated = 0;
+function ghLocalEmpty() {
+  return !state.wishlists.length && !state.binders.length && !state.investCards.length
+    && !state.sealed.length && !Object.keys(state.milobellus || {}).length;
+}
+async function ghPull() {
+  const c = ghCfg();
+  if (!c.owner || !c.repo) return;
+  const remote = await ghRead(GH_PATHS.collection);
+  if (!remote || typeof remote !== 'object') return;
+  const rt = Date.parse(remote.lastUpdated || 0) || 0;
+  const empty = ghLocalEmpty();
+  if (!empty && rt <= _localUpdated) {
+    // Le local est à jour (ou en avance) : on pousse s'il est en avance.
+    if (rt < _localUpdated) ghPushSoon('collection');
+    return;
+  }
+  // On garde l'état d'AVANT avant d'écraser : même ici, rien ne disparaît.
+  if (!empty) await autoBackup('avant-coffre-en-ligne');
+  applyLoaded(remote);
+  _localUpdated = rt;
+  await writeNow();
+  window._vaultCounted = false; window._investCountedCards = false; window._investCountedSealed = false;
+  renderViewContent(state.view);
+  if (!empty) toast('Collection mise à jour depuis le dépôt', 'success');
+  ghPaintStatus('ok');
+}
+// Les cotes voyagent aussi : le pont Cardmarket ne tourne que sur le Mac,
+// l'iPhone se contente de lire le résultat de la dernière synchro.
+async function ghPullPrices() {
+  const c = ghCfg();
+  if (!c.owner || !c.repo) return;
+  const remote = await ghRead(GH_PATHS.prices);
+  if (!remote || !remote.prices) return;
+  const rt = Number(remote.syncedAt) || 0;
+  if (rt <= priceSyncedAt()) return;
+  let n = 0;
+  for (const k in remote.prices) {
+    const v = remote.prices[k];
+    if (v && typeof v === 'object') { priceCache[k] = v; n++; }
+  }
+  _priceSyncedAt = rt;
+  flushPriceCache();
+  if (n) {
+    window._vaultCounted = false; window._investCountedCards = false;
+    renderViewContent(state.view);
+  }
+}
+
+// ── Réglages du coffre en ligne ───────────────────────────────────
+// Un seul champ à remplir dans le cas normal : le jeton. Le dépôt est déduit
+// de l'URL GitHub Pages. Le bouton « Vérifier » fait un VRAI aller-retour
+// (lecture du dépôt + écriture d'un fichier témoin) et dit ce qui bloque —
+// c'est la seule façon de savoir que la sauvegarde marche AVANT d'y confier
+// sa collection.
+function ensureCloudModal() {
+  let m = document.getElementById('modal-cloud');
+  if (m) return m;
+  m = document.createElement('div');
+  m.className = 'modal-overlay'; m.id = 'modal-cloud';
+  m.innerHTML = `<div class="modal" style="max-width:580px">
+      <div class="modal-header"><div class="modal-title">Coffre en ligne</div><button class="modal-close" onclick="closeModal('modal-cloud')" aria-label="Fermer">${ICO.close}</button></div>
+      <div class="modal-body" id="cloud-body" style="min-height:120px"></div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-cloud')">Fermer</button></div>
+    </div>`;
+  document.body.appendChild(m);
+  return m;
+}
+function openCloud() {
+  ensureCloudModal();
+  const c = ghCfg();
+  const st = { off: 'non configuré', ok: 'à jour', pending: 'envoi imminent', saving: 'envoi en cours', error: 'échec du dernier envoi' }[_ghStatus] || '';
+  document.getElementById('cloud-body').innerHTML = `
+    <p class="sealed-imp-hint">Ta collection est enregistrée dans le dépôt <b>${esc(c.owner || '?')}/${esc(c.repo || '?')}</b> (branche ${esc(c.branch)}), fichier <code>data/collection.json</code>. Chaque modification fait un commit : l'historique du dépôt est ta machine à remonter le temps.</p>
+    <div class="cloud-field">
+      <label for="cloud-token">Jeton d'accès GitHub <span>(fine-grained, permission « Contents : Read and write » sur ce seul dépôt)</span></label>
+      <input id="cloud-token" type="password" autocomplete="off" spellcheck="false" placeholder="${c.token ? '•••••••• (déjà enregistré)' : 'github_pat_…'}" value="">
+    </div>
+    <div class="cloud-row">
+      <div class="cloud-field"><label for="cloud-owner">Compte</label><input id="cloud-owner" value="${esc(c.owner)}" spellcheck="false"></div>
+      <div class="cloud-field"><label for="cloud-repo">Dépôt</label><input id="cloud-repo" value="${esc(c.repo)}" spellcheck="false"></div>
+      <div class="cloud-field"><label for="cloud-branch">Branche</label><input id="cloud-branch" value="${esc(c.branch)}" spellcheck="false"></div>
+    </div>
+    <p class="sealed-imp-note">Le jeton reste dans CE navigateur (localStorage) : il n'est jamais écrit dans le dépôt, qui est public. En cas de doute, révoque-le sur github.com et recolle-en un nouveau.</p>
+    <div class="cloud-actions">
+      <button class="btn btn-primary" onclick="cloudCheck()">Vérifier et enregistrer</button>
+      <button class="btn btn-ghost" onclick="cloudPushNow()">Envoyer maintenant</button>
+      <button class="btn btn-ghost" onclick="cloudPullNow()">Relire le dépôt</button>
+    </div>
+    <div id="cloud-report" class="cloud-report">État : ${esc(st)}${_ghErr ? ` — ${esc(_ghErr)}` : ''}</div>`;
+  openModal('modal-cloud');
+}
+function cloudReport(html, kind) {
+  const el = document.getElementById('cloud-report');
+  if (el) { el.className = `cloud-report ${kind || ''}`; el.innerHTML = html; }
+}
+function cloudFormSave() {
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const patch = { owner: g('cloud-owner'), repo: g('cloud-repo'), branch: g('cloud-branch') || 'main' };
+  const tok = g('cloud-token');
+  if (tok) patch.token = tok;          // vide = on garde le jeton déjà enregistré
+  return ghSave(patch);
+}
+async function cloudCheck() {
+  const c = cloudFormSave();
+  if (!c.owner || !c.repo) return cloudReport('Il manque le compte ou le dépôt.', 'bad');
+  if (!c.token) return cloudReport('Il manque le jeton d’accès.', 'bad');
+  cloudReport('<span class="spinner spinner-sm"></span> Vérification…');
+  // 1) le dépôt existe et le jeton peut ÉCRIRE (permissions.push)
+  let r;
+  try { r = await ghApi(''); } catch { return cloudReport('Réseau injoignable.', 'bad'); }
+  if (r.status === 401) return cloudReport('Jeton refusé (401) : expiré, mal collé, ou révoqué.', 'bad');
+  if (r.status === 404) return cloudReport(`Dépôt <b>${esc(c.owner)}/${esc(c.repo)}</b> introuvable — vérifie le nom, ou que le jeton donne accès à CE dépôt.`, 'bad');
+  if (!r.ok) return cloudReport(`GitHub répond HTTP ${r.status}.`, 'bad');
+  const repo = await r.json().catch(() => ({}));
+  if (repo.permissions && !repo.permissions.push)
+    return cloudReport('Le jeton lit le dépôt mais ne peut pas y écrire : il lui manque « Contents : Read and write ».', 'bad');
+  // 2) écriture RÉELLE d'un fichier témoin : seul test qui prouve la chaîne complète
+  const w = await ghWrite('data/.irondex-ping.json', { at: new Date().toISOString(), from: navigator.platform || 'appareil' }, 'IronDex : test de connexion');
+  if (!w.ok) return cloudReport(`Lecture OK, mais l’écriture échoue : ${esc(w.reason)}`, 'bad');
+  ghPaintStatus('ok');
+  cloudReport(`Tout est en place. Branche <b>${esc(repo.default_branch || c.branch)}</b>${repo.private ? ' · dépôt privé' : ' · dépôt public'}. Tes prochaines modifications partiront automatiquement.`, 'good');
+}
+async function cloudPushNow() {
+  if (!ghOn()) return cloudReport('Configure d’abord le jeton et le dépôt.', 'bad');
+  cloudReport('<span class="spinner spinner-sm"></span> Envoi de la collection…');
+  const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
+  if (!a.ok) { ghPaintStatus('error'); return cloudReport(`Échec : ${esc(a.reason)}`, 'bad'); }
+  const b = await ghWrite(GH_PATHS.prices, { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }, 'IronDex : cotes mises à jour');
+  ghPaintStatus('ok');
+  const n = state.wishlists.length + state.investCards.length + state.sealed.length;
+  cloudReport(`Envoyé : ${n} entrées${b.ok ? ' + les cotes' : ' (cotes : ' + esc(b.reason) + ')'}.`, 'good');
+}
+async function cloudPullNow() {
+  const c = ghCfg();
+  if (!c.owner || !c.repo) return cloudReport('Configure d’abord le dépôt.', 'bad');
+  cloudReport('<span class="spinner spinner-sm"></span> Lecture du dépôt…');
+  const remote = await ghRead(GH_PATHS.collection);
+  if (!remote) return cloudReport('Aucun <code>data/collection.json</code> dans le dépôt pour l’instant — envoie d’abord ta collection.', 'bad');
+  await autoBackup('avant-relecture-depot');
+  applyLoaded(remote);
+  _localUpdated = Date.parse(remote.lastUpdated || 0) || 0;
+  await writeNow();
+  await ghPullPrices();
+  window._vaultCounted = false; window._investCountedCards = false; window._investCountedSealed = false;
+  renderViewContent(state.view);
+  cloudReport(`Relu : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} produits scellés (état du ${esc(String(remote.lastUpdated || '').slice(0, 10))}).`, 'good');
+}
 
 // ══════════════════════════════════════════════════════════════════
 //  RÉCUPÉRATION — retrouve un ancien instantané de la collection
@@ -1872,6 +2214,7 @@ async function syncPrices() {
   if (ok) _priceSyncedAt = Date.now();
   _priceWriteHold = null;   // fin de la synchro : le résultat devient la référence
   flushPriceCache();        // écriture immédiate : la synchro survit à un refresh
+  ghPushSoon('prices');     // …et l'iPhone verra ces cotes sans pont Cardmarket
 
   await new Promise(r => setTimeout(r, Math.max(0, 1200 - (performance.now() - t0))));
   if (sub) sub.classList.add('done');
@@ -5575,16 +5918,19 @@ function _b64ToBuf(b64) {
 }
 function loadModelSource(key, b64, file) {
   if (!_glbSourceCache[key]) {
-    _glbSourceCache[key] = new Promise((resolve, reject) => {
+    // `b64` peut être undefined : model-data.js n'est plus chargé d'office (12 Mo).
+    // On le réclame ici — il ne viendra qu'en file://, où fetch ne peut rien lire.
+    _glbSourceCache[key] = ensureModelData().then(() => new Promise((resolve, reject) => {
       const THREE = window.THREE;
       if (!THREE || !THREE.GLTFLoader) return reject(new Error('GLTFLoader indisponible'));
       const loader = new THREE.GLTFLoader();
       const ok = gltf => resolve(gltf.scene);
+      const data = b64 || window[key === 'milotic' ? 'MILOTIC_GLB_BASE64' : 'GIRATINA_GLB_BASE64'];
       try {
-        if (b64) loader.parse(_b64ToBuf(b64), '', ok, reject);
+        if (data) loader.parse(_b64ToBuf(data), '', ok, reject);
         else loader.load(file, ok, undefined, reject);
       } catch (e) { reject(e); }
-    });
+    }));
   }
   return _glbSourceCache[key];
 }
@@ -5595,6 +5941,7 @@ function getModelClone(key, b64, file) {
 // Lance le parsing des modèles au plus tôt (dès que THREE est prêt), pour que
 // le cache soit chaud avant même la fin de l'intro.
 function warmupModels() {
+  if (IS_PHONE) return;   // ~9 Mo de modèles que le mobile n'affiche pas
   loadModelSource('milotic', window.MILOTIC_GLB_BASE64, 'milotic.glb').catch(() => {});
   loadModelSource('giratina', window.GIRATINA_GLB_BASE64, 'giratina.glb').catch(() => {});
 }
@@ -5609,6 +5956,7 @@ function destroyHero3D() {
   _hero = null;
 }
 function initHero3D() {
+  if (IS_PHONE) return;   // scène d'ambiance réservée au desktop (voir IS_PHONE)
   const canvas = document.getElementById('hero-canvas');
   if (!canvas || !window.THREE) return;
   const loadEl0 = document.getElementById('hero3d-loading'); if (loadEl0) loadEl0.style.display = 'none';
@@ -6025,6 +6373,14 @@ function runIntro(onReveal) {
   const reveal = () => {
     if (revealed) return; revealed = true;
     shell?.classList.remove('booting'); shell?.classList.add('arrive');
+    // La classe est RETIRÉE dès l'animation finie, et ce n'est pas cosmétique :
+    // `animation-fill-mode:both` garde la propriété `transform` sous contrôle de
+    // l'animation, donc `.app` reste une « containing block » — et TOUT ce qui
+    // est en position:fixed dedans (la tab bar du téléphone, le rail du desktop)
+    // se met à défiler avec la page au lieu de rester collé à l'écran.
+    const done = () => shell?.classList.remove('arrive');
+    shell?.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 900);   // filet si l'événement ne vient pas (reduced-motion)
     try { onReveal && onReveal(); } catch (e) { console.warn(e); }
   };
   const teardown = () => { try { intro && intro.remove(); } catch {} };
@@ -7127,7 +7483,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   ensureSoftButtonAssets();    // matériau des boutons prêt avant le 1er rendu
   loadApiCache();   // réinjecte les séries/sets déjà connus (navigation instantanée)
   loadPriceCache(); // cotes de la dernière session → valeur du coffre instantanée
-  try { await load(); } catch (e) { console.warn('load', e); }  // collection (IndexedDB) prête avant le rendu
+  try { await load(); } catch (e) { console.warn('load', e); }  // copie locale prête avant le rendu
+  // Le DÉPÔT est l'arbitre : on le relit tout de suite. Sur un appareil vierge
+  // (l'iPhone à sa première ouverture) c'est LUI qui remplit la collection ;
+  // ailleurs, le plus récent gagne. Non bloquant : l'app s'affiche déjà avec
+  // la copie locale, la mise à jour arrive quand le réseau répond.
+  if (ghCfg().owner) {
+    ghPull().catch(e => console.warn('ghPull', e));
+    ghPullPrices().catch(e => console.warn('ghPullPrices', e));
+  }
+  ghPaintStatus(ghOn() ? 'ok' : 'off');
+  // Service worker : rend l'app installable sur l'iPhone et lisible hors
+  // ligne. Inutile (et interdit) en file://.
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+  }
   warmupModels();  // parse les GLB au plus tôt → cache chaud avant la fin de l'intro
   runIntro(() => {
     render();
