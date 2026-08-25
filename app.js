@@ -2319,6 +2319,61 @@ function ensurePrices(ids, onDone) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+//  RÉPARATION DES IDENTIFIANTS DE CARTE
+//  Symptôme : des cartes sans AUCUNE cote, quoi qu'on synchronise. Mesuré sur
+//  les 66 cartes « Galerie de Dresseurs » de Tempête Argentée : elles portaient
+//  `cardId: swsh12.5tg-TG02` (la galerie de Zénith Suprême) alors que leur set
+//  est `swsh12`. Or `swsh12.5tg` est un set FANTÔME : l'API répond, mais il
+//  contient zéro carte. La cote cherchait donc dans le vide — et aucun nombre
+//  de synchros n'y changeait quoi que ce soit.
+//  Ces identifiants viennent de l'import script d'août (cartes en `k000xx`), pas
+//  du code actuel : c'est la DONNÉE qu'il faut réparer, une fois.
+//  Méthode : pour chaque carte dont le `cardId` ne colle ni à son set ni à une
+//  de ses sous-séries (tg/gg/sv), on recharge le set et ses sous-séries et on
+//  retrouve la carte par son NUMÉRO IMPRIMÉ — la seule donnée fiable ici.
+// ══════════════════════════════════════════════════════════════════
+const CARD_SUBSETS = ['', 'tg', 'gg', 'sv'];
+function cardIdLooksWrong(p) {
+  if (!p || !p.setId || !p.localId || String(p.setId).startsWith('?')) return false;
+  if (!p.cardId) return true;
+  const id = String(p.cardId), cut = id.lastIndexOf('-');
+  if (cut < 1) return true;
+  const setPart = id.slice(0, cut);           // « swsh12.5tg » et non « swsh12 »
+  return !CARD_SUBSETS.some(suf => setPart === p.setId + suf);
+}
+async function repairInvestCardIds() {
+  const suspects = (state.investCards || []).filter(cardIdLooksWrong);
+  if (!suspects.length) return 0;
+  const bySet = {};
+  for (const p of suspects) (bySet[p.setId] = bySet[p.setId] || []).push(p);
+  let fixed = 0;
+  for (const setId of Object.keys(bySet)) {
+    const byLocal = new Map();
+    for (const suf of CARD_SUBSETS) {
+      const sid = setId + suf;
+      const set = await apiFetch(`/sets/${sid}`).catch(() => null);
+      for (const c of (set?.cards || [])) {
+        const k = cardLocalKey(c.localId);
+        // Le set de base d'abord : en cas de numéro identique, la carte
+        // « normale » gagne sur celle d'une sous-série.
+        if (!byLocal.has(k)) byLocal.set(k, { id: c.id, setId: sid, setName: set.name || '', image: c.image || '' });
+      }
+    }
+    for (const p of bySet[setId]) {
+      const hit = byLocal.get(cardLocalKey(p.localId));
+      if (!hit || hit.id === p.cardId) continue;
+      p.cardId = hit.id;
+      p.setId = hit.setId;
+      if (hit.setName) p.setName = hit.setName;
+      if (!p.image && hit.image) p.image = hit.image;
+      fixed++;
+    }
+  }
+  if (fixed) { save(); investBadge(); }
+  return fixed;
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  SYNCHRO DES COTES — « Sync » : un clic, TOUTES les cartes de l'app
 //  sont recotées puis ENREGISTRÉES. Aux ouvertures suivantes, les
 //  valeurs s'affichent instantanément depuis le disque.
@@ -2328,6 +2383,10 @@ function syncPricesBusy() { return _syncBusy; }
 async function syncPrices() {
   if (_syncBusy) return;
   if (_refreshBusy) { toast('Actualisation des séries en cours…'); return; }
+  // Des identifiants faux ne se corrigent pas avec des cotes : on répare la
+  // donnée d'abord, sinon la synchro cherche des cartes qui n'existent pas.
+  const repaired = await repairInvestCardIds().catch(() => 0);
+  if (repaired) toast(`${repaired} carte${repaired > 1 ? 's' : ''} recollée${repaired > 1 ? 's' : ''} à la bonne série`, 'success');
   const ids = trackedCardIds();
   if (!ids.length) { toast('Aucune carte à synchroniser pour l\u2019instant'); return; }
   // Le pont Cardmarket est interrogé AVANT de commencer : c'est lui qui décide
