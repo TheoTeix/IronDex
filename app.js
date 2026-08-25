@@ -7394,6 +7394,15 @@ function rarityClass(r) {
   if (/promo/.test(s)) return 'r-promo';
   return 'r-base';
 }
+// ── TUILE DE CARTE : le visuel d'abord ───────────────────────────────
+// Refonte (2026-08-25) : l'ancienne tuile était une fiche horizontale, un
+// timbre de 84 px à gauche et six lignes de texte à droite. Or ce qu'on veut
+// voir d'une collection, ce sont les CARTES. Le visuel prend donc tout le
+// cadre — sans bandes noires : l'image n'est plus enfermée dans un rapport
+// 2,5/3,5 imposé, c'est ELLE qui donne sa hauteur au cadre (les scans TCGdex,
+// pokemontcg et Cardmarket n'ont pas tous exactement le même ratio, d'où les
+// lisérés qu'on voyait avant). Les chiffres (cote, achat, quantité, lien
+// Cardmarket) attendent sous un petit chevron.
 function cardTileHTML(p) {
   const cote = cardCote(p);
   const qty = cardQty(p);
@@ -7404,9 +7413,14 @@ function cardTileHTML(p) {
   return `<article class="cardtile" data-id="${p.id}" data-cc="${esc(p.cardId || '')}">
     <button class="cardtile-art" onclick="openInvestCardPreview('${p.id}')" title="Agrandir ${esc(p.name)}" aria-label="Agrandir ${esc(p.name)}">
       ${img ? `<img src="${img}" alt="" loading="lazy" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
+      <span class="cardtile-qtyb" id="qtyb-${p.id}" ${qty > 1 ? '' : 'hidden'}>×${qty}</span>
       <span class="cardtile-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
     </button>
-    <div class="cardtile-body">
+    <button class="cardtile-more" onclick="toggleCardPanel('${p.id}')" aria-expanded="false"
+      aria-controls="panel-${p.id}" aria-label="Infos et prix de ${esc(p.name)}">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="cardtile-panel" id="panel-${p.id}" hidden>
       <h3 class="cardtile-name" title="${esc(p.name)}">${esc(p.name)}</h3>
       <div class="cardtile-meta">
         ${p.number ? `<span class="cardtile-num">${esc(String(p.number))}</span>` : ''}
@@ -7414,7 +7428,7 @@ function cardTileHTML(p) {
       </div>
       <div class="cardtile-price">
         <span class="cardtile-cote" id="cote-${p.id}">${cote != null ? fmt(cote) : '<span class="cote-wait">cote…</span>'}</span>
-        ${qty > 1 && total != null ? `<span class="cardtile-sum" id="sum-${p.id}">×${qty} = ${fmt(total)}</span>` : `<span class="cardtile-sum" id="sum-${p.id}"></span>`}
+        <span class="cardtile-sum" id="sum-${p.id}">${qty > 1 && total != null ? `×${qty} = ${fmt(total)}` : ''}</span>
       </div>
       <div class="cardtile-buyline">
         <button class="buy-chip ${p.buyPrice != null ? 'set' : ''}" onclick="toggleCardBuy(event,'${p.id}')"
@@ -7438,6 +7452,30 @@ function cardTileHTML(p) {
     </div>
   </article>`;
 }
+// Dépliage du panneau d'une carte — même mécanique que les dossiers de blocs :
+// hauteur inline le temps de l'animation, puis retirée (au repos, un panneau
+// ouvert n'a aucune contrainte : la cote peut arriver et l'agrandir).
+function toggleCardPanel(id) {
+  const art = document.querySelector(`.cardtile[data-id="${id}"]`);
+  const body = document.getElementById('panel-' + id);
+  if (!art || !body) return;
+  const open = !art.classList.contains('open');
+  art.querySelector('.cardtile-more')?.setAttribute('aria-expanded', String(open));
+  if (body._t) { clearTimeout(body._t); body._t = null; }
+  if (open) {
+    body.hidden = false;
+    art.classList.add('open');
+    const h = body.scrollHeight;
+    body.style.maxHeight = '0px';
+    requestAnimationFrame(() => { body.style.maxHeight = h + 'px'; });
+    body._t = setTimeout(() => { body.style.maxHeight = ''; body._t = null; }, 340);
+  } else {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    requestAnimationFrame(() => { body.style.maxHeight = '0px'; art.classList.remove('open'); });
+    body._t = setTimeout(() => { body.hidden = true; body.style.maxHeight = ''; body._t = null; }, 340);
+  }
+}
+
 function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestBody(); window.scrollTo({ top: 0, behavior: 'instant' }); resolveSeriesLive(setId); }
 function closeInvestSeries() { state.investSeriesOpen = null; renderInvestBody(); }
 // Cotes + liens CM précis pour la série ouverte uniquement (léger : quelques dizaines).
@@ -7527,6 +7565,8 @@ function bumpCardQty(id, delta) {
 function refreshCardTile(p) {
   const qty = cardQty(p), cote = cardCote(p);
   const q = document.getElementById('qty-' + p.id); if (q) q.textContent = qty;
+  const qb = document.getElementById('qtyb-' + p.id);
+  if (qb) { qb.textContent = '×' + qty; qb.hidden = qty <= 1; }
   const row = document.querySelector(`.cardtile[data-id="${p.id}"]`);
   if (row) { const minus = row.querySelector('.qty-btn'); if (minus) minus.disabled = qty <= 1; }
   const c = document.getElementById('cote-' + p.id); if (c) c.textContent = cote != null ? fmt(cote) : '—';

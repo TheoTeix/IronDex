@@ -1001,8 +1001,10 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   transition:transform var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out),
              border-color var(--dur-2) var(--ease-out);
 }
-.card-thumb-imgwrap img{width:100%;height:100%;object-fit:contain;background:var(--v-2);cursor:pointer;
-  transition:opacity var(--dur-2) var(--ease-out)}
+/* Même correction que sur les tuiles du portefeuille : `contain` laissait des
+   bandes noires (les scans n'ont pas tous exactement le ratio 2,5/3,5). */
+.card-thumb-imgwrap img{width:100%;height:100%;object-fit:cover;background:none;cursor:pointer;
+  transition:opacity var(--dur-2) var(--ease-out),filter var(--dur-2) var(--ease-out)}
 .card-thumb:hover .card-thumb-imgwrap{transform:translateY(-5px);
   border-color:color-mix(in srgb,var(--tc) 46%,transparent);
   box-shadow:var(--e3),0 0 0 1px color-mix(in srgb,var(--tc) 34%,transparent)}
@@ -1733,20 +1735,56 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardser-bar-meta{flex:none;font-size:12.5px;color:var(--t3);font-variant-numeric:tabular-nums}
 
 /* ── Tuile de carte suivie ── */
-.cardlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:var(--s4)}
+/* Mur de cartes : la vedette est le VISUEL. Les colonnes sont donc calées sur
+   une largeur de carte, pas sur une fiche de texte. */
+.cardlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:var(--s4) 14px;
+  align-items:start}
 .cardtile{
-  display:flex;gap:14px;padding:14px;--tc:var(--acc);
-  border-radius:var(--r-lg);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
-  border:1px solid var(--line);box-shadow:var(--e1);
+  display:block;--tc:var(--acc);
+  border-radius:14px;background:none;border:0;box-shadow:none;padding:0;
   animation:rise var(--dur-2) var(--ease-out) both;animation-delay:calc(min(var(--i,0),14) * 26ms);
-  transition:border-color var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),
-             transform var(--dur-1) var(--ease-out);
 }
-.cardtile:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tc) 36%,transparent);
-  box-shadow:var(--e2)}
-.cardtile-art{position:relative;width:84px;flex:none;aspect-ratio:2.5/3.5;border-radius:10px;overflow:hidden;
-  background:var(--v-2);border:1px solid var(--line);cursor:zoom-in}
-.cardtile-art img{width:100%;height:100%;object-fit:contain}
+/* AUCUNE bande noire. Deux essais ont été nécessaires :
+   · `height:auto` (l'image donne sa hauteur) supprime bien les bandes, mais un
+     visuel en `loading="lazy"` mesure 0 avant son arrivée → le cadre
+     s'effondrait à 2 px de haut ;
+   · `object-fit:contain` laissait justement les lisérés, parce que les scans
+     TCGdex (245×337), pokemontcg et Cardmarket (255×361) n'ont pas exactement
+     le même ratio que le 2,5/3,5 du cadre.
+   Retenu : cadre au ratio d'une carte (hauteur stable dès le premier rendu) et
+   image en `cover`. Le rognage vaut ~1 % sur un bord — invisible — et il n'y a
+   plus une seule bande noire. */
+.cardtile-art{position:relative;display:block;width:100%;aspect-ratio:2.5/3.5;padding:0;
+  overflow:hidden;border-radius:12px;background:none;border:1px solid var(--line);
+  cursor:zoom-in;box-shadow:var(--e2);
+  transition:transform var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),
+             border-color var(--dur-1) var(--ease-out)}
+.cardtile-art img{display:block;width:100%;height:100%;object-fit:cover}
+.cardtile-art .card-noimg{aspect-ratio:2.5/3.5}
+@media(hover:hover){
+  .cardtile-art:hover{transform:translateY(-3px);box-shadow:var(--e3);
+    border-color:color-mix(in srgb,var(--tc) 44%,transparent)}
+}
+.cardtile-art:active{transform:translateY(-1px);transition-duration:var(--dur-0)}
+/* Quantité : une info sur l'objet photographié, donc sur la photo. */
+.cardtile-qtyb{position:absolute;top:6px;left:6px;z-index:3;
+  padding:2px 7px;border-radius:var(--pill);font-size:11px;font-weight:900;
+  background:rgba(4,5,8,.72);color:#fff;backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.cardtile-qtyb[hidden]{display:none}
+/* Le petit « v » : une seule cible, pleine largeur, sous la carte. */
+.cardtile-more{display:flex;align-items:center;justify-content:center;
+  width:100%;min-height:26px;margin-top:4px;padding:0;
+  border:0;background:none;color:var(--t3);cursor:pointer;border-radius:8px;
+  transition:color var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out)}
+.cardtile-more svg{width:16px;height:16px;transition:transform var(--dur-2) var(--ease-out)}
+@media(hover:hover){.cardtile-more:hover{color:var(--t1);background:rgba(255,255,255,.05)}}
+.cardtile.open .cardtile-more{color:var(--acc)}
+.cardtile.open .cardtile-more svg{transform:rotate(180deg)}
+.cardtile-panel{overflow:hidden;display:flex;flex-direction:column;gap:6px;
+  padding:0 2px;transition:max-height 320ms var(--ease-out)}
+.cardtile-panel[hidden]{display:none}
+.cardtile.open .cardtile-panel{padding-bottom:6px}
 /* Pas de backdrop-filter ici : une couche de flou est créée même à
    opacity:0, et il y a une loupe PAR carte suivie (91 sur une seule série).
    Un simple scrim au-dessus de l'artwork fait le même effet. */
@@ -1755,7 +1793,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   transition:opacity var(--dur-1) var(--ease-out)}
 .cardtile-zoom svg{width:20px;height:20px}
 .cardtile-art:hover .cardtile-zoom{opacity:1}
-.cardtile-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .cardtile-name{font-size:14px;font-weight:700;letter-spacing:-.012em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cardtile-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -3136,4 +3173,15 @@ body::before{display:none}
   .bloc-meta{display:none}
   .bloc-name{font-size:14.5px}
   .bloc-body{padding:0 10px}
+}
+
+/* Mur de cartes sur téléphone : deux colonnes, le visuel plein cadre. */
+@media (max-width:767px){
+  .cardlist{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 10px}
+  .cardtile-name{font-size:12.5px}
+  .cardtile-more{min-height:30px}          /* cible au pouce */
+  .cardtile-panel{gap:5px}
+  .cardtile-foot{padding-top:6px}
+  .cm-link span{display:none}              /* l'icône suffit sur 2 colonnes */
+  .cm-link{padding:0 7px}
 }
