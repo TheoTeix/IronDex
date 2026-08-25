@@ -276,6 +276,47 @@ function pulseSaveDot() {
 }
 // Secours au clavier, volontairement non affiché : ⌘S / Ctrl+S télécharge une
 // sauvegarde, ⇧⌘R / Ctrl+Shift+R ouvre la récupération.
+// ── EN-TÊTE TÉLÉPHONE : les actions se dévoilent au tap sur la marque ──
+// Quatre icônes en permanence sur 428 px, c'était une barre d'outils posée sur
+// un coffre. Au repos on ne montre que la marque et le nom de la vue ; le tap
+// sur le logo fait arriver les boutons en cascade. Le repli n'est appliqué que
+// si CE code tourne (drapeau `data-actions`) : si le JS échoue, les boutons
+// restent visibles plutôt qu'inatteignables.
+let _actionsOn = false;
+function setHeaderActions(on) {
+  _actionsOn = !!on;
+  const root = document.documentElement;
+  root.dataset.actions = _actionsOn ? 'on' : 'off';
+  const brand = document.getElementById('tb-brand');
+  if (brand) brand.setAttribute('aria-expanded', _actionsOn ? 'true' : 'false');
+}
+function bindBrandReveal() {
+  const brand = document.getElementById('tb-brand');
+  if (!brand) return;
+  if (!isPhone()) { delete document.documentElement.dataset.actions; return; }
+  brand.setAttribute('role', 'button');
+  brand.setAttribute('tabindex', '0');
+  brand.setAttribute('aria-controls', 'header-actions');
+  brand.setAttribute('aria-label', 'Afficher les actions');
+  setHeaderActions(false);
+  const toggle = e => { e.preventDefault(); e.stopPropagation(); setHeaderActions(!_actionsOn); };
+  brand.addEventListener('click', toggle);
+  brand.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') toggle(e); });
+  // Refermer : après une action, sur un tap ailleurs, ou en changeant de vue.
+  // Pas de minuteur — un panneau qui se referme sous le doigt est pire que
+  // deux taps.
+  document.querySelector('.header-actions')?.addEventListener('click', () => {
+    if (_actionsOn) setTimeout(() => setHeaderActions(false), 220);
+  });
+  document.addEventListener('click', e => {
+    if (_actionsOn && !e.target.closest('.app-header')) setHeaderActions(false);
+  }, true);
+  // La largeur peut changer de camp (rotation, iPad) : on rend la main.
+  addEventListener('resize', () => {
+    if (!isPhone()) delete document.documentElement.dataset.actions;
+    else if (!document.documentElement.dataset.actions) setHeaderActions(false);
+  });
+}
 function bindBackupShortcuts() {
   document.addEventListener('keydown', e => {
     const mod = e.metaKey || e.ctrlKey;
@@ -2896,6 +2937,7 @@ function renderViewContent(view) {
   });
   setBadge(['badge-wishlists', 'badge-wishlists-m'], state.wishlists.length);
   setBadge(['badge-invest', 'badge-invest-m'], state.sealed.length + state.investCards.length);
+  if (_actionsOn) setHeaderActions(false);   // changer de vue referme les actions
   const m = VIEW_META[view] || VIEW_META.home;
   const eb = document.getElementById('tb-eyebrow'); if (eb) eb.textContent = m.eyebrow;
   const nm = document.getElementById('tb-name'); if (nm) nm.textContent = m.name;
@@ -7583,6 +7625,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(refreshSyncMeta, 600);         // « cotes il y a … » une fois l'accueil peint
     setTimeout(offerRecoveryIfNeeded, 900);   // propose la récupération si des sections sont vides
     bindBackupShortcuts();
+    bindBrandReveal();                        // en-tête téléphone : actions au tap sur la marque
     bindPalette();                            // ⌘K / « / » — accélérateur global
     watchSoft();                              // tout nouveau bouton reçoit le matériau
     attachSpotlights();                       // lumière au curseur sur les surfaces

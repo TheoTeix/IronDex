@@ -2729,22 +2729,24 @@ body::before{display:none}
 @media (max-width:560px){.cloud-row{grid-template-columns:1fr}}
 
 /* ═══════════════════════════════════════════════════════════════════
-   TÉLÉPHONE (≤767 px) — pensé pour un iPhone tenu à une main, pas pour
-   « le desktop en plus petit ».
-   Ce qui n'allait pas, mesuré sur iPhone 12 Pro Max (428×926) : l'accueil
-   faisait 2 708 px de haut (trois écrans) pour trois chiffres et une carte,
-   chaque tuile de valeur occupant 125 px en colonne. Densité d'abord.
+   TÉLÉPHONE (≤767 px) — une app iOS, pas un site rétréci
+
+   Refonte du 2026-08-25 (« assez compact et pas très beau »). Le premier
+   passage avait tassé l'accueil pour gagner de la hauteur : lisible, mais
+   étouffé. On reprend de l'air là où ça compte (les chiffres, les cartes, les
+   classeurs) et on enlève du décor : moins de traits, moins d'encadrés, des
+   séparateurs à peine visibles. La densité vient de la hiérarchie, pas du
+   resserrement.
    ═══════════════════════════════════════════════════════════════════ */
 @media (max-width:767px){
 
   /* ── Encoche et barre d'accueil ────────────────────────────────
      Installée sur l'écran d'accueil, l'app occupe TOUT l'écran : sans ces
      marges, le titre passerait sous l'heure et la tab bar sous le trait. */
-  .app-header{padding-top:calc(10px + env(safe-area-inset-top));
-    min-height:calc(56px + env(safe-area-inset-top))}
-  .tabbar{padding-bottom:max(8px,env(safe-area-inset-bottom))}
-  .main{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
-  .modal-overlay{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+  .app-header{min-height:calc(52px + env(safe-area-inset-top));
+    padding:calc(9px + env(safe-area-inset-top)) var(--gutter) 9px;gap:10px}
+  .main{padding-bottom:calc(84px + env(safe-area-inset-bottom));padding-top:var(--s4)}
+  #toast-container{bottom:calc(88px + env(safe-area-inset-bottom))}
 
   /* ── Confort tactile ──────────────────────────────────────────
      Pas de flash bleu au doigt, pas de zoom au double-tap, et le rebond de
@@ -2753,44 +2755,139 @@ body::before{display:none}
   body{overscroll-behavior-y:contain}
   .btn,.nav-btn,a,label{touch-action:manipulation}
 
-  /* ── Valeur du coffre : trois lignes compactes ─────────────────
-     Icône + libellé à gauche, montant aligné à droite : lisible d'un coup
-     d'œil, 58 px par ligne au lieu de 125. */
-  .vault{padding:16px}
-  .vault-total{font-size:clamp(30px,8.5vw,38px)}
-  .vault-sub{font-size:12px}
-  .vault-stats{display:block}
-  .vstat{display:grid;grid-template-columns:auto 1fr auto;align-items:center;
-    column-gap:11px;row-gap:0;padding:11px 2px;border-left:0;border-top:1px solid var(--line)}
-  .vstat:first-child{border-top:0}
-  .vstat-ico{grid-column:1;grid-row:1/span 2;margin:0}
-  .vstat-k{grid-column:2;grid-row:1;font-size:13px;color:var(--t1)}
-  .vstat-sub{grid-column:2;grid-row:2}
-  .vstat-v{grid-column:3;grid-row:1/span 2;font-size:19px;text-align:right}
-  .vault-note{margin-top:12px;font-size:12px}
+  /* ══ EN-TÊTE : la marque est un bouton ══════════════════════════
+     Quatre icônes en permanence sur 428 px, ça fait une barre d'outils, pas
+     un coffre. Au repos on ne montre que la marque et le nom de la vue ; les
+     actions se dévoilent au tap sur le logo (voir bindBrandReveal). */
+  .tb-brand{display:flex;align-items:center;gap:9px;cursor:pointer;
+    padding:5px 9px 5px 5px;margin-left:-5px;border-radius:var(--pill);
+    -webkit-user-select:none;user-select:none;
+    transition:background var(--dur-1) var(--ease-out)}
+  .tb-brand:active{background:rgba(255,255,255,.06)}
+  .brand-mark img{width:26px;height:26px}
+  .brand-word{font-size:15.5px;letter-spacing:-.02em}
+  .brand-chev{display:grid;place-items:center;width:14px;height:14px;color:var(--t3);
+    transition:transform var(--dur-2) var(--ease-out),color var(--dur-1) linear}
+  .brand-chev svg{width:12px;height:12px}
+  :root[data-actions="on"] .brand-chev{transform:rotate(180deg);color:var(--acc)}
 
-  /* ── Scrollers horizontaux : élan iOS, et on voit qu'il y a une suite ── */
-  .scroller,.hscroll,[class*="-strip"],[class*="-rail"]{-webkit-overflow-scrolling:touch;
-    scroll-snap-type:x proximity;scrollbar-width:none}
-  .scroller::-webkit-scrollbar,.hscroll::-webkit-scrollbar{display:none}
+  /* Nom de la vue à la place des boutons quand ils sont repliés : l'espace
+     sert à situer l'utilisateur au lieu de rester vide. */
+  .tb-title{display:flex;flex:1;min-width:0;justify-content:flex-end;text-align:right}
+  .tb-eyebrow{display:none}
+  .tb-name{font-size:13px;font-weight:600;color:var(--t3);letter-spacing:-.01em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    transition:opacity var(--dur-1) var(--ease-out)}
+  :root[data-actions="on"] .tb-title{opacity:0;flex:0;width:0;overflow:hidden}
 
-  /* ── Cibles ≥44 px : un doigt n'est pas un curseur ─────────────── */
-  .btn-sm,.btn-icon{min-height:40px;min-width:40px}
-  .tabbar .nav-btn{min-height:56px}
+  /* Les actions : repliées seulement si le JS a posé le drapeau (sinon elles
+     restent accessibles, quoi qu'il arrive). Elles arrivent en cascade. */
+  :root[data-actions] .header-actions{gap:8px;margin-left:auto}
+  :root[data-actions="off"] .header-actions{
+    opacity:0;pointer-events:none;width:0;overflow:hidden;
+    transform:translateX(-10px) scale(.9);transform-origin:right center}
+  :root[data-actions="on"] .header-actions{opacity:1;transform:none}
+  :root[data-actions] .header-actions{
+    transition:opacity var(--dur-2) var(--ease-out),transform var(--dur-2) var(--ease-out)}
+  :root[data-actions] .header-actions>*{transition:opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out)}
+  :root[data-actions="off"] .header-actions>*{opacity:0;transform:translateY(-6px) scale(.8)}
+  :root[data-actions="on"] .header-actions>*{opacity:1;transform:none}
+  :root[data-actions="on"] .header-actions>*:nth-child(1){transition-delay:20ms}
+  :root[data-actions="on"] .header-actions>*:nth-child(2){transition-delay:60ms}
+  :root[data-actions="on"] .header-actions>*:nth-child(3){transition-delay:100ms}
+  :root[data-actions="on"] .header-actions>*:nth-child(4){transition-delay:140ms}
+  .header-actions .btn-icon{width:38px;min-height:38px}
 
-  /* ── Modales : feuille plein écran, pas une fenêtre flottante ─── */
-  .modal{max-width:100%!important;width:100%;max-height:88vh;border-radius:22px 22px 0 0}
+  /* ══ TAB BAR ═══════════════════════════════════════════════════ */
+  .tabbar{padding:7px 6px max(7px,env(safe-area-inset-bottom))}
+  .tabbar .nav-btn{min-height:52px;gap:5px;padding:5px 2px;border-radius:14px}
+  .tabbar .nav-icon{width:25px;height:25px}
+  .tabbar .nav-svg{width:23px;height:23px}
+  .tabbar .nav-label{font-size:10.5px;font-weight:650;letter-spacing:.005em;opacity:.9}
+  .tabbar .nav-btn.active .nav-label{opacity:1;font-weight:700}
+  /* Pastilles à la iOS : rond rouge, chiffre blanc, collé en haut à droite de
+     l'icône, avec un liseré de la couleur de la barre pour le détacher. */
+  .tabbar .nav-badge{
+    position:absolute;top:3px;left:calc(50% + 5px);right:auto;
+    min-width:18px;height:18px;padding:0 5px;border-radius:999px;
+    background:#FF3B30;color:#fff;font-size:11px;font-weight:700;letter-spacing:0;
+    font-variant-numeric:tabular-nums;line-height:1;
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--v-0) 92%,transparent),0 1px 4px rgba(0,0,0,.55);
+  }
+  .tabbar .nav-btn.active .nav-badge{background:#FF3B30;color:#fff}
+
+  /* ══ ACCUEIL ═══════════════════════════════════════════════════
+     Le montant est le sujet : il respire. Les trois lignes en dessous sont
+     une liste, pas un tableau — donc pas de cadre, juste des filets. */
+  .vault{padding:22px 20px 18px;border-radius:24px}
+  .vault-k{font-size:10.5px;letter-spacing:.16em}
+  .vault-total{font-size:clamp(36px,10.5vw,46px);letter-spacing:-.035em;line-height:1.02}
+  .vault-sub{font-size:12.5px;margin-top:3px}
+  .vault-stats{display:block;margin-top:20px;border:0;border-radius:0;background:none}
+  .vstat{display:grid;grid-template-columns:26px 1fr auto;align-items:center;
+    column-gap:12px;row-gap:1px;padding:14px 0;border-left:0;
+    border-top:1px solid color-mix(in srgb,var(--line) 62%,transparent)}
+  .vstat:first-child{border-top:0;padding-top:4px}
+  .vstat-ico{grid-column:1;grid-row:1/span 2;margin:0;justify-self:center}
+  .vstat-ico svg{width:19px;height:19px}
+  .vstat-k{grid-column:2;grid-row:1;font-size:14px;font-weight:650;color:var(--t1)}
+  .vstat-sub{grid-column:2;grid-row:2;font-size:11.5px}
+  .vstat-v{grid-column:3;grid-row:1/span 2;font-size:21px;text-align:right;letter-spacing:-.025em}
+  .vault-note{margin-top:16px;padding-top:14px;font-size:12px;line-height:1.45;
+    border-top:1px solid color-mix(in srgb,var(--line) 62%,transparent)}
+
+  /* La pièce maîtresse : la carte prend la largeur, le reste s'efface. */
+  .showpiece{padding:18px 16px 20px;border-radius:24px}
+  .showpiece-art{max-width:300px;margin:0 auto}
+
+  /* ══ CLASSEURS : un vrai classeur, pas une vignette ════════════
+     Deux colonnes de 150 px donnaient des couvertures de 5 cm de haut. Sur
+     téléphone un classeur s'ouvre : il mérite la pleine largeur. */
+  /* `.binders-view` est un flex en colonne centré : sans `width:100%`, la
+     grille se réduit à la largeur intrinsèque de son contenu (169 px mesurés,
+     d'où des couvertures minuscules malgré la colonne unique). */
+  .binders-view .binder-shelf{grid-template-columns:1fr;gap:22px;
+    width:100%;max-width:330px;margin:0 auto;padding-bottom:26px}
+  .binders-view .binder-tile-cover{padding:24px 22px 24px 38px;border-radius:10px 20px 20px 10px}
+  .binders-view .binder-tile-name{font-size:20px}
+  .binders-view .binder-tile-meta{font-size:12.5px}
+
+  /* Grilles de cartes : deux colonnes franches (les visuels sont la vedette). */
+  .cards-grid,.cardser-grid{grid-template-columns:repeat(2,1fr);gap:var(--s4) var(--s3)}
+
+  /* Vignettes de wishlist : 52 px, c'étaient des timbres. On les agrandit d'un
+     tiers en gardant le chevauchement de l'éventail — la pile de 5 tient
+     toujours dans la largeur (66 + 4×46 = 250 px). */
+  .wishlist-preview{min-height:94px}
+  .wishlist-preview>img,.wishlist-preview>.wl-prev-ph{width:66px;margin-right:-20px;border-radius:9px}
+  .wishlist-preview-more{font-size:12.5px}
+
+  /* ══ FEUILLES MODALES ══════════════════════════════════════════ */
+  .modal{max-width:100%!important;width:100%;max-height:92dvh;border-radius:24px 24px 0 0}
   .modal-body{max-height:none}
+  /* Poignée : dit que ça vient du bas et que ça se referme. */
+  .modal::before{content:"";display:block;flex:none;width:38px;height:4px;border-radius:999px;
+    background:rgba(255,255,255,.16);margin:9px auto 0}
+  .modal-header{padding-top:12px}
   .cloud-actions .btn{flex:1 1 100%;justify-content:center}
+
+  /* ── Cibles : un doigt n'est pas un curseur ─────────────────── */
+  .btn-sm,.btn-icon{min-height:38px;min-width:38px}
+
+  /* ── Scrollers horizontaux : élan iOS, sans barre visible ───── */
+  .strip,.scroller,.hscroll{-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .strip::-webkit-scrollbar,.scroller::-webkit-scrollbar{display:none}
 }
 
 /* Le paysage sur téléphone (926×428) : l'en-tête et la tab bar mangent la
    moitié de la hauteur utile — on les resserre au maximum. */
 @media (max-width:940px) and (max-height:500px) and (orientation:landscape){
-  .app-header{min-height:48px;padding-top:calc(6px + env(safe-area-inset-top))}
+  .app-header{min-height:46px;padding-top:calc(5px + env(safe-area-inset-top))}
   .tabbar{padding-top:2px}
-  .tabbar .nav-btn{min-height:44px;font-size:10px}
-  .main{padding-bottom:calc(60px + env(safe-area-inset-bottom))}
+  .tabbar .nav-btn{min-height:42px;gap:2px}
+  .tabbar .nav-label{font-size:9.5px}
+  .main{padding-bottom:calc(58px + env(safe-area-inset-bottom))}
 }
 
 /* Ce que contient VRAIMENT le dépôt : la ligne qui répond à « est-ce que c'est
