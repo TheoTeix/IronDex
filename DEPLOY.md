@@ -109,6 +109,7 @@ retour du réseau.
 **Le code** (quand on modifie `app.js`, `style.css`, `index.html`) :
 
 ```bash
+git pull --rebase        # l'app commite elle aussi (dans data/) : on récupère d'abord
 git add -A
 git commit -m "ce que j'ai changé"
 git push
