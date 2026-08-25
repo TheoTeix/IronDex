@@ -193,6 +193,7 @@ class Bridge:
         self.pw = None
         self._relaunch_lock = asyncio.Lock()
         self.relaunches = 0
+        self.needs_human = False   # Cloudflare demande une action humaine
         self.fast = True            # voie rapide (fetch) autorisée
         self.fast_fails = 0         # challenges consécutifs sur la voie rapide
         self.nav_since_probe = 0    # navigations depuis le dernier test de la voie rapide
@@ -246,6 +247,7 @@ class Bridge:
                     low = t.lower()
                     if 'cardmarket' in low and not any(k in low for k in ('instant', 'moment', 'attention required')):
                         self.ready = True
+                        self.needs_human = False
                         return True
                     await asyncio.sleep(1.5)
                 print('  challenge Cloudflare en cours — si une case à cocher '
@@ -279,12 +281,31 @@ class Bridge:
             except Exception: pass
 
     async def watchdog(self, every: float = 20.0):
-        """Surveille la fenêtre en continu : elle doit être debout AVANT que
-        l'utilisateur clique « Sync », pas réparée au premier échec."""
+        """Surveille la fenêtre ET la clearance.
+
+        Deux pannes distinctes, et la seconde m'avait échappé : une fenêtre
+        MORTE (on relance), et une fenêtre VIVANTE à qui Cloudflare refuse la
+        clearance. Dans ce second cas le pont restait « pas prêt » indéfiniment
+        — le clic Sync refusait de partir sans que rien ne retente. On refait
+        donc un passage de clearance, en espaçant les tentatives.
+        """
+        fails = 0
         while True:
-            await asyncio.sleep(every)
+            await asyncio.sleep(every * (1 + min(fails, 5)))   # 20 s → 2 min
             if not await self.alive():
                 await self.ensure_alive()
+                fails = 0
+                continue
+            if self.ready or self._clear_lock.locked():
+                fails = 0
+                continue
+            ok = await self._clear(patience=45)
+            fails = 0 if ok else fails + 1
+            if fails == 2:
+                print('  Cloudflare insiste : REGARDE LA FENÊTRE BRAVE du pont — '
+                      's\'il y a une case « Vérifiez que vous êtes humain », coche-la, '
+                      'la synchro repartira toute seule.', flush=True)
+            self.needs_human = fails >= 2
 
     async def alive(self) -> bool:
         """La fenêtre du navigateur répond-elle encore ?
@@ -446,6 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {'ok': True, 'ready': bool(b.ready and alive), 'alive': alive,
                                     'relaunches': b.relaunches, 'served': b.served,
                                     'blocked': b.blocked, 'challenges': b.challenges,
+                                    'needsHuman': b.needs_human,
                                     'delay': b.delay, 'mode': 'fetch' if b.fast else 'navigation',
                                     'browser': os.path.basename(b.browser)})
         if u.path == '/price':

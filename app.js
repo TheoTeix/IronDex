@@ -1874,7 +1874,7 @@ function pingCmBridge(force) {
         if (!r.ok) continue;
         const d = await r.json();
         _cmBridgeBase = base;
-        st = { at: Date.now(), up: true, ready: !!d.ready, base };
+        st = { at: Date.now(), up: true, ready: !!d.ready, needsHuman: !!d.needsHuman, base };
         break;
       } catch {}
     }
@@ -2202,7 +2202,13 @@ async function syncPrices() {
   if (!cmBridgeUp()) {
     if (Date.now() > _syncForceUntil) {
       _syncForceUntil = Date.now() + 20000;
-      toast('Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)', 'error');
+      // Deux pannes très différentes : le pont pas lancé, ou lancé mais bloqué
+      // par Cloudflare (une case à cocher attend dans SA fenêtre). Dire
+      // « éteint » dans le second cas envoie l'utilisateur chercher au mauvais
+      // endroit.
+      toast(_cmBridge.up
+        ? 'Pont bloqué par Cloudflare : va cocher la case dans sa fenêtre Brave, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)'
+        : 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)', 'error');
       return;
     }
     _syncForceUntil = 0;
