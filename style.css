@@ -383,9 +383,14 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   -webkit-backdrop-filter:blur(22px) saturate(150%);
 }
 .rail-brand{display:flex;align-items:center;gap:11px;padding:0 8px;min-height:44px}
-.brand-mark{width:36px;height:36px;border-radius:11px;flex:none;overflow:hidden;
-  background:var(--v-2);border:1px solid var(--line-2);box-shadow:var(--e1)}
-.brand-mark img{width:100%;height:100%;object-fit:cover}
+/* Le logo est une ICÔNE COMPLÈTE depuis le 2026-08-26 : la tuile bleu nuit et
+   ses coins arrondis sont dans le PNG, les angles y sont transparents. Donc
+   plus de cadre CSS derrière (on voyait un liseré autour d'une icône qui a
+   déjà le sien), et surtout plus de `border-radius` : à 36 px, le rayon de
+   11 px rognait plus que la forme du fichier (≈5 px) et mordait les bords
+   droits de la tuile. La silhouette vient du fichier, un point c'est tout. */
+.brand-mark{width:36px;height:36px;flex:none}
+.brand-mark img{width:100%;height:100%;object-fit:contain}
 .brand-word{font-size:19px;font-weight:900;letter-spacing:-.03em}
 .brand-word i{font-style:normal;color:var(--acc);transition:color var(--flow)}
 
@@ -2108,9 +2113,11 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .intro-flash{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0}
 .intro-hud{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:14px;
   padding:0 24px;text-align:center}
-.intro-mark{width:62px;height:62px;border-radius:19px;overflow:hidden;
-  border:1px solid var(--line-2);box-shadow:var(--e3);background:var(--v-2)}
-.intro-mark img{width:100%;height:100%;object-fit:cover}
+/* Même raison que .brand-mark : à 62 px, un rayon CSS de 19 px coupait dans la
+   tuile (sa propre courbure vaut ≈9 px à cette taille). L'ombre reste, mais
+   posée sur l'image elle-même pour qu'elle suive la forme et non un carré. */
+.intro-mark{width:62px;height:62px;filter:drop-shadow(0 14px 30px rgba(0,0,0,.55))}
+.intro-mark img{width:100%;height:100%;object-fit:contain}
 .intro-logo{font-size:clamp(38px,7vw,64px);font-weight:900;letter-spacing:-.045em;line-height:1}
 .intro-logo span{color:var(--acc);transition:color var(--flow)}
 .intro-tag{font-size:11px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--t3)}
@@ -2935,8 +2942,11 @@ body::before{display:none}
     padding:4px 6px 4px 0;border-radius:var(--pill);
     -webkit-user-select:none;user-select:none}
   /* Le logo est un logo, pas une tuile : ni fond, ni bordure, ni ombre —
-     c'est le « carré noir » qu'on voyait derrière lui. */
-  .brand-mark{width:34px;height:34px;background:none;border:0;box-shadow:none;border-radius:50%}
+     c'est le « carré noir » qu'on voyait derrière lui.
+     Et PAS de `border-radius:50%` : les coins du fichier sont déjà
+     transparents, mais un cercle inscrit dans le carré rognerait les bords
+     DROITS de la tuile — l'icône y perdait ses quatre côtés. */
+  .brand-mark{width:34px;height:34px;background:none;border:0;box-shadow:none;border-radius:0}
   .brand-mark img{width:100%;height:100%;object-fit:contain}
   .brand-word{font-size:15.5px;letter-spacing:-.02em;white-space:nowrap;
     transition:opacity var(--dur-1) var(--ease-out),max-width var(--dur-2) var(--ease-out)}

@@ -4555,7 +4555,7 @@ function renderBinders() {
           <div class="binder-tile-cover">
             <span class="binder-tile-spine" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="binder-tile-stitch" aria-hidden="true"></span>
-            <span class="binder-tile-emblem" aria-hidden="true"><img src="milobellus-logo.png?v=1" alt=""></span>
+            <span class="binder-tile-emblem" aria-hidden="true"><img src="milobellus-logo.png?v=2" alt=""></span>
             <div class="binder-tile-name">Milobellus</div>
             <div class="binder-tile-meta">${total ? `${owned} / ${total} obtenues` : 'Collection signature'}</div>
             <div class="binder-tile-bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
@@ -4683,7 +4683,7 @@ function renderBinderDetail() {
   const hero = isMilo ? `
       <header class="milo-hero">
         <div class="milo-hero-row">
-          <img class="milo-hero-logo" src="milobellus-logo.png?v=1" alt="">
+          <img class="milo-hero-logo" src="milobellus-logo.png?v=2" alt="">
           <h1 class="milo-word" data-text="Milobellus">Milobellus</h1>
         </div>
         <div class="milo-progress-wrap">
@@ -4877,7 +4877,7 @@ function buildBinder(slots) {
             <span class="cover-stitch" aria-hidden="true"></span>
             <span class="cover-corner tl"></span><span class="cover-corner tr"></span>
             <span class="cover-corner bl"></span><span class="cover-corner br"></span>
-            <div class="cover-emblem">${bctx.owned ? `<img src="milobellus-logo.png?v=1" alt="" class="cover-logo">` : miloEmblemSVG()}</div>
+            <div class="cover-emblem">${bctx.owned ? `<img src="milobellus-logo.png?v=2" alt="" class="cover-logo">` : miloEmblemSVG()}</div>
             <div class="cover-title">${coverTitle}</div>
             <div class="cover-sub">Le classeur</div>
             <span class="cover-shine" aria-hidden="true"></span>

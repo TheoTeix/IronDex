@@ -13,6 +13,11 @@ milodex-sauvegarde.json
 #    qu'au repli http et pèse 2 Mo pour rien.
 cm-slugs.json
 
+# ── Source du logo : le master 1254x1254 dont logo.png / favicon.png /
+#    milobellus-logo.png sont dérivés (voir le commit du 2026-08-26). Il reste
+#    en LOCAL : 1,4 Mo qu'aucune page ne charge n'ont rien à faire sur Pages.
+logo-source.png
+
 # ── Outils locaux
 scripts/__pycache__/
 venv/
