@@ -88,7 +88,6 @@ const ICO = {
 };
 // Icône « + » (héritée) : même glyphe vectoriel que ICO.plus.
 const PLUS = '<span class="ico-plus" aria-hidden="true">' + ICO.plus + '</span>';
-const SYNC_ICO = '<span class="ico-sync" aria-hidden="true">' + ICO.sync + '</span>';
 
 const state = {
   view: 'home',
@@ -2057,10 +2056,11 @@ const pricePromises = {};   // requêtes en cours (dédoublonnage)
 // Les cotes ne sont plus rechargées « toutes seules » : elles sont
 // ENREGISTRÉES sur le disque et relues au démarrage, donc la valeur du coffre,
 // des wishlists et du portefeuille s'affiche INSTANTANÉMENT à l'ouverture,
-// même hors ligne. Elles ne changent que sur demande explicite : le bouton
-// « Sync » de l'en-tête (voir syncPrices) — un clic, tout est remis à jour.
-// Les cartes ajoutées depuis la dernière synchro sont, elles, cotées à la
-// volée en arrière-plan (ensurePrices) : jamais de trou dans les totaux.
+// même hors ligne. Elles ne changent que sur demande explicite : le bouton de
+// la carte elle-même (voir syncCardPrice) — une carte, une seconde.
+// Les cartes qui n'ont AUCUNE valeur (tout juste ajoutées, ou première
+// ouverture) sont cotées à la volée en arrière-plan (ensurePrices) : jamais de
+// trou dans les totaux, et jamais de recalcul de ce qui est déjà là.
 // v7 : la cote de référence n'est plus une moyenne d'API mais le PREMIER PRIX
 // de la fiche Cardmarket en français / Near Mint (voir cmFirstPrice). Nouvelle
 // clé, mais l'ancienne est REPRISE : le coffre garde une valeur à l'ouverture,
@@ -2377,153 +2377,150 @@ async function repairInvestCardIds() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  SYNCHRO DES COTES — « Sync » : un clic, TOUTES les cartes de l'app
-//  sont recotées puis ENREGISTRÉES. Aux ouvertures suivantes, les
-//  valeurs s'affichent instantanément depuis le disque.
+//  LA COTE SE REFAIT CARTE PAR CARTE
+//
+//  Il y avait un bouton « Sync » global (en-tête + accueil) qui recotait les
+//  1 400 cartes de l'app d'un seul clic. Deux problèmes, et c'est pour ça
+//  qu'il n'existe plus :
+//   · il REFAISAIT tout un travail déjà juste. La plupart des cotes sont
+//     bonnes ; les repayer coûtait ~20 minutes de fiches Cardmarket, une par
+//     seconde, pour arriver au même montant.
+//   · il ne réglait pas le seul cas qui compte : LA carte dont la cote est
+//     fausse (fiche mal appariée, offre disparue). On relançait tout et elle
+//     restait fausse.
+//  Chaque tuile de carte porte donc son propre bouton : une carte, une
+//  seconde, et on VOIT d'où vient le montant obtenu.
+//
+//  Ce qui reste global — et qui n'est pas un recalcul mais un TRANSFERT :
+//  récupérer les cotes que le dépôt contient déjà. C'est le geste utile sur
+//  l'iPhone, qui n'a pas de pont Cardmarket : les cotes sont calculées sur la
+//  machine qui l'a, et voyagent par le dépôt.
 // ══════════════════════════════════════════════════════════════════
-let _syncBusy = false, _syncForceUntil = 0;
-function syncPricesBusy() { return _syncBusy; }
-async function syncPrices() {
-  if (_syncBusy) return;
-  if (_refreshBusy) { toast('Actualisation des séries en cours…'); return; }
-  const ids = trackedCardIds();
-  if (!ids.length) { toast('Aucune carte à synchroniser pour l\u2019instant'); return; }
-  // Le pont Cardmarket est interrogé AVANT de commencer : c'est lui qui décide
-  // si la synchro recote au premier prix français (Near Mint) ou aux moyennes
-  // des API. On le DIT dans l'overlay — une synchro qui ne donne pas les mêmes
-  // montants selon qu'un script tourne ou pas ne doit jamais être silencieuse.
-  await pingCmBridge(true);
-  // PRÉ-VOL. Sans le pont, la synchro recoterait tout aux moyennes toutes
-  // langues — le contraire de ce qu'on veut, pour 20 minutes de travail. On
-  // s'arrête et on le dit ; un second clic dans les 20 s passe outre (parfois
-  // on veut juste des valeurs, n'importe lesquelles).
-  if (!cmBridgeUp()) {
-    // Sur une machine sans pont (un PC sous Windows, par exemple), recalculer
-    // n'a aucun sens : les cotes se calculent là où le pont tourne et voyagent
-    // par le dépôt. Le geste utile ici est donc de les RÉCUPÉRER. C'est ce que
-    // le bouton fait maintenant, au lieu de refuser avec un message de 2 s.
-    const got = await ghPullPrices().catch(() => 0);
-    if (got) {
-      refreshSyncMeta();
-      toast(`${got.toLocaleString('fr-FR')} cotes récupérées depuis le dépôt`, 'success');
-      return;
-    }
-    if (Date.now() > _syncForceUntil) {
-      _syncForceUntil = Date.now() + 20000;
-      // Trois pannes distinctes, trois consignes différentes : le pont n'est pas
-      // lancé, il tourne mais son accès Cardmarket a expiré, ou il est
-      // injoignable. Dire « éteint » dans le deuxième cas envoyait chercher au
-      // mauvais endroit.
-      toast(!_cmBridge.up
-        ? (ghCfg().owner
-            ? 'Pas de pont ici et le dépôt n\u2019a rien de plus récent : lance la synchro depuis la machine qui a le pont. (Re-cliquer = cotes moyennes.)'
-            : 'Pont Cardmarket éteint : lance cm_price_bridge.py, puis re-clique. (Re-cliquer maintenant = cotes moyennes.)')
-        : 'Cardmarket a demandé une vérification humaine : lance « cm_price_bridge.py --login » une fois, puis re-clique.', 'error');
-      return;
-    }
-    _syncForceUntil = 0;
-  }
-  const srcLabel = cmBridgeUp() ? 'premier prix FR · Near Mint' : 'moyennes — pont Cardmarket éteint';
-  // Des identifiants faux ne se corrigent pas avec des cotes : on répare la
-  // donnée juste avant de coter, sinon la synchro cherche des cartes qui
-  // n'existent pas (voir repairInvestCardIds).
-  const repaired = await repairInvestCardIds().catch(() => 0);
-  if (repaired) toast(`${repaired} carte${repaired > 1 ? 's' : ''} recollée${repaired > 1 ? 's' : ''} à la bonne série`, 'success');
-  _syncBusy = true;
-  document.querySelectorAll('.btn-sync').forEach(b => { b.classList.add('spinning'); b.disabled = true; });
-  const overlay = document.getElementById('refresh-overlay');
-  const title = document.getElementById('refresh-title');
-  const sub = document.getElementById('refresh-sub');
-  const prog = document.getElementById('refresh-prog');
-  const bar = prog ? prog.firstElementChild : null;
-  if (sub) sub.classList.remove('done');
-  if (title) title.textContent = 'Synchronisation des cotes';
-  if (sub) sub.textContent = `0 / ${ids.length} cartes · ${srcLabel}`;
-  if (prog) { prog.classList.add('on'); if (bar) bar.style.width = '0%'; }
-  overlay?.classList.add('open');
-  pauseHero();           // évite deux contextes WebGL lourds simultanés
-  startRefreshFX();
-  startRefresh3D();
-  const t0 = performance.now();
-
-  // On repart de cotes FRAÎCHES : purge mémoire (le disque, lui, n'est
-  // réécrit qu'à la fin — une synchro interrompue ne perd donc rien). Les
-  // valeurs précédentes sont mises de côté : celles que le réseau n'arrive pas
-  // à recoter seront REMISES telles quelles. Une synchro lancée hors ligne ne
-  // peut donc jamais vider le coffre.
-  const prev = {};
-  for (const id of ids) {
-    if (priceCache[id]) prev[id] = priceCache[id];
-    delete priceCache[id]; delete _priceNullAt[id];
-  }
-  _priceWriteHold = prev;   // le disque garde l'état d'avant jusqu'au flush final
-  let done = 0, ok = 0;
-  const withTimeout = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(r => setTimeout(() => r(null), ms))]);
-  // Avec le pont, une carte peut attendre son tour derrière la cadence (une
-  // fiche par seconde) et surtout derrière un challenge Cloudflare (jusqu'à
-  // ~75 s le temps de reprendre la main). Abandonner au bout de 15 s ferait
-  // retomber ces cartes sur une moyenne alors qu'il suffisait de patienter.
-  const perCardMs = cmBridgeUp() ? 90000 : 15000;
-  await runPool(ids, async id => {
-    const r = await withTimeout(getRawPrice(id), perCardMs);
-    done++;
-    if (r && r.raw != null) ok++;
-    if (sub) sub.textContent = `${done} / ${ids.length} cartes · ${srcLabel}`;
-    if (bar) bar.style.width = Math.round(done / ids.length * 100) + '%';
-  }, 6);
-
-  // Filet : on rend leur ancienne valeur aux cartes que la synchro n'a pas su
-  // recoter (panne réseau, rate-limit, carte non cotée ce jour-là).
-  let kept = 0;
-  for (const id of ids) if (!priceCache[id] && prev[id]) { priceCache[id] = prev[id]; delete _priceNullAt[id]; kept++; }
-  // Une cote au vrai prix français ne doit JAMAIS régresser vers une moyenne :
-  // si la carte l'avait déjà et que le pont n'a pas su le redonner cette fois
-  // (challenge Cloudflare, fiche momentanément indisponible), on garde
-  // l'ancienne valeur — elle décrit le bon marché, la moyenne non.
-  for (const id of ids) {
-    if (prev[id] && prev[id].src === 'cm-first' && priceCache[id] && priceCache[id].src !== 'cm-first') {
-      priceCache[id] = prev[id]; kept++;
-    }
-  }
-  // Combien de cotes viennent du VRAI premier prix français : le reste est
-  // resté sur une moyenne (fiche Cardmarket introuvable, ou aucune offre FR).
-  let firstN = 0;
-  for (const id of ids) if (priceCache[id] && priceCache[id].src === 'cm-first') firstN++;
-  // Horodatage seulement si la synchro a vraiment obtenu quelque chose : sinon
-  // l'étiquette continuerait d'annoncer « à l'instant » sur des valeurs vieilles.
-  if (ok) _priceSyncedAt = Date.now();
-  _priceWriteHold = null;   // fin de la synchro : le résultat devient la référence
-  flushPriceCache();        // écriture immédiate : la synchro survit à un refresh
-  ghPushSoon('prices');     // …et l'iPhone verra ces cotes sans pont Cardmarket
-
-  await new Promise(r => setTimeout(r, Math.max(0, 1200 - (performance.now() - t0))));
-  if (sub) sub.classList.add('done');
-  if (title) title.textContent = ok ? 'Cotes à jour' : 'Hors ligne';
-  if (sub) sub.textContent = ok
-    ? `${ok} carte${ok > 1 ? 's' : ''} cotée${ok > 1 ? 's' : ''} sur ${ids.length}`
-      + (firstN ? ` · ${firstN} au premier prix FR` : '')
-      + (kept ? ` · ${kept} valeur${kept > 1 ? 's' : ''} conservée${kept > 1 ? 's' : ''}` : '')
-    : (kept ? 'Serveur injoignable — valeurs précédentes conservées' : 'Impossible de contacter le serveur');
-  await new Promise(r => setTimeout(r, 950));
-  overlay?.classList.add('closing');
-  overlay?.classList.remove('open');
-  setTimeout(() => {
-    overlay?.classList.remove('closing');
-    if (prog) prog.classList.remove('on');
-    stopRefreshFX(); stopRefresh3D();
-  }, 520);
-  document.querySelectorAll('.btn-sync').forEach(b => { b.classList.remove('spinning'); b.disabled = false; });
-  _syncBusy = false;
-
-  // Re-rendu de la vue courante avec les nouvelles valeurs. Le compteur du
-  // coffre rejoue une fois : la synchro est une action explicite, voir la
-  // valeur se remettre à jour fait partie du geste.
+async function pullPricesFromRepo() {
+  if (!ghCfg().owner) { toast('Coffre en ligne non configuré sur cet appareil', 'error'); return; }
+  const got = await ghPullPrices().catch(() => 0);
+  if (!got) { toast('Le dépôt n’a pas de cotes plus récentes', 'error'); return; }
+  refreshSyncMeta();
   window._vaultCounted = false;
   window._investCountedCards = false;
-  window._investCountedSealed = false;
   renderViewContent(state.view);
-  requestAnimationFrame(positionNavIndicator);
-  toast(ok ? `Cotes synchronisées (${ok} carte${ok > 1 ? 's' : ''})` : 'Synchronisation impossible — tes valeurs sont conservées', ok ? 'success' : 'error');
+  toast(`${got.toLocaleString('fr-FR')} cotes récupérées depuis le dépôt`, 'success');
+}
+
+// Recote UNE carte. Tout ce qui la concerne est purgé — la cote, l'échec
+// mémorisé, la requête en vol ET le lien Cardmarket : une cote cassée vient
+// presque toujours d'une fiche mal appariée, et garder l'ancien slug aurait
+// redonné le même mauvais montant.
+// Renvoie la cote obtenue, ou null. Dans ce cas la valeur d'avant est REMISE :
+// une recote qui échoue ne détruit jamais une valeur acquise (sinon un simple
+// hoquet réseau ferait tomber la carte à « — »).
+async function recoteCard(cardId) {
+  const before = priceCache[cardId] || null;
+  // Le pont décide de la source : premier prix FR / Near Mint s'il tourne,
+  // moyennes sinon. On le DIT ensuite — jamais de montant dont on ne sait pas
+  // d'où il vient.
+  await pingCmBridge(true).catch(() => {});
+  delete priceCache[cardId];
+  delete _priceNullAt[cardId];
+  delete pricePromises[cardId];
+  delete _cmUrlStore[cardId];
+  let r = null;
+  try { r = await getRawPrice(cardId); } catch (e) { console.warn('recote', cardId, e); }
+  if (r && r.raw != null) {
+    _priceSyncedAt = Date.now();
+    flushPriceCache();      // écriture immédiate : la cote survit à un refresh
+    ghPushSoon('prices');   // …et les autres appareils la verront
+    return r;
+  }
+  if (before) priceCache[cardId] = before;
+  delete _priceNullAt[cardId];
+  return null;
+}
+// D'où vient ce montant, en trois mots.
+function coteSourceLabel(r) {
+  if (!r) return '';
+  switch (r.src) {
+    case 'cm-first': return `premier prix FR${r.cond ? ' · ' + r.cond : ''}`;
+    case 'cardmarket': case 'ptcg': return 'moyenne Cardmarket';
+    case 'tcgplayer': return 'TCGplayer converti';
+    case 'ebay': return 'ventes eBay';
+    default: return 'cote';
+  }
+}
+// Le bouton de la tuile du portefeuille.
+const _cardSyncing = new Set();
+async function syncCardPrice(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const p = (state.investCards || []).find(x => x.id === id);
+  if (!p || _cardSyncing.has(id)) return;
+  if (!p.cardId) { toast('Carte sans identifiant : retire-la et rajoute-la depuis le catalogue', 'error'); return; }
+  _cardSyncing.add(id);
+  const tile = document.querySelector(`.cardtile[data-id="${id}"]`);
+  const btn = tile ? tile.querySelector('.cardtile-sync') : null;
+  if (btn) { btn.classList.add('spinning'); btn.disabled = true; }
+  const coteEl = document.getElementById('cote-' + id);
+  const had = !!priceCache[p.cardId];
+  if (coteEl) coteEl.innerHTML = '<span class="cote-wait">cote…</span>';
+  try {
+    const r = await recoteCard(p.cardId);
+    if (r) toast(`${p.name} · ${fmt(r.raw)} (${coteSourceLabel(r)})`, 'success');
+    else toast(cmBridgeUp()
+      ? `Aucune offre trouvée pour ${p.name}${had ? ' — valeur précédente conservée' : ''}`
+      : `Cote introuvable pour ${p.name}. Sans le pont Cardmarket (cm_price_bridge.py) on ne lit que des moyennes.`, 'error');
+    // Le lien Cardmarket de la tuile suit la fiche qu'on vient de retrouver.
+    const href = (r && r.cmUrl) || await resolveCmUrl(p.cardId).catch(() => null);
+    const a = document.getElementById('cm-' + id);
+    if (a && href) a.href = href;
+  } finally {
+    _cardSyncing.delete(id);
+    if (btn) { btn.classList.remove('spinning'); btn.disabled = false; }
+    // Mise à jour EN PLACE : cote, total de la ligne, plus-value, compteurs.
+    // Aucune tuile reconstruite → pas de saut de défilement, pas d'animation
+    // rejouée, et la carte reste sous le doigt.
+    refreshCardTile(p);
+    refreshInvestTotals();
+  }
+}
+// Le même geste depuis la FICHE d'une carte — c'est le seul endroit où passent
+// TOUTES les cartes de l'app (wishlists, classeurs, Milobellus, accueil), et
+// donc le seul moyen de recoter celles qui ne sont pas au portefeuille.
+async function syncDetailPrice(cardId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (_cardSyncing.has(cardId)) return;
+  _cardSyncing.add(cardId);
+  const btn = document.getElementById('cd-sync');
+  const val = document.getElementById('cd-raw');
+  const note = document.getElementById('cd-note');
+  if (btn) { btn.classList.add('spinning'); btn.disabled = true; }
+  if (val) val.innerHTML = '<span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span>';
+  try {
+    const r = await recoteCard(cardId);
+    if (val && val.isConnected) val.textContent = fmt(r ? r.raw : (getCachedRawPrice(cardId)?.raw ?? null));
+    if (note && note.isConnected) note.textContent = r ? coteSourceLabel(r) : 'Aucune cote disponible';
+    const href = (r && r.cmUrl) || await resolveCmUrl(cardId).catch(() => null);
+    const a = document.getElementById('cd-cm');
+    if (a && href && a.isConnected) a.href = href;
+    if (r) toast(`Cote refaite · ${fmt(r.raw)} (${coteSourceLabel(r)})`, 'success');
+    else toast('Aucune cote trouvée pour cette carte', 'error');
+    // La valeur du coffre et les tuiles visibles suivent.
+    window._vaultCounted = false;
+    if (state.view === 'invest') { refreshInvestTotals(); const p = (state.investCards || []).find(x => x.cardId === cardId); if (p) refreshCardTile(p); }
+  } finally {
+    _cardSyncing.delete(cardId);
+    if (btn) { btn.classList.remove('spinning'); btn.disabled = false; }
+  }
+}
+// Compteurs du portefeuille (valeur des cartes, en-tête de la série ouverte)
+// remis à jour sans reconstruire la vue.
+function refreshInvestTotals() {
+  const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue());
+  const head = document.querySelector('.cardser-detail-meta');
+  const bar = document.querySelector('.cardser-bar-meta');
+  if (!state.investSeriesOpen || (!head && !bar)) return;
+  const g = cardsGrouped().find(x => String(x.setId) === String(state.investSeriesOpen));
+  if (!g) return;
+  if (head) head.textContent = `${g.count} carte${g.count > 1 ? 's' : ''} · ${fmt(g.value)}`;
+  if (bar) bar.textContent = `${g.count} · ${fmt(g.value)}`;
 }
 
 // Précharge TOUT ce dont l'app a besoin (modèles 3D, puis les cotes encore
@@ -2695,7 +2692,7 @@ function palCommands() {
     { kind: 'nav', name: 'Wishlists', sub: `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''}`, ico: ICO.heart, run: () => navigate('wishlists') },
     { kind: 'nav', name: 'Portefeuille', sub: `${state.sealed.length} scellés · ${state.investCards.length} cartes`, ico: ICO.chart, run: () => navigate('invest') },
     { kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') },
-    { kind: 'act', name: 'Synchroniser les prix', sub: `${trackedCardIds().length} cartes · cotes ${agoLabel(priceSyncedAt())}`, ico: ICO.sync, run: () => syncPrices() },
+    { kind: 'act', name: 'Récupérer les cotes du dépôt', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullPricesFromRepo() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
@@ -2914,11 +2911,24 @@ function setRootAccent(hex){
   document.documentElement.style.setProperty('--acc2', `rgb(${Math.round(r*.3)},${Math.round(g*.3)},${Math.round(b*.34)})`);
 }
 // Teinte chaque carte [data-cc] de la couleur de son type (halo/accent local).
+// EN FILE D'ATTENTE, et une seule fois par élément : `cardColor` demande la
+// fiche à l'API quand le type n'est pas déjà en cache, et un `forEach` lançait
+// autant de requêtes simultanées qu'il y a de tuiles à l'écran (48 mesurées sur
+// une série, 250 dans le sélecteur) — un orage réseau qui bloquait tout le
+// reste, pour une nuance de halo. Les couleurs déjà connues, elles, sont
+// posées TOUT DE SUITE, sans attendre le moindre tour de boucle.
 function paintCards(root){
-  (root || document).querySelectorAll('[data-cc]').forEach(el => {
+  const todo = [];
+  (root || document).querySelectorAll('[data-cc]:not([data-cc-done])').forEach(el => {
     const id = el.getAttribute('data-cc'); if (!id) return;
-    cardColor({ id }).then(hex => el.style.setProperty('--tc', hex));
+    el.dataset.ccDone = '1';
+    if (id in _colorCache) { el.style.setProperty('--tc', _colorCache[id]); return; }
+    todo.push([el, id]);
   });
+  if (todo.length) runPool(todo, async ([el, id]) => {
+    const hex = await cardColor({ id }).catch(() => null);
+    if (hex) el.style.setProperty('--tc', hex);
+  }, 3);
 }
 // Relief 3D + reflet de la carte mise en scène (showpiece).
 /* ── EFFETS QUI SUIVAIENT LE POINTEUR : RETIRÉS (2026-08-24) ────────────
@@ -2950,14 +2960,23 @@ function navigate(view, extra = {}) {
   const navKey = view === 'wishlist-detail' ? 'wishlists' : view;
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === navKey));
   positionNavIndicator();
-  requestAnimationFrame(positionNavIndicator); // re-mesure après layout (évite un slide depuis une position périmée)
+  requestAnimationFrame(() => positionNavIndicator()); // re-mesure après layout (évite un slide depuis une position périmée)
   renderWithTransition(from, view, kind);
 }
-// Fait GLISSER l'indicateur verticalement derrière l'onglet actif du rail.
-// Seul le transform est animé (la hauteur est posée une fois, sans
-// transition) → aucun recalcul de layout, aucun jank.
-// La tab bar mobile, elle, marque l'onglet actif en CSS pur.
-function positionNavIndicator() {
+// Fait GLISSER l'indicateur derrière l'onglet actif : verticalement dans le
+// rail (desktop), horizontalement dans la tab bar (téléphone). Seul le
+// déplacement est animé — la boîte est posée sans transition → aucun recalcul
+// de layout, aucun jank.
+// La tab bar marquait l'onglet actif avec un trait par bouton (scaleX 0→1) :
+// deux traits qui se croisent en fondu, ce n'est pas un déplacement — d'où
+// l'impression de bug. Elle a maintenant UNE pastille, comme le rail.
+// `snap` : premier placement (boot, rotation, tab bar qui réapparaît) — on se
+// pose d'un coup au lieu de glisser depuis l'origine.
+function positionNavIndicator(snap) {
+  positionRailIndicator(snap);
+  positionTabIndicator(snap);
+}
+function positionRailIndicator(snap) {
   const ind = document.getElementById('nav-indicator');
   if (!ind) return;
   const nav = ind.parentElement;
@@ -2965,9 +2984,29 @@ function positionNavIndicator() {
   if (!active) { ind.classList.remove('on'); return; }
   const h = active.offsetHeight;
   if (!h) return;                       // pas encore de layout : on réessaiera
+  const first = snap || !ind.classList.contains('on');
+  if (first) ind.classList.add('snap');
   ind.style.setProperty('--ind-h', h + 'px');
   ind.style.transform = `translateY(${active.offsetTop}px)`;
   ind.classList.add('on');
+  if (first) { void ind.offsetWidth; ind.classList.remove('snap'); }
+}
+function positionTabIndicator(snap) {
+  const ind = document.getElementById('tab-indicator');
+  if (!ind) return;
+  const bar = ind.parentElement;
+  const active = bar && bar.querySelector('.nav-btn.active');
+  // Tab bar masquée (desktop, classeur en paysage) : rien à mesurer, et surtout
+  // rien à figer — au retour, `snap` la replacera d'un coup.
+  if (!active || !active.offsetWidth) { ind.classList.remove('on'); return; }
+  const first = snap || !ind.classList.contains('on');
+  if (first) ind.classList.add('snap');
+  ind.style.setProperty('--tab-w', active.offsetWidth + 'px');
+  ind.style.setProperty('--tab-h', active.offsetHeight + 'px');
+  ind.style.setProperty('--tab-x', active.offsetLeft + 'px');
+  ind.style.setProperty('--tab-t', active.offsetTop + 'px');
+  ind.classList.add('on');
+  if (first) { void ind.offsetWidth; ind.classList.remove('snap'); }
 }
 // ── Assets du composant SoftButton ──
 // Idéalement une balise statique dans index.html :
@@ -3008,13 +3047,14 @@ const SOFT_ROLES = [
   // Tout le reste : le modelé neutre.
   ['.btn,.btn-ghost,.btn-cm,.btn-quiet,.btn-import,.back-btn,.picker-back,.strip-btn,' +
    '.hg-change,.rail-cmd,.inv-add,.seg-btn,.inv-switch-btn,.qty-btn,.cm-link,.buy-chip,' +
+   '.cardtile-sync,' +
    '.modal-close,.title-edit-btn,.binder-act,.toast-action,.zoom-btn,.owned-toggle,' +
    '.milo-nav-btn,.binder-add-page,.wishlist-add-card,.binder-tile-new,.fp-auto', 'sb-steel'],
 ];
 // CALIBRE DENSE — les micro-contrôles se comptent par centaines sur une vue.
 // Quatre ombres floutées à 26 px de haut, c'est du temps de peinture pour un
 // relief invisible : ils passent à deux couches (voir .sb-micro).
-const SOFT_MICRO = '.qty-btn,.cm-link,.buy-chip,.zoom-btn,.owned-toggle,.remove-btn,' +
+const SOFT_MICRO = '.qty-btn,.cm-link,.buy-chip,.zoom-btn,.owned-toggle,.remove-btn,.cardtile-sync,' +
                    '.inv-del,.per-x,.cardtile-del,.strip-btn,.milo-cell-remove,' +
                    '.title-edit-btn,.binder-act,.fp-auto,.chip-x';
 // EXCLUSIONS — ce ne sont pas des « boutons » mais du CONTENU cliquable :
@@ -3115,15 +3155,20 @@ function renderViewContent(view) {
   const m = VIEW_META[view] || VIEW_META.home;
   const eb = document.getElementById('tb-eyebrow'); if (eb) eb.textContent = m.eyebrow;
   const nm = document.getElementById('tb-name'); if (nm) nm.textContent = m.name;
-  // Le matériau est (re)posé sur tout ce qui vient d'être rendu.
-  applySoft(document);
+  // Le matériau est posé sur ce qui vient d'être rendu, ET SEULEMENT ÇA.
+  // `applySoft(document)` repassait sur tout le document à chaque changement de
+  // vue (~9 ms mesurées sur la vue à 501 boutons) pour ne rien trouver de
+  // nouveau ailleurs : le rail, l'en-tête et la tab bar sont habillés une fois
+  // au démarrage, et l'observateur (watchSoft) couvre tous les fragments
+  // rendus hors d'ici.
+  applySoft(document.getElementById('view-' + view) || document);
 }
 // Rendu initial (boot) : pas de transition, la vue "home" est déjà active dans le HTML.
 function render() {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${state.view}`)?.classList.add('active');
   renderViewContent(state.view);
-  requestAnimationFrame(positionNavIndicator);
+  requestAnimationFrame(() => positionNavIndicator(true));
 }
 // Onglets (Coffre/Wishlists/…) : fondu croisé symétrique. Détail de
 // wishlist : push/pop façon iOS (on y entre en avançant, on en sort en reculant).
@@ -3145,49 +3190,121 @@ function transitionKind(fromView, toView) {
   return 'crossfade';
 }
 let _viewTransitionTimer = null;
-const VIEW_TRANSITION_MS = { forward: 300, backward: 300, crossfade: 190 };
-const VIEW_TRANSITION_CLASSES = ['exiting', 'exit-fade', 'exit-forward', 'exit-backward', 'enter-forward', 'enter-backward'];
+// Durée après laquelle la vue sortante est désépinglée : celle de sa SORTIE
+// (--dur-exit = 170 ms) plus une marge. Les deux vues se croisant maintenant,
+// ce n'est plus le temps qu'on attend avant de montrer la nouvelle.
+const VIEW_TRANSITION_MS = { forward: 210, backward: 210, crossfade: 200 };
+const ENTER_CLASSES = ['entering', 'enter-forward', 'enter-backward'];
+const EXIT_CLASSES = ['exiting', 'exit-fade', 'exit-forward', 'exit-backward'];
+const VIEW_TRANSITION_CLASSES = [...EXIT_CLASSES, ...ENTER_CLASSES];
+
+/* ── DÉFILEMENT PAR VUE ─────────────────────────────────────────────────
+   Un onglet retrouve sa position (comportement iOS : on revient là où on en
+   était) ; une vue de DÉTAIL s'ouvre toujours en haut. Le rétablissement est
+   instantané et se fait pendant que la vue sortante est ÉPINGLÉE à l'écran :
+   rien ne saute, rien ne rebondit. Avant, aucun défilement n'était touché —
+   quitter le bas de l'accueil pour une vue courte faisait « tomber » la page
+   d'un coup (le navigateur ramène le défilement dans les bornes). */
+const _viewScroll = {};
+const DEEP_VIEWS = ['wishlist-detail', 'binder-detail'];
+function scrollYNow() { return window.scrollY || document.documentElement.scrollTop || 0; }
+function applyViewScroll(view, fresh) {
+  const y = fresh ? 0 : (_viewScroll[view] || 0);
+  if (Math.abs(scrollYNow() - y) < 1) return;
+  window.scrollTo({ top: y, left: 0, behavior: 'instant' });
+}
+/* ── ÉPINGLAGE DE LA VUE SORTANTE ───────────────────────────────────────
+   `.view.exiting` passe en `position:fixed` (style.css) : on lui écrit sa
+   boîte ACTUELLE en coordonnées d'écran, puis on la retire du flux. Deux
+   problèmes disparaissent d'un coup :
+   · la hauteur du document ne vaut plus la SOMME des deux vues pendant la
+     transition (c'était ça, le grand « resizing » à chaque page) ;
+   · le défilement peut être rétabli sous elle sans qu'elle bouge d'un pixel.
+   Retour : `unpin()` efface les styles inline. */
+function pinView(el) {
+  const r = el.getBoundingClientRect();
+  const st = el.style;
+  st.top = Math.round(r.top) + 'px';
+  st.left = Math.round(r.left) + 'px';
+  st.width = Math.round(r.width) + 'px';
+  return () => { st.top = st.left = st.width = ''; };
+}
 // Chorégraphie manuelle de la transition entre deux vues (voir style.css pour
 // les keyframes). On peuple toujours la cible AVANT de la révéler pour éviter
-// un flash de contenu vide/périmé. Si une transition précédente est encore en
-// cours (clics rapides), on l'interrompt proprement plutôt que de la laisser
-// bloquée à mi-chemin.
+// un flash de contenu vide/périmé, et les deux vues se croisent EN MÊME TEMPS
+// (l'ancienne s'efface pendant que la nouvelle arrive) : la sortie puis
+// l'entrée en série ajoutaient 170 ms de page vide au milieu. Si une transition
+// précédente est encore en cours (clics rapides), on l'interrompt proprement
+// plutôt que de la laisser bloquée à mi-chemin.
+let _unpinView = null;
 function renderWithTransition(from, to, kind) {
   if (_viewTransitionTimer) { clearTimeout(_viewTransitionTimer); _viewTransitionTimer = null; }
+  if (_unpinView) { _unpinView(); _unpinView = null; }
   const toEl = document.getElementById(`view-${to}`);
   if (!toEl) return;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  renderViewContent(to);
-
-  const finish = (enterClass) => {
-    document.querySelectorAll('.view.active').forEach(v => { if (v !== toEl) v.classList.remove('active', ...VIEW_TRANSITION_CLASSES); });
-    toEl.classList.remove(...VIEW_TRANSITION_CLASSES);
-    if (enterClass) toEl.classList.add(enterClass);
-    toEl.classList.add('active');
-    // Quitter l'accueil ne DÉTRUIT plus la scène 3D : on la met simplement en
-    // pause (raf stoppé). La scène, le renderer et les mesh restent en mémoire →
-    // revenir sur l'accueil ne recharge/reclone plus rien (aucun à-coup visible).
-    if (from === 'home' && from !== to) pauseHero();
-    if (from === 'binder-detail' && from !== to) { stopMiloScene(); stopMiloFlipGL(); }   // libère les contextes WebGL (fond + flip)
-    requestAnimationFrame(() => {
-      positionNavIndicator();
-      if (enterClass) setTimeout(() => toEl.classList.remove(enterClass), 450);
-    });
-  };
-
   const fromEl = from !== to ? document.getElementById(`view-${from}`) : null;
   const fromIsActive = fromEl && fromEl.classList.contains('active');
-  if (kind === 'none' || reduce || !fromIsActive) { finish(null); return; }
+  const animated = kind !== 'none' && !reduce && fromIsActive;
+  if (fromEl && fromIsActive) _viewScroll[from] = scrollYNow();
+
+  // Les scènes 3D de la vue quittée ne sont libérées qu'une fois la sortie
+  // TERMINÉE : couper le contexte WebGL pendant que la vue s'efface laissait un
+  // canvas noir dans le fondu.
+  // Quitter l'accueil ne DÉTRUIT pas la scène : on la met en pause (raf stoppé),
+  // la scène et les mesh restent en mémoire → y revenir ne recharge rien.
+  const settle = () => {
+    if (from === 'home' && from !== to) pauseHero();
+    if (from === 'binder-detail' && from !== to) { stopMiloScene(); stopMiloFlipGL(); }   // libère les contextes WebGL (fond + flip)
+  };
+
+  // La sortante est épinglée AVANT tout changement de hauteur ou de défilement.
+  if (animated) {
+    const unpin = pinView(fromEl);
+    // Ses classes d'ENTRÉE sautent d'abord : une vue qui garde `enter-forward`
+    // (elle vient d'arriver) ne jouerait jamais sa sortie.
+    fromEl.classList.remove(...ENTER_CLASSES);
+    fromEl.classList.add('exiting');
+    _unpinView = () => { unpin(); fromEl.classList.remove('active', ...VIEW_TRANSITION_CLASSES); settle(); };
+  }
+
+  renderViewContent(to);
+
+  if (!animated) {
+    document.querySelectorAll('.view.active').forEach(v => { if (v !== toEl) v.classList.remove('active', ...VIEW_TRANSITION_CLASSES); });
+    toEl.classList.remove(...VIEW_TRANSITION_CLASSES);
+    toEl.classList.add('active');
+    // `from === to` = on re-rend la vue courante (palette, retour d'une modale) :
+    // on ne touche PAS au défilement, sinon la page saute à une position
+    // mémorisée périmée alors que l'utilisateur n'a pas changé d'écran.
+    if (from !== to) applyViewScroll(to, DEEP_VIEWS.includes(to));
+    settle();
+    requestAnimationFrame(() => positionNavIndicator());
+    return;
+  }
 
   const exitClass = kind === 'forward' ? 'exit-forward' : kind === 'backward' ? 'exit-backward' : 'exit-fade';
-  const enterClass = kind === 'forward' ? 'enter-forward' : kind === 'backward' ? 'enter-backward' : null;
-  fromEl.classList.add('exiting', exitClass);
+  const enterClass = kind === 'forward' ? 'enter-forward' : kind === 'backward' ? 'enter-backward' : 'entering';
+  fromEl.classList.add(exitClass);
+  // Les autres vues (une transition avortée a pu en laisser une active) sortent
+  // du flux immédiatement : seules la sortante épinglée et la cible restent.
+  document.querySelectorAll('.view.active').forEach(v => { if (v !== toEl && v !== fromEl) v.classList.remove('active', ...VIEW_TRANSITION_CLASSES); });
+  toEl.classList.remove(...VIEW_TRANSITION_CLASSES);
+  toEl.classList.add(enterClass, 'active');
+  // La cible est en place : c'est MAINTENANT que le document a sa bonne hauteur,
+  // donc que le défilement peut être rétabli sans être ramené dans les bornes.
+  applyViewScroll(to, DEEP_VIEWS.includes(to));
+  requestAnimationFrame(() => positionNavIndicator());
+
+  // On ne désépingle qu'à la fin de la SORTIE. La classe d'entrée, elle, reste
+  // posée jusqu'à la transition suivante (qui la retire) : la retirer ici
+  // rebranchait l'animation par défaut et la vue se refondait une seconde fois
+  // — le clignotement qu'on voyait après chaque changement d'onglet.
   const duration = VIEW_TRANSITION_MS[kind] || 320;
   _viewTransitionTimer = setTimeout(() => {
     _viewTransitionTimer = null;
-    fromEl.classList.remove('active', 'exiting', exitClass);
-    finish(enterClass);
+    if (_unpinView) { _unpinView(); _unpinView = null; }
   }, duration);
 }
 
@@ -3205,9 +3322,10 @@ function resolveHero() {
 // Étiquette « cotes synchronisées … » + bouton Sync (accueil).
 function syncMetaText(n) {
   if (!n) return 'Aucune carte suivie pour l’instant';
-  // Deux faits sans rapport ne s'agglutinent pas derrière un point médian :
-  // celui qui compte ici est la FRAÎCHEUR de la valeur affichée juste au-dessus.
-  return `Cotes mises à jour ${esc(agoLabel(priceSyncedAt()))} · ${n.toLocaleString('fr-FR')} carte${n > 1 ? 's' : ''} suivie${n > 1 ? 's' : ''}`;
+  // « Cotes mises à jour il y a 2 h » sous-entendait un LOT recoté d'un coup.
+  // Il n'y en a plus : chaque carte se recote seule, donc ce qu'on peut dire
+  // honnêtement, c'est quand la DERNIÈRE l'a été.
+  return `${n.toLocaleString('fr-FR')} carte${n > 1 ? 's' : ''} suivie${n > 1 ? 's' : ''} · dernière cote ${esc(agoLabel(priceSyncedAt()))}`;
 }
 // Rafraîchit l'étiquette EN PLACE (sans re-render, donc sans animation rejouée).
 function refreshSyncMeta() {
@@ -3265,8 +3383,6 @@ function renderHome() {
     <section class="vault reveal" style="--i:0">
       <div class="vault-top">
         <span class="vault-k">Valeur du coffre</span>
-        <button class="btn btn-grade btn-sm btn-icon btn-sync" onclick="syncPrices()"
-          title="Mettre à jour les cotes" aria-label="Mettre à jour les cotes">${SYNC_ICO}</button>
       </div>
       <div class="vault-total" id="hero-value"><span class="hero-skeleton" id="hero-skel"></span></div>
       <div class="vault-sub" id="sync-meta-txt">${syncMetaText(tracked)}</div>
@@ -3545,7 +3661,7 @@ function computeCollectionValue() {
   if (note) {
     const noPrice = entries.filter(e => e.unit == null).length;
     note.innerHTML = noPrice
-      ? `${ICO.info}<span>${noPrice} carte${noPrice > 1 ? 's' : ''} sans cote — lance une mise à jour pour les valoriser.</span>`
+      ? `${ICO.info}<span>${noPrice} carte${noPrice > 1 ? 's' : ''} sans cote — leur valeur arrive en tâche de fond. Le bouton ⟳ d’une carte refait la sienne tout de suite.</span>`
       : '';
     note.hidden = !noPrice;
   }
@@ -3844,6 +3960,14 @@ async function openCardDetail(cardId) {
         <div class="detail-set">${esc(card.set?.name || '')}</div>
         <div class="detail-price-box">
           <div class="detail-price-label">Prix loose</div>
+          <!-- Refaire la cote de CETTE carte. C'est ici que passent les cartes
+               qui ne sont pas au portefeuille (wishlists, classeurs,
+               Milobellus) : sans ce bouton, plus aucun moyen de les recoter
+               depuis que le « Sync » global n'existe plus. -->
+          <button class="cardtile-sync detail-price-sync" id="cd-sync" onclick="syncDetailPrice('${esc(cardId)}',event)"
+            title="Refaire la cote de cette carte" aria-label="Refaire la cote de cette carte">
+            <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div class="detail-price-val" id="cd-raw"><span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span></div>
           <div class="detail-price-note" id="cd-note">Cote Cardmarket…</div>
         </div>
@@ -3860,7 +3984,7 @@ async function openCardDetail(cardId) {
     const el = document.getElementById('cd-raw'), note = document.getElementById('cd-note');
     if (!el || !el.isConnected) return;
     el.textContent = fmt(p?.raw ?? null);
-    if (note) note.textContent = p?.raw != null ? 'Cote Cardmarket · moyenne des ventes 30 j' : 'Aucune cote disponible';
+    if (note) note.textContent = p?.raw != null ? coteSourceLabel(p) : 'Aucune cote disponible';
   });
   boundedTask(resolveCmUrl(cardId), 15000).then(u => {
     const a = document.getElementById('cd-cm');
@@ -3996,8 +4120,20 @@ async function pickSeries(serieId, serieName) {
   try {
     const serie = await apiFetch(`/series/${serieId}`);
     // Blocs les plus récents en premier (l'API les classe du plus ancien au plus récent).
-    const sets = (serie.sets || []).slice().reverse();
-    state.pickerSetIds = sets.map(x => x.id);   // sert à trouver les sous-séries (voir pickSet)
+    const all = (serie.sets || []).slice().reverse();
+    state.pickerSetIds = all.map(x => x.id);   // sert à trouver les sous-séries (voir pickSet)
+    // Les galeries (TG/GG/SV) ne sont pas des blocs à part pour un
+    // collectionneur : leur tuile DOUBLONNAIT celle du set parent, alors que
+    // pickSet fusionne déjà les deux jeux de cartes. On les replie donc dans le
+    // parent, dont le compteur reprend leurs cartes.
+    const ids = new Set(all.map(x => String(x.id)));
+    const subCount = {};
+    const sets = all.filter(x => {
+      const parent = subsetParentId(x.id);
+      if (!parent || !ids.has(parent)) return true;
+      subCount[parent] = (subCount[parent] || 0) + (x.cardCount?.official || x.cardCount?.total || 0);
+      return false;
+    });
     body.innerHTML = `
       ${pickerSteps(1)}
       <div class="picker-nav">
@@ -4011,7 +4147,7 @@ async function pickSeries(serieId, serieName) {
               ? `<img class="series-logo" src="${s.logo}.png" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
-          <div class="series-name">${esc(s.name)}</div><div class="series-count">${s.cardCount?.official || '?'} cartes</div></div>`).join('')}
+          <div class="series-name">${esc(s.name)}</div><div class="series-count">${s.cardCount?.official ? s.cardCount.official + (subCount[s.id] || 0) : '?'} cartes</div></div>`).join('')}
       </div>`;
   } catch (e) { console.error('[picker] sets', e); body.innerHTML = errBox('retryPicker()', e); }
 }
@@ -4023,7 +4159,7 @@ async function pickSeries(serieId, serieName) {
 // série, qui entre directement dans le set.
 const SUBSET_SUFFIXES = ['tg', 'gg', 'sv'];
 async function pickSet(setId) {
-  state.pickerSet = setId; state.pickerSearch = '';
+  state.pickerSet = setId; state.pickerSearch = ''; state.pickerSubsets = [];
   const body = document.getElementById('picker-body');
   body.innerHTML = `<div class="loading-state"><div class="spinner"></div> Chargement des cartes…</div>`;
   try {
@@ -6010,7 +6146,6 @@ async function checkForNewSeries() {
 let _refreshBusy = false;
 async function refreshSeries() {
   if (_refreshBusy) return;
-  if (_syncBusy) { toast('Synchronisation des cotes en cours…'); return; }
   _refreshBusy = true;
   const btn = document.getElementById('btn-refresh');
   const overlay = document.getElementById('refresh-overlay');
@@ -6031,9 +6166,9 @@ async function refreshSeries() {
   //   série (ex. Nuit Noire) resterait invisible jusqu'à expiration du cache ;
   // — visuels de repli et fiches externes, pour capter les images fraîchement
   //   publiées des nouveaux sets.
-  // Les COTES, elles, ne sont PAS purgées : elles appartiennent au bouton
-  // « Sync » (syncPrices). « Actualiser » ne doit jamais vider les valeurs
-  // déjà enregistrées — un hoquet réseau afficherait sinon un coffre à 0 €.
+  // Les COTES, elles, ne sont PAS purgées : elles appartiennent au bouton de
+  // chaque carte (syncCardPrice). « Actualiser » ne doit jamais vider les
+  // valeurs enregistrées — un hoquet réseau afficherait sinon un coffre à 0 €.
   Object.keys(cache).forEach(k => { if (k.startsWith('/series') || k.startsWith('/sets') || k.startsWith('/cards')) delete cache[k]; });
   _apiStore = { total: 0, order: [], map: {} };
   try { localStorage.removeItem(APICACHE_KEY); } catch {}
@@ -6074,7 +6209,7 @@ async function refreshSeries() {
 
   if (series.length) {
     renderViewContent(state.view);
-    requestAnimationFrame(positionNavIndicator);
+    requestAnimationFrame(() => positionNavIndicator());
     // Cote les cartes encore inconnues (sans toucher aux cotes enregistrées).
     ensurePrices(trackedCardIds(), n => {
       if (n && state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); refreshSyncMeta(); }
@@ -7321,11 +7456,62 @@ async function ensureSetDates(onReady) {
   save();
   if (onReady) onReady();
 }
+// ══════════════════════════════════════════════════════════════════
+//  SOUS-SÉRIES (Galerie de Dresseurs, Galerie Galaroise, Shiny Vault)
+//  Chez TCGdex ce sont des SETS À PART (`swsh12tg`, `swsh12.5gg`,
+//  `swsh4.5sv`), alors que pour le collectionneur ce sont les mêmes boosters :
+//  « Tempête Argentée » et sa « Galerie de Dresseurs » donnaient DEUX bulles
+//  pour UNE série (idem Stars Étincelantes, Origine Perdue, Astres Radieux).
+//  On les replie donc à L'AFFICHAGE seulement : chaque carte garde son `setId`
+//  réel, dont dépendent sa cote et son lien Cardmarket (voir pickSet).
+//
+//  Le suffixe seul ne suffit PAS à décider : « 2024sv » est la Collection
+//  McDonald's 2024, pas un Shiny Vault. D'où deux garde-fous : le radical doit
+//  ressembler à un identifiant de set (il finit par un chiffre, et n'est pas
+//  qu'un millésime), et il doit EXISTER pour de vrai — dans la collection pour
+//  le portefeuille, dans la série pour le sélecteur.
+// ══════════════════════════════════════════════════════════════════
+function subsetParentId(setId) {
+  const id = String(setId || '');
+  for (const suf of SUBSET_SUFFIXES) {
+    if (id.length <= suf.length || !id.endsWith(suf)) continue;
+    const base = id.slice(0, -suf.length);
+    if (base.length < 3 || /^\d+$/.test(base) || !/\d$/.test(base)) continue;
+    return base;
+  }
+  return null;
+}
+// Identifiant de set sous lequel AFFICHER une carte : celui de son set parent
+// si ce parent fait partie de `known`, le sien sinon.
+function displaySetId(setId, known) {
+  const base = subsetParentId(setId);
+  return base && known && known.has(base) ? base : setId;
+}
+// Les setId « affichables » du portefeuille : sert de référence pour savoir si
+// le parent d'une sous-série est lui aussi présent.
+function investSetIds() {
+  return new Set((state.investCards || []).map(p => p.setId).filter(Boolean).map(String));
+}
+// Toutes les cartes d'une série TELLE QU'AFFICHÉE (galeries comprises).
+function investCardsOfSeries(setId) {
+  const known = investSetIds(), key = String(setId);
+  return (state.investCards || []).filter(p => p.setId && displaySetId(String(p.setId), known) === key);
+}
 function cardsGrouped() {
-  const g = {};
+  const g = {}, known = investSetIds();
   for (const p of state.investCards) {
-    const k = p.setId || ('?' + (p.setName || ''));
-    (g[k] = g[k] || { setId: p.setId || k, setName: p.setName || 'Série inconnue', logo: groupLogo(p.setId, p.setName, p.logo), cards: [] }).cards.push(p);
+    const k = p.setId ? displaySetId(String(p.setId), known) : ('?' + (p.setName || ''));
+    const e = g[k] || (g[k] = { setId: k, setName: '', logo: null, cards: [], __exact: false });
+    e.cards.push(p);
+    // Le nom et le logo du groupe viennent du set PARENT dès qu'on en a une
+    // carte : sans ça « Tempête Argentée » s'appelait « Tempête Argentée
+    // Galerie de Dresseurs » selon la première carte rencontrée.
+    const exact = String(p.setId || k) === k;
+    if (!e.setName || (exact && !e.__exact)) {
+      e.setName = p.setName || 'Série inconnue';
+      e.logo = groupLogo(p.setId, p.setName, p.logo);
+      e.__exact = exact;
+    }
   }
   const arr = Object.values(g).map(s => { s.value = s.cards.reduce((a, p) => a + cardValue(p), 0); s.count = s.cards.length; s.date = setReleaseDate(s.setId); return s; });
   // Tri CHRONOLOGIQUE : sorties les plus récentes d'abord ; les séries dont la
@@ -7345,7 +7531,7 @@ function investCardsBodyHTML() {
   // Série ouverte = on est DANS une série : le titre « Portefeuille cartes »,
   // son texte d'explication, les boutons d'import et les compteurs globaux
   // n'ont plus rien à y faire. On ne garde que le logo, le retour et le « + ».
-  if (nCards && state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen);
+  if (nCards && state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen, groups);
   return `
     <!-- Ni titre de page, ni texte d'explication, ni bouton d'import CSV : ils
          mangeaient un demi-écran pour ne rien apprendre à qui ouvre son propre
@@ -7358,7 +7544,7 @@ function investCardsBodyHTML() {
       ${invested > 0 ? `<div class="inv-kpi"><span class="inv-kpi-val ${total - invested >= 0 ? 'pos' : 'neg'}">${fmtSign(total - invested)}</span><span class="inv-kpi-lab">Plus-value</span></div>` : ''}
     </div>
     ${nCards
-      ? (state.investSeriesOpen ? cardsSeriesDetailHTML(state.investSeriesOpen) : cardsBlocsHTML(groups))
+      ? (state.investSeriesOpen ? cardsSeriesDetailHTML(state.investSeriesOpen, groups) : cardsBlocsHTML(groups))
       : `<div class="empty-state"><div class="empty-state-icon">${ICO.card}</div><div class="empty-state-title">Aucune carte suivie</div>
           <div class="empty-state-sub">Importe ton export Pokécardex (CSV) — j'ajoute toutes les cartes (hors communes, peu communes et holo), avec leur visuel et leur cote. Ou ajoute-les à la main.</div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px"><label class="btn btn-primary btn-import"><span>Importer un CSV</span><input type="file" accept=".csv,.txt" hidden onchange="onCardsFile(this)"></label>
@@ -7442,8 +7628,10 @@ function cardsSeriesGridHTML(groups) {
       <div class="cardser-val">${fmt(g.value)}</div>
     </button>`).join('')}</div>`;
 }
-function cardsSeriesDetailHTML(setId) {
-  const groups = cardsGrouped();
+// `groups` est passé par l'appelant quand il l'a déjà : regrouper 1 300 cartes
+// deux fois pour le même rendu ne servait à rien.
+function cardsSeriesDetailHTML(setId, groups) {
+  groups = groups || cardsGrouped();
   const g = groups.find(x => String(x.setId) === String(setId));
   if (!g) { state.investSeriesOpen = null; return cardsBlocsHTML(groups); }
   const cards = g.cards.slice().sort((a, b) => (cardCote(b) ?? -1) - (cardCote(a) ?? -1));
@@ -7476,9 +7664,15 @@ function cardTileHTML(p) {
   const total = cote != null ? cote * qty : null;
   const pnl = (p.buyPrice != null && cote != null) ? (cote - p.buyPrice) * qty : null;
   const cmHref = (p.cardId && _cmUrlStore[p.cardId]) || cmSearchLink(p.name);
-  return `<article class="cardtile" data-id="${p.id}" data-cc="${esc(p.cardId || '')}">
+  // COULEUR DE LA CARTE, SANS REQUÊTE. `data-cc` déclenche paintCards(), qui
+  // demandait la fiche de CHAQUE carte à l'API pour en lire le type — 48
+  // requêtes mesurées à l'ouverture d'une seule série, alors que le type est
+  // DÉJÀ enregistré dans le portefeuille. On l'écrit donc en dur, et on ne
+  // laisse `data-cc` que pour les rares cartes importées sans type.
+  const tc = p.type ? TYPE_COLOR[p.type] : null;
+  return `<article class="cardtile" data-id="${p.id}"${tc ? ` style="--tc:${tc}"` : ` data-cc="${esc(p.cardId || '')}"`}>
     <button class="cardtile-art" onclick="openInvestCardPreview('${p.id}')" title="Agrandir ${esc(p.name)}" aria-label="Agrandir ${esc(p.name)}">
-      ${img ? `<img src="${img}" alt="" loading="lazy" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
+      ${img ? `<img src="${img}" alt="" loading="lazy" decoding="async" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
       <span class="cardtile-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
     </button>
     <div class="cardtile-body">
@@ -7490,6 +7684,10 @@ function cardTileHTML(p) {
       <div class="cardtile-price">
         <span class="cardtile-cote" id="cote-${p.id}">${cote != null ? fmt(cote) : '<span class="cote-wait">cote…</span>'}</span>
         ${qty > 1 && total != null ? `<span class="cardtile-sum" id="sum-${p.id}">×${qty} = ${fmt(total)}</span>` : `<span class="cardtile-sum" id="sum-${p.id}"></span>`}
+        <button class="cardtile-sync" onclick="syncCardPrice('${p.id}',event)"
+          title="Refaire la cote de cette carte" aria-label="Refaire la cote de ${esc(p.name)}">
+          <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
       </div>
       <div class="cardtile-buyline">
         <button class="buy-chip ${p.buyPrice != null ? 'set' : ''}" onclick="toggleCardBuy(event,'${p.id}')"
@@ -7517,14 +7715,25 @@ function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestB
 function closeInvestSeries() { state.investSeriesOpen = null; renderInvestBody(); }
 // Cotes + liens CM précis pour la série ouverte uniquement (léger : quelques dizaines).
 function resolveSeriesLive(setId) {
-  const cards = state.investCards.filter(p => String(p.setId) === String(setId) && p.cardId);
+  // Les cartes de galerie font partie de la série affichée : sans ça leurs
+  // cotes n'étaient jamais résolues à l'ouverture (elles ne « collaient » plus
+  // au setId du groupe, qui est désormais celui du set parent).
+  const cards = investCardsOfSeries(setId).filter(p => p.cardId);
   if (!cards.length) return;
   ensurePrices(cards.map(p => p.cardId), n => { if (n && String(state.investSeriesOpen) === String(setId)) refreshSeriesCotes(setId); });
-  runPool(cards, async p => { try { const u = await resolveCmUrl(p.cardId); if (u) { const a = document.getElementById('cm-' + p.id); if (a) a.href = u; } } catch {} }, 4);
+  // Liens Cardmarket : base LOCALE de slugs uniquement (`localOnly`). La
+  // résolution complète coûte ~7 s par carte et passe par des proxys sous
+  // quota : la lancer pour les 48 cartes d'une série à chaque ouverture, c'était
+  // se faire limiter pour des liens que personne n'allait cliquer. Celles qui
+  // n'y sont pas gardent leur lien de recherche, et la fiche exacte est
+  // retrouvée au moment où on recote la carte (syncCardPrice).
+  const missing = cards.filter(p => !_cmUrlStore[p.cardId]);
+  if (missing.length) runPool(missing, async p => {
+    try { const u = await resolveCmUrl(p.cardId, true); if (u) { const a = document.getElementById('cm-' + p.id); if (a) a.href = u; } } catch {}
+  }, 4);
 }
 function refreshSeriesCotes(setId) {
-  for (const p of state.investCards) {
-    if (String(p.setId) !== String(setId)) continue;
+  for (const p of investCardsOfSeries(setId)) {
     const el = document.getElementById('cote-' + p.id); if (el) { const c = cardCote(p); el.textContent = c != null ? fmt(c) : '—'; }
   }
   const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue());
@@ -7595,9 +7804,7 @@ function bumpCardQty(id, delta) {
   if (next === cardQty(p)) return;
   p.qty = next; save();
   refreshCardTile(p);
-  const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue());
-  const head = document.querySelector('.cardser-detail-meta');
-  if (head && state.investSeriesOpen) { const g = cardsGrouped().find(x => String(x.setId) === String(state.investSeriesOpen)); if (g) head.textContent = `${g.count} carte${g.count > 1 ? 's' : ''} · ${fmt(g.value)}`; }
+  refreshInvestTotals();
 }
 function refreshCardTile(p) {
   const qty = cardQty(p), cote = cardCote(p);
@@ -7985,9 +8192,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     render();
     // Positionne la pastille une fois la mise en page prête, puis une fois les
     // polices chargées (leurs largeurs changent) — évite les recalages/sautillements.
-    requestAnimationFrame(positionNavIndicator);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(positionNavIndicator);
-    setTimeout(positionNavIndicator, 450);
+    requestAnimationFrame(() => positionNavIndicator(true));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => positionNavIndicator(true));
+    setTimeout(() => positionNavIndicator(true), 450);
     setTimeout(checkForNewSeries, 1400);
     setTimeout(refreshSyncMeta, 600);         // « cotes il y a … » une fois l'accueil peint
     setTimeout(offerRecoveryIfNeeded, 900);   // propose la récupération si des sections sont vides
@@ -7995,6 +8202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindBrandReveal();                        // en-tête téléphone : actions au tap sur la marque
     bindPalette();                            // ⌘K / « / » — accélérateur global
     watchSoft();                              // tout nouveau bouton reçoit le matériau
+    applySoft(document);                      // …et le châssis (rail, en-tête, tab bar) une fois pour toutes
     attachSpotlights();                       // lumière au curseur sur les surfaces
     attachReveals();                          // révélations au scroll
     // Scène Spline OPTIONNELLE : activée seulement si une URL .splinecode est
@@ -8012,4 +8220,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     idle(() => prefetchApi('/series'));
   });
 });
-window.addEventListener('resize', () => positionNavIndicator());
+// Rotation / changement de taille : on se REPLACE d'un coup (un glissement
+// pendant que la barre change de largeur se lit comme un bug), et une seule
+// fois par frame — `resize` part en rafale sur iOS (barre d'adresse, clavier),
+// et chaque appel force un calcul de mise en page.
+let _navIndRaf = 0;
+function repositionNavSoon() {
+  if (_navIndRaf) return;
+  _navIndRaf = requestAnimationFrame(() => { _navIndRaf = 0; positionNavIndicator(true); });
+}
+window.addEventListener('resize', repositionNavSoon);
+window.addEventListener('orientationchange', () => setTimeout(repositionNavSoon, 60));

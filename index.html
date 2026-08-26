@@ -18,7 +18,7 @@
   <title>MiloDex — Le Coffre</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo">
   <link rel="apple-touch-icon" href="favicon.png?v=milo">
-  <link rel="stylesheet" href="style.css?v=ui26">
+  <link rel="stylesheet" href="style.css?v=ui28">
 </head>
 <body>
 
@@ -171,13 +171,11 @@
         <button class="btn btn-ghost btn-sm btn-icon" onclick="openPalette()" title="Rechercher (⌘K)" aria-label="Rechercher">
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
         </button>
-        <!-- Sync : recote TOUTES les cartes de l'app puis enregistre. Les cotes
-             sont relues du disque au démarrage → valeurs instantanées, hors
-             ligne comprise. Voir syncPrices(). -->
-        <button class="btn btn-grade btn-sm btn-icon btn-sync" id="btn-sync" onclick="syncPrices()"
-          title="Mettre à jour les cotes" aria-label="Mettre à jour les cotes">
-          <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+        <!-- PAS de bouton « Sync » global ici. Recoter les 1 400 cartes d'un
+             coup prenait 20 minutes pour REFAIRE ce qui était déjà juste, et
+             une seule fiche mal appariée restait fausse à la fin. La cote se
+             rafraîchit maintenant CARTE PAR CARTE, depuis sa propre tuile
+             (voir syncCardPrice) — une seconde, et c'est celle qu'on regarde. -->
         <button class="btn btn-ghost btn-sm btn-icon btn-refresh" id="btn-refresh" onclick="refreshSeries()"
           title="Chercher les nouvelles séries" aria-label="Chercher les nouvelles séries">
           <svg class="refresh-ico" viewBox="0 0 24 24" fill="none" width="15" height="15" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -209,6 +207,11 @@
 
   <!-- ══ TAB BAR (mobile) — mêmes 4 destinations, en bas, dans le pouce ══ -->
   <nav class="tabbar" aria-label="Navigation principale">
+    <!-- Une SEULE pastille, qui GLISSE d'un onglet à l'autre (comme celle du
+         rail) : avant, chaque bouton avait son propre trait qui apparaissait et
+         disparaissait — la sélection clignotait au lieu de se déplacer.
+         Positionnée par positionNavIndicator(). -->
+    <span class="tab-ind" id="tab-indicator" aria-hidden="true"></span>
     <button class="nav-btn active" data-view="home" onclick="navigate('home')">
       <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 8.5 12 13l8-4.5M12 13v7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity=".55"/></svg></span>
       <span class="nav-label">Accueil</span>
@@ -270,8 +273,6 @@
     <div class="refresh-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="refresh-title" id="refresh-title">Synchronisation</div>
     <div class="refresh-sub" id="refresh-sub">Recherche de nouvelles séries…</div>
-    <!-- Progression carte par carte, affichée seulement pendant syncPrices() -->
-    <div class="refresh-prog" id="refresh-prog"><i></i></div>
   </div>
 </div>
 
@@ -392,6 +393,6 @@
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
 <!-- Base locale des fiches Cardmarket (idProduct/numéro → slug exact). -->
 <script src="cm-slugs.js" defer></script>
-<script src="app.js?v=ui26"></script>
+<script src="app.js?v=ui28"></script>
 </body>
 </html>

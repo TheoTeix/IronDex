@@ -108,7 +108,11 @@
 
 html{-webkit-text-size-adjust:100%}
 body{
-  min-height:100dvh;
+  /* `svh` et non `dvh` : avec `dvh`, la hauteur de référence CHANGE quand la
+     barre d'adresse de Safari se replie — le document se redimensionne pendant
+     qu'on défile, et le contenu « respire » à chaque geste. `svh` est la petite
+     hauteur, donc une constante. */
+  min-height:100svh;
   background:var(--v-0);
   color:var(--t1);
   font-family:var(--sans);
@@ -183,6 +187,27 @@ ul{list-style:none}
 .muted{color:var(--t2)}
 .dim{color:var(--t3)}
 
+/* ═══════════════════ RENDU HORS ÉCRAN ═══════════════════
+   Une série ouverte fait 48 tuiles, un sélecteur de set 244, une wishlist 54 —
+   et le navigateur mesurait, peignait et DÉCODAIT L'IMAGE des cinquante qui
+   sont sous le pli, à chaque rendu. C'est ce qui faisait « accrocher » les
+   longues listes sur iPhone.
+
+   `content-visibility:auto` lui dit de ne rien faire tant que la tuile n'est
+   pas près de l'écran. `contain-intrinsic-size: auto <h>` réserve la place :
+   `auto` = « retiens la vraie hauteur dès que tu l'auras mesurée une fois »
+   (donc rien ne bouge quand on remonte), et la longueur n'est qu'une estimation
+   pour ce qui n'a jamais été affiché — elle est calée sur les hauteurs
+   réellement mesurées sur iPhone (258 px pour une tuile, 233 px dans le
+   sélecteur, 225 px pour une vignette).
+
+   Volontairement PAS appliqué au classeur 3D : ses pochettes vivent dans un
+   contexte `preserve-3d`, où la containment casserait la perspective. */
+.cardlist>.cardtile{content-visibility:auto;contain-intrinsic-size:auto 258px}
+.card-picker-grid>.card-picker-item{content-visibility:auto;contain-intrinsic-size:auto 233px}
+.cards-grid>.card-thumb{content-visibility:auto;contain-intrinsic-size:auto 226px}
+.cardser-grid>.cardser-bubble{content-visibility:auto;contain-intrinsic-size:auto 223px}
+
 /* ═══════════════════ MOTION : primitives partagées ═══════════════════ */
 /* Entrée en cascade. --i = index ; 38ms par élément, plafonné (jamais de
    file d'attente interminable sur une longue liste). */
@@ -193,9 +218,13 @@ ul{list-style:none}
 
 /* Révélation au scroll (IntersectionObserver ajoute .in). On n'anime que
    transform/opacity → zéro reflow, zéro CLS. */
+/* PAS de `will-change` ici : il y a une dizaine de `.reveal` par écran et il
+   restait posé POUR TOUJOURS — donc autant de couches de composition retenues
+   en mémoire vidéo bien après la fin de l'animation. Une transition
+   opacity/transform est de toute façon composée sans lui. */
 .reveal{opacity:0;transform:translate3d(0,22px,0);
   transition:opacity var(--dur-3) var(--ease-out),transform var(--dur-3) var(--ease-out);
-  transition-delay:calc(min(var(--i,0),10) * 42ms);will-change:opacity,transform}
+  transition-delay:calc(min(var(--i,0),10) * 42ms)}
 .reveal.in{opacity:1;transform:none}
 
 /* ── SPOTLIGHT ──
@@ -337,7 +366,7 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    petit écran (4 destinations, jamais plus de 5). L'emplacement de la
    nav ne change JAMAIS d'une vue à l'autre.
    ═══════════════════════════════════════════════════════════════════ */
-.app{position:relative;z-index:1;display:flex;min-height:100dvh}
+.app{position:relative;z-index:1;display:flex;min-height:100svh}
 /* Révélation de l'app à la fin de l'intro (runIntro pose ces classes). */
 @keyframes arrive{from{opacity:0;transform:scale(.988)}to{opacity:1;transform:none}}
 .app.booting{opacity:0}
@@ -462,14 +491,29 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   flex:1;flex-direction:column;gap:3px;min-height:54px;padding:6px 4px;
   border-radius:var(--r-sm);font-size:10.5px;font-weight:600;text-align:center;
 }
-.tabbar .nav-btn::after{
-  content:"";position:absolute;top:0;left:50%;width:26px;height:2px;margin-left:-13px;
-  border-radius:0 0 2px 2px;background:var(--acc);
-  /* scaleX plutôt qu'une largeur animée : transform seul, zéro reflow. */
-  transform:scaleX(0);transform-origin:center;
-  transition:transform var(--dur-2) var(--ease-out),background var(--flow);
+/* ── La pastille qui GLISSE (cf. .rail-ind) ────────────────────────
+   Un seul élément, posé par positionNavIndicator() : sa boîte est écrite dans
+   des variables (--tab-x/w/h/t) et SEUL le transform est animé — aucune
+   propriété de layout, donc aucun reflow pendant le glissement. Le trait par
+   bouton (::after en scaleX) est supprimé : deux traits qui se croisent en
+   fondu, ce n'est pas un déplacement. */
+.tab-ind{
+  position:absolute;left:0;top:0;z-index:0;pointer-events:none;
+  width:var(--tab-w,64px);height:var(--tab-h,54px);
+  translate:var(--tab-x,0) var(--tab-t,0);
+  border-radius:14px;opacity:0;
+  background:linear-gradient(150deg,
+    color-mix(in srgb,var(--acc) 22%,transparent),
+    color-mix(in srgb,var(--acc) 8%,transparent));
+  border:1px solid color-mix(in srgb,var(--acc) 28%,transparent);
+  transition:translate 320ms var(--ease-spatial),
+             opacity var(--dur-1) var(--ease-out),
+             background var(--flow),border-color var(--flow);
+  will-change:translate;
 }
-.tabbar .nav-btn.active::after{transform:scaleX(1)}
+.tab-ind.on{opacity:1}
+/* Premier placement (boot, rotation) : on saute, on ne glisse pas depuis 0. */
+.tab-ind.snap{transition:none}
 .tabbar .nav-label{flex:none;font-size:10.5px}
 .tabbar .nav-icon{width:24px;height:24px}
 /* Le badge devient une puce sur l'icône (pas de place pour un chiffre large). */
@@ -481,19 +525,37 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    cible est peuplé AVANT d'être révélé. */
 .view{display:none}
 .view.active{display:block}
+/* La vue SORTANTE est épinglée au viewport (position:fixed, boîte mesurée par
+   renderWithTransition) et non plus laissée dans le flux. Avant, les deux vues
+   étaient `display:block` en même temps : la hauteur du document valait la
+   SOMME des deux pendant 300 ms, puis retombait — d'où le grand mouvement de
+   « resizing » et le rebond de défilement à chaque changement de page sur
+   iPhone. Épinglée, elle ne pèse plus rien dans le layout et reste exactement
+   là où l'œil l'avait laissée, même si le défilement change sous elle. */
+.wrap{position:relative}
+.view.exiting{position:fixed;z-index:1;margin:0}
 @keyframes v-fade-in{from{opacity:0}to{opacity:1}}
 @keyframes v-fade-out{from{opacity:1}to{opacity:0}}
 @keyframes v-in-fwd{from{opacity:0;transform:translate3d(26px,0,0)}to{opacity:1;transform:none}}
 @keyframes v-in-bwd{from{opacity:0;transform:translate3d(-26px,0,0)}to{opacity:1;transform:none}}
 @keyframes v-out-fwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-22px,0,0)}}
 @keyframes v-out-bwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(22px,0,0)}}
+/* ENTRÉES. `.entering` est une CLASSE posée par le JS, et non plus
+   `.view.active:not(.enter-forward):not(.enter-backward)` : ce sélecteur pesait
+   0,4,0 de spécificité, donc il BATTAIT `.view.exit-forward` (0,2,0) — la vue
+   sortante, qui garde `.active` le temps de s'effacer, se voyait appliquer
+   l'animation d'ENTRÉE et aucune sortie ne jouait jamais. D'où le changement de
+   page qui « claquait » au lieu de se croiser. Toutes les règles ci-dessous
+   pèsent désormais pareil : c'est l'ORDRE qui décide, et la sortie est écrite
+   en dernier (si les deux se croisent, c'est elle qui gagne). */
+.view.entering{animation:v-fade-in var(--dur-2) var(--ease-out) both}
+.view.enter-forward{animation:v-in-fwd var(--dur-3) var(--ease-spatial) both}
+.view.enter-backward{animation:v-in-bwd var(--dur-3) var(--ease-spatial) both}
+/* SORTIES */
 .view.exiting{display:block;pointer-events:none}
 .view.exit-fade{animation:v-fade-out var(--dur-exit) var(--ease-in) both}
 .view.exit-forward{animation:v-out-fwd var(--dur-exit) var(--ease-in) both}
 .view.exit-backward{animation:v-out-bwd var(--dur-exit) var(--ease-in) both}
-.view.enter-forward{animation:v-in-fwd var(--dur-3) var(--ease-spatial) both}
-.view.enter-backward{animation:v-in-bwd var(--dur-3) var(--ease-spatial) both}
-.view.active:not(.enter-forward):not(.enter-backward){animation:v-fade-in var(--dur-2) var(--ease-out) both}
 
 /* Bouton retour (fil d'Ariane des vues profondes) */
 .back-btn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 14px 0 10px;
@@ -760,7 +822,6 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   box-shadow:0 30px 70px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.09),
              0 0 60px color-mix(in srgb,var(--acc) 24%,transparent);
   transition:transform var(--dur-2) var(--ease-out),box-shadow var(--flow);
-  will-change:transform;
 }
 .hero-card img{width:100%;height:100%;object-fit:contain;background:var(--v-2)}
 /* Reflet holographique piloté par --mx/--my (attachHeroCardTilt). */
@@ -1789,6 +1850,23 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardtile-cote{font-size:18px;font-weight:900;letter-spacing:-.024em;font-variant-numeric:tabular-nums}
 .cote-wait{font-size:12px;font-weight:500;color:var(--t3);letter-spacing:0}
 .cardtile-sum{font-size:11.5px;font-weight:700;color:var(--t3);font-variant-numeric:tabular-nums}
+/* ── REFAIRE LA COTE DE CETTE CARTE ────────────────────────────────
+   Collé au montant, à droite : c'est CE prix qu'il recalcule, et rien d'autre.
+   Il a remplacé le « Sync » global de l'en-tête, qui recotait 1 400 cartes pour
+   corriger celle qu'on regarde. Discret au repos (c'est une réparation, pas
+   l'action principale de la tuile), franc au survol. */
+.cardtile-sync{
+  margin-left:auto;align-self:center;flex:none;
+  width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
+  color:var(--t3);
+  transition:color var(--dur-1) var(--ease-out),transform var(--dur-0) var(--ease-out);
+}
+.cardtile-sync svg{width:15px;height:15px}
+.cardtile-sync:hover:not(:disabled){color:var(--acc)}
+.cardtile-sync:active:not(:disabled){transform:scale(.9)}
+.cardtile-sync:disabled{opacity:1;color:var(--acc)}
+.cardtile-sync.spinning{pointer-events:none}
+.cardtile-sync.spinning svg{animation:spin .9s linear infinite}
 .cardtile-buyline{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .buy-chip{min-height:26px;padding:0 9px;border-radius:var(--pill);
   background:rgba(255,255,255,.05);border:1px dashed var(--line-2);
@@ -1947,10 +2025,15 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .detail-info{min-width:0;display:flex;flex-direction:column;gap:var(--s3)}
 .detail-name{font-size:clamp(24px,3vw,34px);font-weight:900;letter-spacing:-.032em;line-height:1.05;text-wrap:balance}
 .detail-set{font-size:13.5px;color:var(--t3)}
-.detail-price-box{display:flex;flex-direction:column;gap:4px;padding:16px 18px;border-radius:var(--r-lg);
+.detail-price-box{position:relative;display:flex;flex-direction:column;gap:4px;padding:16px 18px;border-radius:var(--r-lg);
   background:color-mix(in srgb,var(--acc) 9%,rgba(255,255,255,.03));
   border:1px solid color-mix(in srgb,var(--acc) 26%,transparent);
   transition:background var(--flow),border-color var(--flow)}
+/* Le bouton de recote se pose dans le coin du cadre de prix — au-dessus du
+   montant, comme un bouton d'actualisation, sans décaler le montant lui-même
+   (il est hors flux : le prix reste exactement où l'œil le cherche). */
+.detail-price-sync{position:absolute;top:10px;right:10px;margin:0;width:32px;height:32px}
+.detail-price-box{padding-right:52px}
 .detail-price-label{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--t3)}
 .detail-price-val{font-size:30px;font-weight:900;letter-spacing:-.03em;line-height:1;
   font-variant-numeric:tabular-nums}
@@ -2062,18 +2145,9 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   color:var(--t2);font-variant-numeric:tabular-nums;
   transition:color var(--dur-2) var(--ease-out)}
 .refresh-sub.done{color:var(--acc)}
-/* Progression carte par carte (affichée seulement pendant syncPrices) */
-.refresh-prog{display:none;width:min(340px,64vw);height:3px;margin-top:20px;border-radius:99px;
-  overflow:hidden;background:rgba(255,255,255,.1)}
-.refresh-prog.on{display:block}
-.refresh-prog>i{display:block;height:100%;width:0;border-radius:99px;background:var(--acc);
-  transition:width 240ms var(--ease-out)}
-
-/* ═══════════════════ SYNCHRO : bouton ═══════════════════ */
-.btn-sync .ico-sync{transition:transform var(--dur-2) var(--ease-out)}
-.btn-sync:hover:not(:disabled) .ico-sync{transform:rotate(34deg)}
-.btn-sync.spinning{pointer-events:none;opacity:.72}
-.btn-sync.spinning .ico-sync{animation:spin .9s linear infinite;transform:none}
+/* La barre de progression carte par carte et le bouton « Sync » global ont
+   disparu avec la synchro de masse : une carte se recote depuis sa tuile
+   (.cardtile-sync), et « Actualiser les séries » n'a rien à décompter. */
 .btn-refresh.has-new{position:relative}
 .btn-refresh.has-new::after{content:"";position:absolute;top:6px;right:6px;width:7px;height:7px;
   border-radius:50%;background:var(--acc);box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 26%,transparent)}
@@ -2124,7 +2198,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   @keyframes modal-in{from{opacity:0;transform:translate3d(0,34px,0)}to{opacity:1;transform:none}}
   .palette{padding:12px}
   .palette-box{max-width:100%}
-  .btn-save span,.btn-refresh span,.header-actions .btn-sync span{display:none}
+  .btn-save span,.btn-refresh span{display:none}
   .header-actions .btn{padding:0;width:40px;min-height:40px;justify-content:center}
   .header-actions .btn-icon{width:40px;min-height:40px}
   .strip{margin:0 calc(var(--gutter) * -1)}
@@ -2156,7 +2230,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .reveal{opacity:1;transform:none}
   .hero-name>span,.stagger{animation:none}
   .foil::after{display:none}
-  .refresh-ring span,.btn-sync.spinning .ico-sync,.spinner{animation:spin 1.4s linear infinite!important}
+  .refresh-ring span,.cardtile-sync.spinning svg,.spinner{animation:spin 1.4s linear infinite!important}
   :root{transition:none!important}
 }
 
@@ -2529,6 +2603,17 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   box-shadow:var(--lg-shine-sm);
   backdrop-filter:blur(8px) saturate(160%);-webkit-backdrop-filter:blur(8px) saturate(160%);
 }
+/* Même matériau pour la pastille de la tab bar — MAIS sans backdrop-filter :
+   elle glisse sur une barre déjà dépolie, il n'y a rien de plus à réfracter, et
+   un flou imbriqué qui se déplace à 60 i/s est le genre de chose qui fait
+   décrocher un iPhone. La teinte et le liseré suffisent. */
+.tab-ind{
+  background:
+    linear-gradient(150deg,color-mix(in srgb,var(--acc) 24%,transparent),color-mix(in srgb,var(--acc) 9%,transparent)),
+    var(--lg-tint-3);
+  border:1px solid color-mix(in srgb,var(--acc) 32%,transparent);
+  box-shadow:var(--lg-shine-sm);
+}
 .inv-switch-pill{
   background:
     linear-gradient(150deg,color-mix(in srgb,var(--acc) 30%,transparent),color-mix(in srgb,var(--acc) 12%,transparent)),
@@ -2831,10 +2916,15 @@ body::before{display:none}
   #toast-container{bottom:calc(88px + env(safe-area-inset-bottom))}
 
   /* ── Confort tactile ──────────────────────────────────────────
-     Pas de flash bleu au doigt, pas de zoom au double-tap, et le rebond de
-     défilement reste dans l'app (sinon la page entière « décolle »). */
+     Pas de flash bleu au doigt, pas de zoom au double-tap, et AUCUN rebond de
+     défilement (voir juste en dessous). */
   *{-webkit-tap-highlight-color:transparent}
-  body{overscroll-behavior-y:contain}
+  /* `none` et non `contain` : `contain` garde le rebond élastique du document
+     (la page « décolle » puis retombe en haut et en bas de course, et ce rebond
+     se rejoue à chaque changement de page quand la hauteur change). `none` le
+     supprime — et avec lui le pull-to-refresh, qu'une app installée ne veut
+     pas. Les défilements internes (modales, listes) gardent leur élan. */
+  html,body{overscroll-behavior:none}
   .btn,.nav-btn,a,label{touch-action:manipulation}
 
   /* ══ EN-TÊTE : la marque est un bouton ══════════════════════════
@@ -3020,6 +3110,35 @@ body::before{display:none}
   /* ── Scrollers horizontaux : élan iOS, sans barre visible ───── */
   .strip,.scroller,.hscroll{-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .strip::-webkit-scrollbar,.scroller::-webkit-scrollbar{display:none}
+
+  /* ── MOUVEMENT : sur un écran de 6 pouces, l'entrée en cascade était le
+     mouvement DOMINANT de chaque changement de page — vingt tuiles qui montent
+     de 14 px l'une après l'autre, ça donne l'impression que la page se
+     réajuste. On garde la cascade (elle dit dans quel ordre lire) mais en
+     FONDU seul, et resserrée : plus rien ne se déplace, tout apparaît. */
+  .stagger{animation-name:fade;animation-duration:var(--dur-2);
+    animation-delay:calc(min(var(--i,0),8) * 24ms)}
+  /* Les tuiles qui n'utilisent pas `.stagger` mais leur propre `rise` :
+     quarante-huit translations simultanées derrière un défilement, c'est
+     autant de couches à composer pour un mouvement qu'on ne regarde pas. */
+  .cardtile,.card-thumb,.cardser-bubble,.binder-tile{
+    animation-name:fade;animation-duration:var(--dur-2)}
+  .cardtile{animation-delay:calc(min(var(--i,0),10) * 22ms)}
+  .cardser-bubble{animation-delay:calc(min(var(--i,0),10) * 22ms)}
+  .reveal{transform:none;transition-delay:calc(min(var(--i,0),6) * 30ms)}
+  .reveal.in{transform:none}
+  /* Le glissement de page reste (il dit dans quel sens on va) mais court :
+     26 px de course sur 380 ms, c'était une translation qu'on suivait du
+     regard. 14 px sur 260 ms se lisent comme un enchaînement, pas un trajet. */
+  @keyframes v-in-fwd-m{from{opacity:0;transform:translate3d(14px,0,0)}to{opacity:1;transform:none}}
+  @keyframes v-in-bwd-m{from{opacity:0;transform:translate3d(-14px,0,0)}to{opacity:1;transform:none}}
+  @keyframes v-out-fwd-m{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-10px,0,0)}}
+  @keyframes v-out-bwd-m{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(10px,0,0)}}
+  .view.entering{animation:v-fade-in var(--dur-1) var(--ease-out) both}
+  .view.enter-forward{animation:v-in-fwd-m var(--dur-2) var(--ease-out) both}
+  .view.enter-backward{animation:v-in-bwd-m var(--dur-2) var(--ease-out) both}
+  .view.exit-forward{animation:v-out-fwd-m var(--dur-exit) var(--ease-in) both}
+  .view.exit-backward{animation:v-out-bwd-m var(--dur-exit) var(--ease-in) both}
 }
 
 /* ═══════════════════════════════════════════════════════════════════
