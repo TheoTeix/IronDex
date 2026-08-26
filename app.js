@@ -3333,8 +3333,12 @@ function setPagerColumn(view, instant) {
   const col = pagerColumnOf(view);
   if (col == null) return;
   const target = PHONE_PAGES.indexOf(col);
+  // La durée suit ce qui RESTE à parcourir : un rangement de fin de geste (il
+  // reste un quart de page) doit être bref, un saut de deux pages depuis la
+  // barre d'onglets doit se voir passer par celle du milieu. Plancher à 180 ms
+  // pour que même un tout petit rattrapage soit une animation, pas un saut.
   const dist = Math.min(2, Math.abs(target - _pagerPos));
-  wrap.style.transitionDuration = Math.round(230 + 170 * dist) + 'ms';
+  wrap.style.transitionDuration = Math.max(180, Math.round(200 + 200 * dist)) + 'ms';
   if (instant) wrap.classList.add('no-anim');
   setPagerTransform(target);
   if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); }
@@ -3380,8 +3384,30 @@ function bindPagerSwipe() {
   if (document.documentElement.dataset.swipe) return;
   document.documentElement.dataset.swipe = '1';
   let id = null, x0 = 0, y0 = 0, base = 0, w = 1, axis = null;
-  let dx = 0, lastX = 0, lastT = 0, vel = 0, raf = 0;
+  let dx = 0, lastX = 0, lastT = 0, vel = 0, raf = 0, tabX = null;
   const maxCol = () => PHONE_PAGES.length - 1;
+
+  // La PASTILLE de la barre du bas suit le doigt elle aussi : sans ça, la bande
+  // glissait mais la sélection restait plantée sur la page de départ jusqu'au
+  // lâcher, et les deux moitiés du mouvement n'avaient pas l'air liées.
+  // Les abscisses des onglets sont relevées UNE fois, au début du geste.
+  const readTabs = () => {
+    const bar = document.querySelector('.tabbar');
+    if (!bar) return null;
+    const xs = PHONE_PAGES.map(v => {
+      const b = bar.querySelector(`.nav-btn[data-view="${v}"]`);
+      return b && b.offsetWidth ? b.offsetLeft : null;
+    });
+    return xs.every(x => x != null) ? xs : null;
+  };
+  const paintTab = pos => {
+    const ind = document.getElementById('tab-indicator');
+    if (!ind || !tabX) return;
+    const c = Math.max(0, Math.min(maxCol(), pos));
+    const i = Math.min(maxCol() - 1, Math.floor(c));
+    const f = c - i;
+    ind.style.setProperty('--tab-x', (tabX[i] + (tabX[i + 1] - tabX[i]) * f).toFixed(1) + 'px');
+  };
 
   const clampPos = pos => {                     // élastique : au tiers dans le vide
     if (pos < 0) return pos / 3;
@@ -3390,11 +3416,19 @@ function bindPagerSwipe() {
   };
   // UNE SEULE écriture par frame : iOS livre les pointermove à 120 Hz, soit deux
   // fois plus que l'écran n'affiche, et la bande bavait derrière le doigt.
-  const paint = () => { raf = 0; setPagerTransform(clampPos(base - dx / w)); };
+  const paint = () => {
+    raf = 0;
+    const pos = clampPos(base - dx / w);
+    setPagerTransform(pos);
+    paintTab(pos);
+  };
   const stopRaf = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
   const end = () => {
-    stopRaf(); id = null; axis = null;
+    stopRaf(); id = null; axis = null; tabX = null;
     const wrap = pagerEl(); if (wrap) wrap.classList.remove('dragging');
+    // La pastille reprend sa propre transition : elle rejoindra son onglet en
+    // glissant, dans la continuité du geste.
+    document.getElementById('tab-indicator')?.classList.remove('snap');
   };
 
   document.addEventListener('pointerdown', e => {
@@ -3420,6 +3454,10 @@ function bindPagerSwipe() {
       axis = 'x';
       const wrap = pagerEl();
       wrap?.classList.add('dragging');
+      tabX = readTabs();
+      // `snap` coupe la transition de la pastille : le temps du geste, elle est
+      // pilotée au pixel comme la bande.
+      document.getElementById('tab-indicator')?.classList.add('snap');
       // Les événements suivants nous restent adressés même si le doigt quitte
       // l'élément de départ (une carte, un bouton, un bord de page).
       try { wrap?.setPointerCapture(e.pointerId); } catch {}
@@ -3439,6 +3477,17 @@ function bindPagerSwipe() {
     const moved = dx, from = base, width = w, v = vel;   // relevé AVANT end(), qui remet à zéro
     end();
     if (!dragged) return;
+    /* POURQUOI LE LÂCHER ÉTAIT INSTANTANÉ.
+       Pendant le geste, `.dragging` pose `transition:none` (la bande doit coller
+       au doigt). Au lâcher, on retirait la classe ET on écrivait la position
+       finale DANS LE MÊME CALCUL DE STYLE — et une transition ne démarre que si
+       l'état de DÉPART avait déjà une durée non nulle pour cette propriété. Elle
+       ne démarrait donc jamais : la bande sautait à sa page.
+       Cette lecture de `offsetWidth` force le navigateur à adopter l'état
+       « transition rallumée » comme point de départ. Ensuite, et ensuite
+       seulement, le changement de transform s'anime. */
+    const wrap = pagerEl();
+    if (wrap) void wrap.offsetWidth;
     // Où en est la bande, en pages, puis où elle POINTE avec son élan.
     const pos = from - moved / width;
     const proj = pos - (v * SWIPE_PROJECT_MS) / width;
@@ -3450,8 +3499,10 @@ function bindPagerSwipe() {
     target = Math.max(0, Math.min(maxCol(), target));
     // Un geste ne doit pas déclencher le clic de ce qu'il y avait sous le doigt.
     if (Math.abs(moved) > SWIPE_START) swallowNextClick();
-    if (target === from) setPagerColumn(state.view);            // retour élastique
-    else navigate(PHONE_PAGES[target]);
+    if (target === from) {
+      setPagerColumn(state.view);                              // retour élastique
+      repositionNavSoon();                                     // …et la pastille revient avec
+    } else navigate(PHONE_PAGES[target]);
   };
   document.addEventListener('pointerup', release, true);
   // ANNULATION (iOS reprend le pointeur, deuxième doigt, appel entrant) : on la
