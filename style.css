@@ -103,6 +103,12 @@
   --mono:var(--disp);
 
   --milo-headroom:86px;
+  /* SONDES (diagnostic) : les valeurs que le navigateur calcule vraiment pour
+     les marges d'encoche et les trois unités de hauteur. Le JS les relit pour
+     le diagnostic écran — impossible de lire `env()` autrement. */
+  --sa-top:env(safe-area-inset-top,0px);
+  --sa-bottom:env(safe-area-inset-bottom,0px);
+  --h-dvh:100dvh; --h-svh:100svh; --h-lvh:100lvh;
   transition:--acc var(--flow), --acc2 var(--flow);
 }
 
@@ -552,7 +558,10 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    (installée ou pas, barre d'état translucide, encoche, trait d'accueil…).
    `inset:0` sur un élément fixe ne calcule rien : il EST le viewport visible,
    par définition. Le cadre colle donc à l'écran, quoi que dise `vh`. */
-:root[data-mobile="on"] .app{position:fixed;inset:0;height:auto;min-height:0;overflow:hidden}
+/* PAS de `overflow:hidden` ici : il découpait la prolongation de matière de la
+   barre d'onglets (un pseudo-élément posé SOUS elle, donc hors du cadre), qui ne
+   peignait donc rien. Le rognage horizontal est déjà porté par `.main`. */
+:root[data-mobile="on"] .app{position:fixed;inset:0;height:auto;min-height:0}
 /* Et la barre d'onglets est ancrée au CADRE (absolute) plutôt qu'au viewport :
    son bas et celui de l'app sont alors le même bord, il ne peut plus rien
    s'ouvrir entre les deux. */
@@ -602,6 +611,45 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* Pendant le geste, la bande SUIT le doigt : aucune transition, sinon elle
    traînerait derrière lui. */
 :root[data-mobile="on"] .wrap.dragging{transition:none}
+
+/* ══════════════════════════════════════════════════════════════════════
+   POURQUOI LE GESTE SACCADAIT VRAIMENT : LE VERRE DÉPOLI
+
+   Un `backdrop-filter` n'est pas peint une fois : il floute CE QU'IL Y A
+   DERRIÈRE, donc il doit être recalculé dès que lui ou son fond bouge. Or
+   pendant un glissement, TOUT bouge :
+
+   · les dizaines d'éléments de verre à l'intérieur des pages se déplacent, donc
+     chacun refloute son fond à chaque frame ;
+   · la barre haute et la barre d'onglets ne bougent pas, elles, mais le contenu
+     défile DERRIÈRE elles — leur flou est donc recalculé sur toute la largeur
+     de l'écran, deux fois par frame (l'élément et son ::before).
+
+   Sur un iPhone, ça se compte en centaines de millisecondes par frame : d'où
+   les 2 images par seconde. Le temps du geste, on coupe donc tout le flou. La
+   TEINTE et les liserés restent — à l'œil, pendant 300 ms de déplacement,
+   personne ne voit la différence, et c'est la seule façon d'avoir un geste qui
+   tient la cadence de l'écran.
+
+   Le sélecteur est volontairement large : il y a 68 déclarations de
+   `backdrop-filter` dans cette feuille, réparties sur autant de familles de
+   composants, et en énumérer une liste serait faux dès le prochain composant
+   ajouté. Il n'est évalué qu'aux deux instants où la classe change.
+   ══════════════════════════════════════════════════════════════════════ */
+:root[data-pager-move] .wrap,
+:root[data-pager-move] .wrap *,
+:root[data-pager-move] .wrap *::before,
+:root[data-pager-move] .wrap *::after,
+:root[data-pager-move] .app-header,
+:root[data-pager-move] .app-header::before,
+:root[data-pager-move] .tabbar,
+:root[data-pager-move] .tabbar::before{
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+/* L'aurora est trois grandes nappes en mouvement perpétuel : autant de
+   compositions par frame que le geste n'a pas besoin de payer. */
+:root[data-pager-move] .aurora>i{animation-play-state:paused}
 /* ── POURQUOI LE GESTE SACCADAIT ──
    `content-visibility:auto` fait sauter la mise en page et la peinture de tout
    ce qui n'est pas près de l'écran. Excellent pour défiler une longue liste —
@@ -3467,3 +3515,18 @@ body::before{display:none}
   .cardtile-art{width:101px}
   .cardtile-foot{padding-top:6px}
 }
+
+
+/* ── DIAGNOSTIC ÉCRAN (temporaire, 2026-08-26) ──
+   Volontairement sans verre ni animation : il doit dire la vérité sur la
+   géométrie, pas la décorer. À retirer avec showScreenDiag(). */
+#screen-diag{position:fixed;inset:0;z-index:calc(var(--z-toast) + 2);
+  display:grid;place-items:center;padding:20px;background:rgba(2,3,5,.86)}
+#screen-diag .sd-card{width:100%;max-width:420px;padding:20px;border-radius:16px;
+  background:#0d1017;border:1px solid var(--line-2);box-shadow:var(--e4)}
+#screen-diag h3{margin:0 0 14px;font-size:16px;font-weight:800}
+#screen-diag dl{display:grid;grid-template-columns:1fr auto;gap:8px 12px;margin:0;
+  font-size:12.5px;font-variant-numeric:tabular-nums}
+#screen-diag dt{color:var(--t3)}
+#screen-diag dd{margin:0;font-weight:700;text-align:right}
+#screen-diag p{margin:16px 0 0;font-size:11.5px;color:var(--t3);line-height:1.5}

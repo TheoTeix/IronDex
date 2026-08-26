@@ -2742,9 +2742,46 @@ function palCommands() {
     ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
     { kind: 'act', name: 'Récupérer les cotes du dépôt', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullPricesFromRepo() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
+    // TEMPORAIRE (2026-08-26) : relève ce que l'appareil dit VRAIMENT de son
+    // écran. La bande noire du bas résiste à trois corrections faites « à
+    // l'aveugle » ; ces chiffres disent lequel des deux cas c'est — le cadre ne
+    // couvre pas l'écran, ou il le couvre et c'est la barre qui s'arrête trop
+    // haut. À retirer dès que la question est tranchée.
+    { kind: 'act', name: 'Diagnostic écran', sub: 'Mesures à envoyer en cas de bande noire', ico: ICO.refresh, run: () => showScreenDiag() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
   ];
+}
+/* ── DIAGNOSTIC ÉCRAN (temporaire) ────────────────────────────────────────
+   Affiche, en gros et sur place, ce que l'appareil rapporte de sa propre
+   géométrie. Un iPhone n'a pas de console : c'est le seul moyen d'obtenir des
+   NOMBRES au lieu de continuer à deviner. Se referme au toucher. */
+function showScreenDiag() {
+  closePalette();
+  const cs = getComputedStyle(document.documentElement);
+  const px = v => Math.round(parseFloat(v) || 0);
+  const r = el => { const b = el && el.getBoundingClientRect(); return b ? `${px(b.top)} → ${px(b.bottom)}` : 'absent'; };
+  const app = document.querySelector('.app'), bar = document.querySelector('.tabbar');
+  const barBottom = bar ? Math.round(bar.getBoundingClientRect().bottom) : 0;
+  const lignes = [
+    ['fenêtre (innerW × innerH)', `${innerWidth} × ${innerHeight}`],
+    ['écran (screen)', `${screen.width} × ${screen.height}`],
+    ['zone visuelle', visualViewport ? `${Math.round(visualViewport.width)} × ${Math.round(visualViewport.height)}` : 'inconnue'],
+    ['installée (standalone)', (navigator.standalone === true ? 'OUI' : navigator.standalone === false ? 'non' : '?')
+      + (matchMedia('(display-mode: standalone)').matches ? ' · display-mode ok' : ' · display-mode NON')],
+    ['encoche haut / bas', `${px(cs.getPropertyValue('--sa-top'))} / ${px(cs.getPropertyValue('--sa-bottom'))}`],
+    ['cadre .app', r(app)],
+    ['barre d\u2019onglets', r(bar)],
+    ['SOUS la barre', `${innerHeight - barBottom} px`],
+    ['100dvh / 100svh / 100lvh', `${px(cs.getPropertyValue('--h-dvh'))} / ${px(cs.getPropertyValue('--h-svh'))} / ${px(cs.getPropertyValue('--h-lvh'))}`],
+  ];
+  const box = document.createElement('div');
+  box.id = 'screen-diag';
+  box.innerHTML = `<div class="sd-card"><h3>Diagnostic écran</h3><dl>${
+    lignes.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join('')
+  }</dl><p>Fais une capture et envoie-la. Touche pour fermer.</p></div>`;
+  box.onclick = () => box.remove();
+  document.body.appendChild(box);
 }
 // Toutes les cartes atteignables, dédoublonnées, avec leur provenance.
 function palCards() {
@@ -3302,6 +3339,24 @@ function transitionKind(fromView, toView) {
 }
 function pagerEl() { return document.getElementById('pager'); }
 
+/* La bande est-elle EN MOUVEMENT ? Le drapeau couvre le geste ET l'animation qui
+   le prolonge, parce que le verre dépoli coûte exactement aussi cher dans les
+   deux cas (voir la note « POURQUOI LE GESTE SACCADAIT » dans style.css). Le
+   couper seulement pendant le doigt laissait donc saccader précisément la partie
+   qu'on regarde : le rangement après le lâcher. Il couvre aussi les sauts
+   déclenchés depuis la barre d'onglets, qui déplacent la bande tout autant. */
+let _pagerMoveTimer = 0;
+function markPagerMoving(ms) {
+  document.documentElement.dataset.pagerMove = '1';
+  if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
+  // ms = 0 : indéfini (le doigt est posé, on ne sait pas quand il partira).
+  if (ms) _pagerMoveTimer = setTimeout(clearPagerMoving, ms);
+}
+function clearPagerMoving() {
+  if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
+  delete document.documentElement.dataset.pagerMove;
+}
+
 /* ── POSITION DE LA BANDE ────────────────────────────────────────────────
    Le `transform` est écrit DIRECTEMENT, et non via une variable CSS
    (`translate3d(calc(var(--pg) * -100%),0,0)`). C'était un piège : changer une
@@ -3338,10 +3393,12 @@ function setPagerColumn(view, instant) {
   // barre d'onglets doit se voir passer par celle du milieu. Plancher à 180 ms
   // pour que même un tout petit rattrapage soit une animation, pas un saut.
   const dist = Math.min(2, Math.abs(target - _pagerPos));
-  wrap.style.transitionDuration = Math.max(180, Math.round(200 + 200 * dist)) + 'ms';
+  const dur = Math.max(180, Math.round(200 + 200 * dist));
+  wrap.style.transitionDuration = dur + 'ms';
   if (instant) wrap.classList.add('no-anim');
+  else if (dist > 0.001) markPagerMoving(dur + 90);   // le verre reste coupé jusqu'à l'arrivée
   setPagerTransform(target);
-  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); }
+  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); clearPagerMoving(); }
 }
 
 /* ── GLISSEMENT AU DOIGT ────────────────────────────────────────────────
@@ -3426,6 +3483,9 @@ function bindPagerSwipe() {
   const end = () => {
     stopRaf(); id = null; axis = null; tabX = null;
     const wrap = pagerEl(); if (wrap) wrap.classList.remove('dragging');
+    // On ne LÈVE PAS le drapeau ici : le rangement qui suit est encore un
+    // mouvement de la bande. C'est setPagerColumn qui l'éteindra à l'arrivée.
+    // Seul l'abandon d'un geste vertical l'éteint tout de suite (voir plus bas).
     // La pastille reprend sa propre transition : elle rejoindra son onglet en
     // glissant, dans la continuité du geste.
     document.getElementById('tab-indicator')?.classList.remove('snap');
@@ -3450,10 +3510,14 @@ function bindPagerSwipe() {
     const mx = e.clientX - x0, my = e.clientY - y0;
     if (axis === null) {
       if (Math.abs(mx) < SWIPE_START && Math.abs(my) < SWIPE_START) return;
-      if (Math.abs(my) >= Math.abs(mx)) { end(); return; }   // vertical : on rend la main
+      if (Math.abs(my) >= Math.abs(mx)) { end(); clearPagerMoving(); return; }   // vertical : on rend la main
       axis = 'x';
       const wrap = pagerEl();
       wrap?.classList.add('dragging');
+      // Le drapeau est posé sur la RACINE : la barre haute, la barre d'onglets et
+      // l'aurora sont hors de la bande, et c'est leur verre qui coûte le plus
+      // cher — le contenu défile derrière elles sur toute la largeur.
+      markPagerMoving(0);
       tabX = readTabs();
       // `snap` coupe la transition de la pastille : le temps du geste, elle est
       // pilotée au pixel comme la bande.
