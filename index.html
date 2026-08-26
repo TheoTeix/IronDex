@@ -18,7 +18,7 @@
   <title>MiloDex — Le Coffre</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui29">
+  <link rel="stylesheet" href="style.css?v=ui30">
 </head>
 <body>
 
@@ -194,7 +194,11 @@
     </header>
 
     <main class="main" id="main">
-      <div class="wrap">
+      <!-- Sur téléphone, `.wrap` est la BANDE du carrousel : trois colonnes de
+           100 % posées côte à côte, dont une seule est dans le cadre. Changer
+           d'onglet ne fait que déplacer la bande (un translate composité).
+           Sur Mac elle reste un simple conteneur centré. Voir setPagerColumn(). -->
+      <div class="wrap" id="pager">
         <div id="view-home" class="view active"></div>
         <div id="view-wishlists" class="view"></div>
         <div id="view-wishlist-detail" class="view"></div>
@@ -393,6 +397,6 @@
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
 <!-- Base locale des fiches Cardmarket (idProduct/numéro → slug exact). -->
 <script src="cm-slugs.js" defer></script>
-<script src="app.js?v=ui29"></script>
+<script src="app.js?v=ui30"></script>
 </body>
 </html>

@@ -125,14 +125,23 @@ const state = {
 // `innerWidth === 0` (on passerait pour un téléphone et on priverait le
 // desktop de sa 3D), et une fenêtre se redimensionne. On relit donc à chaque
 // fois, avec des replis quand la mesure est absurde.
+// MIS EN CACHE, et pas par coquetterie : `isPhone()` est appelé sur le chemin
+// chaud de la navigation (transitionKind, applyViewScroll, viewScroller…) et il
+// lit `innerWidth`, ce qui FORCE le navigateur à terminer sa mise en page en
+// cours. Mesuré : 23 ms sur un changement d'onglet, juste pour répondre à une
+// question dont la réponse ne change qu'au redimensionnement.
+let _isPhone = null;
 function isPhone() {
+  if (_isPhone !== null) return _isPhone;
   const w = innerWidth || screen.width || 1280;
   const h = innerHeight || screen.height || 800;
-  if (w <= 767) return true;
   // Téléphone en paysage : large mais court, et tactile sans survol.
-  return matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(w, h) < 500;
+  _isPhone = w <= 767
+    || (matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(w, h) < 500);
+  return _isPhone;
 }
 function paintDeviceFlag() {
+  _isPhone = null;   // la taille a changé : on remesure une fois, ici
   try { document.documentElement.dataset.mobile = isPhone() ? 'on' : 'off'; } catch {}
 }
 paintDeviceFlag();
@@ -233,6 +242,8 @@ function collectionSnapshot() {
 let _saveTimer = null, _saveDirty = false, _lastSaveOk = true;
 function save() {
   _saveDirty = true;
+  markPagerStale();          // les pages du carrousel affichent peut-être l'ancien état
+
   if (_saveTimer) return;
   _saveTimer = setTimeout(() => { _saveTimer = null; if (_saveDirty) writeNow(); }, 400);
 }
@@ -2092,6 +2103,7 @@ function priceDiskSnapshot() {
 }
 let _priceWriteWarned = false;
 function writePriceCache() {
+  markPagerStale();          // une cote a bougé : les totaux des pages voisines aussi
   try {
     localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify({ syncedAt: _priceSyncedAt, prices: priceDiskSnapshot() }));
     return true;
@@ -2627,7 +2639,12 @@ let _revealObs = null;
 function attachReveals(root = document) {
   const els = root.querySelectorAll('.reveal:not([data-rv])');
   if (!els.length) return;
-  if (motionReduced()) { els.forEach(el => { el.dataset.rv = '1'; el.classList.add('in'); }); return; }
+  // TÉLÉPHONE : révélation IMMÉDIATE, pas au défilement. Les pages du carrousel
+  // sont garnies alors qu'elles sont HORS de l'écran : leurs `.reveal`
+  // n'intersectaient donc jamais rien et restaient à opacity 0 — on glissait
+  // vers une page vide qui se remplissait après coup. Un observateur par page
+  // masquée, c'est aussi du travail pour un effet qu'on ne voit pas.
+  if (motionReduced() || isPhone()) { els.forEach(el => { el.dataset.rv = '1'; el.classList.add('in'); }); return; }
   if (!_revealObs) {
     _revealObs = new IntersectionObserver(entries => {
       for (const e of entries) {
@@ -2691,7 +2708,8 @@ function palCommands() {
     { kind: 'nav', name: 'Le Coffre', sub: 'Valeur, pièce maîtresse', ico: ICO.vault, run: () => navigate('home') },
     { kind: 'nav', name: 'Wishlists', sub: `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''}`, ico: ICO.heart, run: () => navigate('wishlists') },
     { kind: 'nav', name: 'Portefeuille', sub: `${state.sealed.length} scellés · ${state.investCards.length} cartes`, ico: ICO.chart, run: () => navigate('invest') },
-    { kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') },
+    // Les classeurs ne sont pas atteignables sur téléphone : la commande non plus.
+    ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
     { kind: 'act', name: 'Récupérer les cotes du dépôt', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullPricesFromRepo() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
@@ -2951,6 +2969,9 @@ function paintCards(root){
    décoration. */
 
 function navigate(view, extra = {}) {
+  // Les classeurs n'existent pas sur téléphone : la palette, un lien profond ou
+  // un écran redimensionné ne doivent pas pouvoir y échouer.
+  if (isPhone() && PHONE_HIDDEN.includes(view)) view = 'home';
   const from = state.view;
   const kind = transitionKind(from, view);
   state.view = view; Object.assign(state, extra);
@@ -2959,8 +2980,11 @@ function navigate(view, extra = {}) {
   // wishlist-detail garde l'onglet Wishlists actif.
   const navKey = view === 'wishlist-detail' ? 'wishlists' : view;
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === navKey));
-  positionNavIndicator();
-  requestAnimationFrame(() => positionNavIndicator()); // re-mesure après layout (évite un slide depuis une position périmée)
+  // La pastille est placée APRÈS le rendu, et une seule fois : la mesurer
+  // avant puis re-mesurer forçait deux mises en page synchrones par onglet —
+  // 6 ms chacune — pour un glissement que son propre `transition` anime de
+  // toute façon. L'état actif du bouton est déjà posé juste au-dessus : la
+  // sélection, elle, reste instantanée.
   renderWithTransition(from, view, kind);
 }
 // Fait GLISSER l'indicateur derrière l'onglet actif : verticalement dans le
@@ -2975,6 +2999,14 @@ function navigate(view, extra = {}) {
 function positionNavIndicator(snap) {
   positionRailIndicator(snap);
   positionTabIndicator(snap);
+}
+// Mesure COALESCÉE : une seule par frame, quel que soit le nombre d'appels.
+// Chaque mesure lit des `offset*`, donc force une mise en page synchrone — et
+// la navigation en déclenchait trois d'affilée.
+let _navIndRaf = 0;
+function repositionNavSoon(snap) {
+  if (_navIndRaf) return;
+  _navIndRaf = requestAnimationFrame(() => { _navIndRaf = 0; positionNavIndicator(snap); });
 }
 function positionRailIndicator(snap) {
   const ind = document.getElementById('nav-indicator');
@@ -3133,12 +3165,26 @@ const VIEW_META = {
   binders:           { eyebrow: 'Collection',   name: 'Classeurs' },
   'binder-detail':   { eyebrow: 'Classeurs',    name: 'Feuilletage 3D' },
 };
-// Peuple le DOM d'une vue (dispatch + badges + titre), sans toucher à sa
-// visibilité — permet de la remplir pendant qu'elle est encore masquée
-// (voir renderWithTransition).
-function renderViewContent(view) {
-  const views = { home: renderHome, wishlists: renderWishlists, 'wishlist-detail': renderWishlistDetail, invest: renderInvest, binders: renderBinders, 'binder-detail': renderBinderDetail };
-  (views[view] || renderHome)();
+const VIEW_RENDERERS = {
+  home: renderHome, wishlists: renderWishlists, 'wishlist-detail': renderWishlistDetail,
+  invest: renderInvest, binders: renderBinders, 'binder-detail': renderBinderDetail,
+};
+// Peuple le CORPS d'une vue, sans rien dire sur celle qu'on regarde. Séparé du
+// châssis (titre de la barre haute, badges) parce que le carrousel du téléphone
+// garnit les pages voisines À L'AVANCE : elles doivent avoir leur contenu sans
+// pour autant renommer la barre haute.
+function renderViewBody(view) {
+  (VIEW_RENDERERS[view] || renderHome)();
+  // Le matériau est posé sur ce qui vient d'être rendu, ET SEULEMENT ÇA.
+  applySoft(document.getElementById('view-' + view) || document);
+  // Seul endroit où une page du carrousel devient « à jour » : ici, quand son
+  // corps vient d'être construit. Tous les chemins de rendu passent par cette
+  // fonction, donc la comptabilité ne peut pas se désynchroniser.
+  if (PHONE_PAGES.includes(view)) { _pagerMounted.add(view); _pagerStale.delete(view); }
+}
+// Dit LAQUELLE on regarde : compteurs de nav et titre de la barre haute. Rien
+// à voir avec le contenu de la vue — c'est pour ça que c'est séparé.
+function renderViewChrome(view) {
   // Badges : le rail ET la tab bar mobile portent les mêmes compteurs.
   // Un compteur à zéro est MASQUÉ (data-zero) plutôt qu'affiché à « 0 ».
   // Une pastille de nav à quatre chiffres (1327) ne tient pas dans le rail et
@@ -3155,39 +3201,124 @@ function renderViewContent(view) {
   const m = VIEW_META[view] || VIEW_META.home;
   const eb = document.getElementById('tb-eyebrow'); if (eb) eb.textContent = m.eyebrow;
   const nm = document.getElementById('tb-name'); if (nm) nm.textContent = m.name;
-  // Le matériau est posé sur ce qui vient d'être rendu, ET SEULEMENT ÇA.
-  // `applySoft(document)` repassait sur tout le document à chaque changement de
-  // vue (~9 ms mesurées sur la vue à 501 boutons) pour ne rien trouver de
-  // nouveau ailleurs : le rail, l'en-tête et la tab bar sont habillés une fois
-  // au démarrage, et l'observateur (watchSoft) couvre tous les fragments
-  // rendus hors d'ici.
-  applySoft(document.getElementById('view-' + view) || document);
+}
+// Peuple le DOM d'une vue ET dit qu'on la regarde, sans toucher à sa
+// visibilité — permet de la remplir pendant qu'elle est encore masquée
+// (voir renderWithTransition).
+function renderViewContent(view) {
+  renderViewBody(view);
+  renderViewChrome(view);
 }
 // Rendu initial (boot) : pas de transition, la vue "home" est déjà active dans le HTML.
 function render() {
+  // Les classeurs n'existent pas sur téléphone : on n'y démarre jamais.
+  if (isPhone() && PHONE_HIDDEN.includes(state.view)) state.view = 'home';
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${state.view}`)?.classList.add('active');
   renderViewContent(state.view);
-  requestAnimationFrame(() => positionNavIndicator(true));
+  setPagerColumn(state.view, true);   // en place d'un coup : on ne glisse pas au démarrage
+  repositionNavSoon(true);
+  // Les deux autres colonnes se garnissent au repos, après la première image.
+  warmPagerPagesSoon();
 }
-// Onglets (Coffre/Wishlists/…) : fondu croisé symétrique. Détail de
-// wishlist : push/pop façon iOS (on y entre en avançant, on en sort en reculant).
-// Ordre des onglets : sur téléphone, passer d'un onglet à l'autre GLISSE dans
-// le sens de la barre (comme n'importe quelle app iOS), au lieu d'un fondu
-// qu'on ne voit pas. Sur desktop le fondu reste : la navigation s'y fait par
-// un rail vertical, un glissement horizontal n'y voudrait rien dire.
+/* ══════════════════════════════════════════════════════════════════════
+   NAVIGATION — deux modèles, un par forme d'écran
+
+   DESKTOP : rail vertical, fondu croisé entre les vues. Un glissement
+   horizontal n'y voudrait rien dire.
+
+   TÉLÉPHONE : CARROUSEL. Les trois pages sont posées côte à côte dans une
+   seule bande (grille de 3 colonnes de 100 %) et c'est la BANDE qui glisse —
+   un seul `transform` composité, jamais deux vues qui se croisent. Le modèle
+   d'avant faisait, à CHAQUE changement d'onglet : peupler la vue cible,
+   épingler la sortante, jouer deux animations, désépingler. Ça marchait, mais
+   ça restait une chorégraphie recalculée à chaque fois. Là, tout est déjà en
+   place : on déplace la fenêtre.
+
+   Conséquence importante : chaque page est SON PROPRE défileur vertical, donc
+   sa position est gardée par le navigateur — gratuitement, sans mémoriser ni
+   rétablir quoi que ce soit en JS.
+
+   LES CLASSEURS N'EXISTENT PAS SUR TÉLÉPHONE (demande du 2026-08-26). Trois
+   destinations, trois colonnes. Le feuilletage 3D reste sur Mac, et les cartes
+   cochées comptent toujours dans la valeur du coffre.
+   ══════════════════════════════════════════════════════════════════════ */
 const TAB_ORDER = ['home', 'wishlists', 'invest', 'binders'];
+const PHONE_PAGES = ['home', 'wishlists', 'invest'];
+const PHONE_HIDDEN = ['binders', 'binder-detail'];
+// La colonne du carrousel qui héberge une vue. Le détail d'une wishlist vit
+// DANS la colonne « Wishlists » : y entrer ne fait donc pas glisser la bande.
+function pagerColumnOf(view) {
+  const v = view === 'wishlist-detail' ? 'wishlists' : view;
+  return PHONE_PAGES.includes(v) ? v : null;
+}
 function transitionKind(fromView, toView) {
   if (fromView === toView) return 'none';
   if (isPhone()) {
-    const a = TAB_ORDER.indexOf(fromView), b = TAB_ORDER.indexOf(toView);
-    if (a >= 0 && b >= 0) return b > a ? 'forward' : 'backward';
+    const a = pagerColumnOf(fromView), b = pagerColumnOf(toView);
+    if (a && b && a !== b) return 'slide';
+    // Même colonne : push/pop iOS entre la liste et son détail.
+    if (toView === 'wishlist-detail') return 'forward';
+    if (fromView === 'wishlist-detail') return 'backward';
+    return 'none';
   }
   if (toView === 'wishlist-detail' && fromView !== 'wishlist-detail') return 'forward';
   if (fromView === 'wishlist-detail' && toView !== 'wishlist-detail') return 'backward';
   if (toView === 'binder-detail' && fromView === 'binders') return 'forward';
   if (fromView === 'binder-detail' && toView === 'binders') return 'backward';
   return 'crossfade';
+}
+// Position de la bande. Écrite dans une variable CSS : le seul travail du
+// navigateur est ensuite d'animer un translate sur le compositeur.
+function setPagerColumn(view, instant) {
+  const wrap = document.getElementById('pager');
+  const col = pagerColumnOf(view);
+  if (!wrap || col == null) return;
+  if (instant) wrap.classList.add('no-anim');
+  wrap.style.setProperty('--pg', String(PHONE_PAGES.indexOf(col)));
+  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); }
+}
+// Les pages VOISINES sont garnies une fois, au repos, pour que le premier
+// glissement vers elles n'ait rien à construire. Le contenu de la page CIBLE
+// est de toute façon refait à chaque navigation (voir renderWithTransition) :
+// ce pré-remplissage ne sert qu'à supprimer la première image vide.
+const _pagerMounted = new Set();
+// Une page est PÉRIMÉE dès que la donnée qu'elle affiche a pu changer. Marqué
+// aux deux seuls endroits par où passe toute écriture : la sauvegarde de la
+// collection et celle des cotes. Tant qu'une page n'est pas périmée, y glisser
+// ne reconstruit RIEN — le changement d'onglet coûte alors zéro milliseconde de
+// fil principal, et le glissement démarre sur la frame du tap.
+const _pagerStale = new Set();
+const _pagerWarmedAt = {};
+let _pagerWarmIdle = 0;
+function markPagerStale() {
+  for (const v of PHONE_PAGES) _pagerStale.add(v);
+  warmPagerPagesSoon();   // …et on les remet à jour AVANT que l'utilisateur y glisse
+}
+// Garde les pages voisines PRÊTES, au repos. C'est ce qui rend le changement
+// d'onglet gratuit : quand on glisse, il n'y a plus rien à construire. Sans ça,
+// la moindre cote qui arrive périmait les trois pages et le prochain onglet
+// repayait son rendu (50 ms mesurées) au moment précis du geste.
+// La page REGARDÉE est exclue : elle se met à jour en place, et la reconstruire
+// sous le doigt remettrait son défilement à zéro.
+function warmPagerPages() {
+  if (!isPhone()) return;
+  const now = performance.now();
+  for (const v of PHONE_PAGES) {
+    if (v === state.view) continue;
+    if (_pagerMounted.has(v) && !_pagerStale.has(v)) continue;
+    // Plafond : une reconstruction par page et par seconde. Les cotes arrivent
+    // par paquets au démarrage, et chaque écriture périme tout — sans ce garde-
+    // fou on rendrait en boucle pendant la minute de chargement.
+    if (now - (_pagerWarmedAt[v] || 0) < 1000) continue;
+    _pagerWarmedAt[v] = now;
+    try { renderViewBody(v); } catch (e) { console.warn('page du carrousel', v, e); }
+  }
+}
+function warmPagerPagesSoon() {
+  if (!isPhone() || _pagerWarmIdle) return;
+  const run = () => { _pagerWarmIdle = 0; warmPagerPages(); };
+  _pagerWarmIdle = window.requestIdleCallback ? requestIdleCallback(run, { timeout: 1500 }) : setTimeout(run, 500);
 }
 let _viewTransitionTimer = null;
 // Durée après laquelle la vue sortante est désépinglée : celle de sa SORTIE
@@ -3208,7 +3339,17 @@ const VIEW_TRANSITION_CLASSES = [...EXIT_CLASSES, ...ENTER_CLASSES];
 const _viewScroll = {};
 const DEEP_VIEWS = ['wishlist-detail', 'binder-detail'];
 function scrollYNow() { return window.scrollY || document.documentElement.scrollTop || 0; }
+// Sur téléphone, le document ne défile plus : c'est CHAQUE page du carrousel
+// qui a sa barre de défilement. Le navigateur garde donc leurs positions tout
+// seul, et il n'y a plus rien à mémoriser ni à rétablir.
+function viewScroller(view) { return isPhone() ? document.getElementById('view-' + view) : null; }
+function scrollViewToTop(view) {
+  const el = viewScroller(view);
+  if (el) el.scrollTop = 0;
+  else window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+}
 function applyViewScroll(view, fresh) {
+  if (isPhone()) { if (fresh) scrollViewToTop(view); return; }
   const y = fresh ? 0 : (_viewScroll[view] || 0);
   if (Math.abs(scrollYNow() - y) < 1) return;
   window.scrollTo({ top: y, left: 0, behavior: 'instant' });
@@ -3227,7 +3368,11 @@ function pinView(el) {
   st.top = Math.round(r.top) + 'px';
   st.left = Math.round(r.left) + 'px';
   st.width = Math.round(r.width) + 'px';
-  return () => { st.top = st.left = st.width = ''; };
+  // La HAUTEUR aussi : une page du carrousel est un défileur, et sans hauteur
+  // explicite elle s'étalerait sur tout son contenu une fois sortie du flux.
+  // Sur Mac, la vue a déjà cette hauteur — l'écrire ne change rien.
+  st.height = Math.round(r.height) + 'px';
+  return () => { st.top = st.left = st.width = st.height = ''; };
 }
 // Chorégraphie manuelle de la transition entre deux vues (voir style.css pour
 // les keyframes). On peuple toujours la cible AVANT de la révéler pour éviter
@@ -3246,8 +3391,8 @@ function renderWithTransition(from, to, kind) {
 
   const fromEl = from !== to ? document.getElementById(`view-${from}`) : null;
   const fromIsActive = fromEl && fromEl.classList.contains('active');
-  const animated = kind !== 'none' && !reduce && fromIsActive;
-  if (fromEl && fromIsActive) _viewScroll[from] = scrollYNow();
+  const animated = kind !== 'none' && kind !== 'slide' && !reduce && fromIsActive;
+  if (fromEl && fromIsActive && !isPhone()) _viewScroll[from] = scrollYNow();
 
   // Les scènes 3D de la vue quittée ne sont libérées qu'une fois la sortie
   // TERMINÉE : couper le contexte WebGL pendant que la vue s'efface laissait un
@@ -3269,18 +3414,30 @@ function renderWithTransition(from, to, kind) {
     _unpinView = () => { unpin(); fromEl.classList.remove('active', ...VIEW_TRANSITION_CLASSES); settle(); };
   }
 
-  renderViewContent(to);
+  // Le corps de la cible n'est REFAIT que s'il a pu changer. Une page du
+  // carrousel déjà garnie et non périmée est réutilisée telle quelle : on ne
+  // met à jour que le titre de la barre haute.
+  const pagerCol = (isPhone() && kind === 'slide') ? pagerColumnOf(to) : null;
+  const reusable = pagerCol && PHONE_PAGES.includes(to) && _pagerMounted.has(to) && !_pagerStale.has(to);
+  if (reusable) renderViewChrome(to);
+  else renderViewContent(to);
 
   if (!animated) {
     document.querySelectorAll('.view.active').forEach(v => { if (v !== toEl) v.classList.remove('active', ...VIEW_TRANSITION_CLASSES); });
     toEl.classList.remove(...VIEW_TRANSITION_CLASSES);
     toEl.classList.add('active');
+    // CARROUSEL : rien à animer sur les vues elles-mêmes, on déplace la bande.
+    // Le contenu vient d'être refait juste au-dessus, donc la page qui arrive
+    // est à jour AVANT que le glissement commence : une seule frame de travail,
+    // puis un translate pur sur le compositeur.
+    if (kind === 'slide') setPagerColumn(to);
     // `from === to` = on re-rend la vue courante (palette, retour d'une modale) :
     // on ne touche PAS au défilement, sinon la page saute à une position
     // mémorisée périmée alors que l'utilisateur n'a pas changé d'écran.
     if (from !== to) applyViewScroll(to, DEEP_VIEWS.includes(to));
     settle();
-    requestAnimationFrame(() => positionNavIndicator());
+    warmPagerPagesSoon();
+    repositionNavSoon();
     return;
   }
 
@@ -3295,7 +3452,7 @@ function renderWithTransition(from, to, kind) {
   // La cible est en place : c'est MAINTENANT que le document a sa bonne hauteur,
   // donc que le défilement peut être rétabli sans être ramené dans les bornes.
   applyViewScroll(to, DEEP_VIEWS.includes(to));
-  requestAnimationFrame(() => positionNavIndicator());
+  repositionNavSoon();
 
   // On ne désépingle qu'à la fin de la SORTIE. La classe d'entrée, elle, reste
   // posée jusqu'à la transition suivante (qui la retire) : la retirer ici
@@ -3492,7 +3649,6 @@ function renderHome() {
   // Prisme : la pièce maîtresse inonde l'écran de sa couleur.
   if (featured) cardColor({ id: heroId }).then(setRootAccent);
   else setRootAccent(DEFAULT_ACC);
-  refreshMiloTeaser();
   paintCards(el);
   attachReveals(el);
   // Le catalogue Milobellus arrive en asynchrone : dès qu'il est là, les cases
@@ -3504,29 +3660,6 @@ function renderHome() {
       renderHome();   // _miloSlots est posé → pas de récursion possible ici
     }).catch(() => {});
   }
-}
-
-// Teaser Milobellus sur l'accueil : porte d'entrée du classeur 3D signature.
-function homeMiloTeaser() {
-  return `
-    <section class="milo-teaser reveal" style="--i:0" onclick="openBinder('milobellus')" role="button" tabindex="0"
-      aria-label="Ouvrir le classeur Milobellus"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openBinder('milobellus')}">
-      <div class="milo-teaser-aura" aria-hidden="true"></div>
-      <div class="milo-teaser-stage">
-        <div class="milo-teaser-emblem" id="milo-teaser-emblem">${miloEmblemSVG()}</div>
-      </div>
-      <div class="milo-teaser-copy">
-        <span class="feat-kicker">Collection signature</span>
-        <h2 class="milo-teaser-name">Le classeur Milobellus</h2>
-        <p class="milo-teaser-legend">Toutes les cartes Milobellus, des origines à aujourd'hui, reverses comprises. Feuillette ton classeur en 3D et coche celles que tu possèdes.</p>
-        <div class="milo-teaser-meta" id="milo-teaser-meta">
-          <div class="milo-progress"><div class="milo-progress-fill" id="milo-teaser-fill" style="width:0%"></div></div>
-          <div class="milo-progress-txt" id="milo-teaser-txt">Préparation du classeur…</div>
-        </div>
-        <button class="btn btn-milo" onclick="event.stopPropagation();openBinder('milobellus')">${ICO.book}<span>Ouvrir le classeur</span></button>
-      </div>
-    </section>`;
 }
 
 // Tuile du filmstrip « Pièces maîtresses » : une carte de la collection + sa cote.
@@ -3553,22 +3686,13 @@ function railScroll(id, dir) {
   track.scrollBy({ left: dir * step, behavior: 'smooth' });
 }
 
-// Met à jour la jauge du teaser une fois les données du classeur connues.
-function refreshMiloTeaser() {
-  const owned = miloOwnedCount();
-  ensureMiloData().then(slots => {
-    const total = slots.length;
-    const own = miloOwnedCount();   // relit après chargement (total désormais connu)
-    const pct = total ? Math.round(own / total * 100) : 0;
-    const fill = document.getElementById('milo-teaser-fill');
-    const txt = document.getElementById('milo-teaser-txt');
-    if (fill) fill.style.width = pct + '%';
-    if (txt) txt.textContent = `${own} / ${total} obtenues · ${pct}%`;
-  }).catch(() => {
-    const txt = document.getElementById('milo-teaser-txt');
-    if (txt) txt.textContent = `${owned} cochée${owned > 1 ? 's' : ''}`;
-  });
-}
+// Le teaser Milobellus (porte d'entrée du classeur 3D depuis l'accueil) et son
+// rafraîchisseur ont été retirés le 2026-08-26 : le teaser avait déjà quitté
+// l'accueil, mais `refreshMiloTeaser()` continuait d'être appelé à chaque rendu
+// — il ne trouvait plus aucun élément à mettre à jour et forçait pourtant le
+// chargement complet du catalogue Milobellus (≈40 requêtes API) au démarrage,
+// même pour qui n'a coché aucune case. Ce catalogue est désormais chargé par le
+// bloc conditionnel de renderHome, c'est-à-dire uniquement quand il sert.
 
 // Relief 3D au survol de l'emblème du teaser (transform GPU, rAF throttlé).
 // Canvas WebGL unique, conservé entre les rendus/navigations (jamais recréé) →
@@ -6209,7 +6333,7 @@ async function refreshSeries() {
 
   if (series.length) {
     renderViewContent(state.view);
-    requestAnimationFrame(() => positionNavIndicator());
+    repositionNavSoon();
     // Cote les cartes encore inconnues (sans toucher aux cotes enregistrées).
     ensurePrices(trackedCardIds(), n => {
       if (n && state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); refreshSyncMeta(); }
@@ -7711,7 +7835,7 @@ function cardTileHTML(p) {
     </div>
   </article>`;
 }
-function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestBody(); window.scrollTo({ top: 0, behavior: 'instant' }); resolveSeriesLive(setId); }
+function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestBody(); scrollViewToTop('invest'); resolveSeriesLive(setId); }
 function closeInvestSeries() { state.investSeriesOpen = null; renderInvestBody(); }
 // Cotes + liens CM précis pour la série ouverte uniquement (léger : quelques dizaines).
 function resolveSeriesLive(setId) {
@@ -8192,7 +8316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     render();
     // Positionne la pastille une fois la mise en page prête, puis une fois les
     // polices chargées (leurs largeurs changent) — évite les recalages/sautillements.
-    requestAnimationFrame(() => positionNavIndicator(true));
+    repositionNavSoon(true);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => positionNavIndicator(true));
     setTimeout(() => positionNavIndicator(true), 450);
     setTimeout(checkForNewSeries, 1400);
@@ -8224,10 +8348,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 // pendant que la barre change de largeur se lit comme un bug), et une seule
 // fois par frame — `resize` part en rafale sur iOS (barre d'adresse, clavier),
 // et chaque appel force un calcul de mise en page.
-let _navIndRaf = 0;
-function repositionNavSoon() {
-  if (_navIndRaf) return;
-  _navIndRaf = requestAnimationFrame(() => { _navIndRaf = 0; positionNavIndicator(true); });
-}
-window.addEventListener('resize', repositionNavSoon);
-window.addEventListener('orientationchange', () => setTimeout(repositionNavSoon, 60));
+window.addEventListener('resize', () => repositionNavSoon(true));
+window.addEventListener('orientationchange', () => setTimeout(() => repositionNavSoon(true), 60));
