@@ -610,39 +610,20 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
      posée par setPagerColumn() et suit la distance — deux pages d'un coup
      doivent se voir passer par celle du milieu. */
   transition:transform 340ms cubic-bezier(.32,.72,0,1);
-  /* `pan-y` : le défilement vertical reste au navigateur, l'horizontal nous
-     revient (voir bindPagerSwipe). C'est la seule répartition fiable sur iOS. */
-  touch-action:pan-y;
 }
 /* Démarrage, rotation : on se place d'un coup au lieu de glisser depuis 0. */
 :root[data-mobile="on"] .wrap.no-anim{transition:none}
-/* Pendant le geste, la bande SUIT le doigt : aucune transition, sinon elle
-   traînerait derrière lui. */
-:root[data-mobile="on"] .wrap.dragging{transition:none}
 
 /* ══════════════════════════════════════════════════════════════════════
-   POURQUOI LE GESTE SACCADAIT VRAIMENT : LE VERRE DÉPOLI
+   CE QUI COÛTE CHER QUAND LA BANDE GLISSE : LE VERRE DÉPOLI
 
    Un `backdrop-filter` n'est pas peint une fois : il floute CE QU'IL Y A
-   DERRIÈRE, donc il doit être recalculé dès que lui ou son fond bouge. Or
-   pendant un glissement, TOUT bouge :
-
-   · les dizaines d'éléments de verre à l'intérieur des pages se déplacent, donc
-     chacun refloute son fond à chaque frame ;
-   · la barre haute et la barre d'onglets ne bougent pas, elles, mais le contenu
-     défile DERRIÈRE elles — leur flou est donc recalculé sur toute la largeur
-     de l'écran, deux fois par frame (l'élément et son ::before).
-
-   Sur un iPhone, ça se compte en centaines de millisecondes par frame : d'où
-   les 2 images par seconde. Le temps du geste, on coupe donc tout le flou. La
-   TEINTE et les liserés restent — à l'œil, pendant 300 ms de déplacement,
-   personne ne voit la différence, et c'est la seule façon d'avoir un geste qui
-   tient la cadence de l'écran.
-
-   Le sélecteur est volontairement large : il y a 68 déclarations de
-   `backdrop-filter` dans cette feuille, réparties sur autant de familles de
-   composants, et en énumérer une liste serait faux dès le prochain composant
-   ajouté. Il n'est évalué qu'aux deux instants où la classe change.
+   DERRIÈRE, donc il est recalculé dès que lui ou son fond bouge. Les deux
+   barres ne bougent pas, mais le contenu défile DERRIÈRE elles — leur flou est
+   donc recalculé sur toute la largeur de l'écran à chaque frame. Sur un iPhone
+   ça se compte en dizaines de millisecondes, et c'est le poste principal.
+   (Les éléments de verre DANS les pages, eux, se déplacent avec leur fond et
+   gardent le même résultat : on n'y touche pas.)
    ══════════════════════════════════════════════════════════════════════ */
 /* ── LE FLOU DES DEUX BARRES EST ALLÉGÉ, PAS SUPPRIMÉ ──
    Les deux barres ne bougent pas pendant que le contenu défile derrière elles :
@@ -670,34 +651,11 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    elle reprend exactement où elle en était — invisible. */
 :root[data-pager-move] .aurora>i{animation-play-state:paused}
 
-/* ── POURQUOI LE GESTE SACCADAIT ──
-   `content-visibility:auto` fait sauter la mise en page et la peinture de tout
-   ce qui n'est pas près de l'écran. Excellent pour défiler une longue liste —
-   désastreux pendant un glissement horizontal : à chaque pixel, des dizaines de
-   tuiles de la page qui arrive franchissaient la frontière et se faisaient
-   calculer une par une, EN PLEIN GESTE. D'où les à-coups.
-   Le temps du geste, les pages du carrousel rendent tout : une seule mise en
-   page au dixième de seconde où le doigt part, puis plus rien à faire que
-   déplacer une texture. */
-/* Celui-ci reste : `content-visibility` n'a aucun effet VISUEL, il ne fait que
-   reporter du calcul. Le couper le temps du geste ne change donc rien à l'image
-   — seulement à la cadence. */
-:root[data-mobile="on"] .wrap.dragging .cardlist>.cardtile,
-:root[data-mobile="on"] .wrap.dragging .cards-grid>.card-thumb,
-:root[data-mobile="on"] .wrap.dragging .cardser-grid>.cardser-bubble{
-  content-visibility:visible;
-}
-/* `will-change` UNIQUEMENT pendant le geste. En permanence, il ferait de la
-   bande un bloc conteneur pour les `position:fixed` qu'elle contient (et
-   garderait en mémoire vidéo une texture de trois écrans). Le `translate3d` de
-   la règle de base suffit à la faire promouvoir pour la transition. */
-:root[data-mobile="on"] .wrap.dragging{will-change:transform}
-/* Les défileurs horizontaux internes gardent leur propre geste. */
-:root[data-mobile="on"] .strip-track,
-:root[data-mobile="on"] .inv-table-scroll{touch-action:pan-x}
-/* Aucun glisser-déposer natif sur téléphone : il faisait annuler le pointeur
-   par iOS et tuait le geste de carrousel (voir renderWishlists). */
-:root[data-mobile="on"] .wrap [draggable]{-webkit-user-drag:none;user-select:none}
+/* Les règles qui n'existaient que pour le glissement au doigt sont parties avec
+   lui : le `content-visibility` rendu visible le temps du geste, le
+   `will-change` posé pendant, le `touch-action` qui arbitrait entre défilement
+   vertical et geste horizontal, et le verrou du glisser-déposer natif. Une
+   animation déclenchée depuis la barre du bas n'a besoin d'aucune des quatre. */
 
 /* Une colonne par destination. Le détail d'une wishlist PARTAGE la colonne de
    sa liste : y entrer ne fait donc pas glisser la bande, c'est un push iOS à

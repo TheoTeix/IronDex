@@ -3294,7 +3294,6 @@ function render() {
   document.getElementById(`view-${state.view}`)?.classList.add('active');
   renderViewContent(state.view);
   setPagerColumn(state.view, true);   // en place d'un coup : on ne glisse pas au démarrage
-  bindPagerSwipe();
   syncTopbarHeight();
   repositionNavSoon(true);
   // Les deux autres colonnes se garnissent au repos, après la première image.
@@ -3349,17 +3348,14 @@ function transitionKind(fromView, toView) {
 }
 function pagerEl() { return document.getElementById('pager'); }
 
-/* La bande est-elle EN MOUVEMENT ? Le drapeau couvre le geste ET l'animation qui
-   le prolonge, parce que le verre dépoli coûte exactement aussi cher dans les
-   deux cas (voir la note « POURQUOI LE GESTE SACCADAIT » dans style.css). Le
-   couper seulement pendant le doigt laissait donc saccader précisément la partie
-   qu'on regarde : le rangement après le lâcher. Il couvre aussi les sauts
-   déclenchés depuis la barre d'onglets, qui déplacent la bande tout autant. */
+/* La bande est-elle EN MOUVEMENT ? Le temps qu'elle glisse, le flou des deux
+   barres est allégé : le contenu défile derrière elles, donc leur verre est
+   recalculé sur toute la largeur de l'écran à chaque frame (voir style.css).
+   Le drapeau est posé pour la durée exacte de l'animation, plus une marge. */
 let _pagerMoveTimer = 0;
 function markPagerMoving(ms) {
   document.documentElement.dataset.pagerMove = '1';
   if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
-  // ms = 0 : indéfini (le doigt est posé, on ne sait pas quand il partira).
   if (ms) _pagerMoveTimer = setTimeout(clearPagerMoving, ms);
 }
 function clearPagerMoving() {
@@ -3378,8 +3374,8 @@ function clearPagerMoving() {
    En écrivant le pourcentage en dur, la valeur calculée change vraiment : la
    transition démarre, et elle est portée par le compositeur.
 
-   `_pagerPos` est la source de vérité (en pages, fractionnaire pendant un
-   glissement au doigt) : plus fiable que relire le style. */
+   `_pagerPos` est la source de vérité (la page où l'on est) : plus fiable que
+   relire le style. */
 let _pagerPos = 0;
 function setPagerTransform(pos) {
   const wrap = pagerEl();
@@ -3398,10 +3394,9 @@ function setPagerColumn(view, instant) {
   const col = pagerColumnOf(view);
   if (col == null) return;
   const target = PHONE_PAGES.indexOf(col);
-  // La durée suit ce qui RESTE à parcourir : un rangement de fin de geste (il
-  // reste un quart de page) doit être bref, un saut de deux pages depuis la
-  // barre d'onglets doit se voir passer par celle du milieu. Plancher à 180 ms
-  // pour que même un tout petit rattrapage soit une animation, pas un saut.
+  // La durée suit la DISTANCE : un pas d'une page est bref, un saut de deux pages
+  // doit se voir passer par celle du milieu. Plancher à 180 ms pour que même un
+  // tout petit déplacement reste une animation et non un saut.
   const dist = Math.min(2, Math.abs(target - _pagerPos));
   const dur = Math.max(180, Math.round(200 + 200 * dist));
   wrap.style.transitionDuration = dur + 'ms';
@@ -3411,185 +3406,11 @@ function setPagerColumn(view, instant) {
   if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); clearPagerMoving(); }
 }
 
-/* ── GLISSEMENT AU DOIGT ────────────────────────────────────────────────
-   La bande suit le doigt au pixel, puis se range sur la page la plus probable
-   (distance parcourue OU vitesse au lâcher). Trois précautions :
-
-   · L'AXE est décidé aux premiers pixels et ne change plus. Sans ça, un geste
-     de défilement vertical un peu oblique faisait partir le carrousel de
-     travers — c'est le bug classique de ce genre de composant.
-   · Les défileurs HORIZONTAUX internes (le film des pièces maîtresses, le
-     tableau du scellé) gardent leur geste : on ne prend pas la main dedans.
-   · Aux extrémités, la bande ne suit qu'au tiers : le geste répond, mais on
-     sent qu'il n'y a rien après.
-   Le partage avec le navigateur passe par `touch-action` (voir style.css) :
-   `pan-y` sur la bande lui laisse le défilement vertical et nous donne
-   l'horizontal, ce qui est la seule méthode fiable sur iOS. */
-const SWIPE_KEEP_OUT = '.strip-track,.inv-table-scroll,.hscroll,.scroller,input,textarea,select';
-const SWIPE_START = 8;          // px de franchise avant de décider qu'il y a un geste
-const SWIPE_PROJECT_MS = 200;   // durée de « lancer » projetée après le lâcher
-const SWIPE_EAGER = 0.12;       // penche vers la page visée (seuil effectif ≈ 38 %)
-
-/* ── GLISSEMENT AU DOIGT ────────────────────────────────────────────────
-   La bande suit le doigt, et RIEN ne change de page tant que le doigt est posé.
-   Au lâcher, on calcule la position PROJETÉE — là où le geste pointe compte tenu
-   de son élan — et on va se ranger sur la page la plus proche de ce point.
-
-   Pourquoi une projection plutôt que des seuils : avec un seuil de distance, un
-   petit geste vif ne passait pas et un grand geste lent passait, ce qui ne
-   correspond à l'intention de personne. Là, le geste lent doit dépasser ~38 %
-   de l'écran, le geste vif suffit à lui seul, et les deux se combinent — c'est
-   ce que font les pages d'un écran d'accueil iOS.
-
-   Les écouteurs sont posés sur le DOCUMENT en phase de CAPTURE, et non sur la
-   bande : le geste ne peut donc plus être avalé en route par un enfant qui
-   arrête la propagation ou qui a son propre glisser-déposer (les cartes de
-   wishlist sont `draggable`, ce qui suffisait à tuer le geste sur toute la
-   page). C'est aussi ce qui le rend identique dans les deux sens et depuis
-   n'importe quelle page. */
-function bindPagerSwipe() {
-  if (document.documentElement.dataset.swipe) return;
-  document.documentElement.dataset.swipe = '1';
-  let id = null, x0 = 0, y0 = 0, base = 0, w = 1, axis = null;
-  let dx = 0, lastX = 0, lastT = 0, vel = 0, raf = 0, tabX = null;
-  const maxCol = () => PHONE_PAGES.length - 1;
-
-  // La PASTILLE de la barre du bas suit le doigt elle aussi : sans ça, la bande
-  // glissait mais la sélection restait plantée sur la page de départ jusqu'au
-  // lâcher, et les deux moitiés du mouvement n'avaient pas l'air liées.
-  // Les abscisses des onglets sont relevées UNE fois, au début du geste.
-  const readTabs = () => {
-    const bar = document.querySelector('.tabbar');
-    if (!bar) return null;
-    const xs = PHONE_PAGES.map(v => {
-      const b = bar.querySelector(`.nav-btn[data-view="${v}"]`);
-      return b && b.offsetWidth ? b.offsetLeft : null;
-    });
-    return xs.every(x => x != null) ? xs : null;
-  };
-  const paintTab = pos => {
-    const ind = document.getElementById('tab-indicator');
-    if (!ind || !tabX) return;
-    const c = Math.max(0, Math.min(maxCol(), pos));
-    const i = Math.min(maxCol() - 1, Math.floor(c));
-    const f = c - i;
-    ind.style.setProperty('--tab-x', (tabX[i] + (tabX[i + 1] - tabX[i]) * f).toFixed(1) + 'px');
-  };
-
-  const clampPos = pos => {                     // élastique : au tiers dans le vide
-    if (pos < 0) return pos / 3;
-    if (pos > maxCol()) return maxCol() + (pos - maxCol()) / 3;
-    return pos;
-  };
-  // UNE SEULE écriture par frame : iOS livre les pointermove à 120 Hz, soit deux
-  // fois plus que l'écran n'affiche, et la bande bavait derrière le doigt.
-  const paint = () => {
-    raf = 0;
-    const pos = clampPos(base - dx / w);
-    setPagerTransform(pos);
-    paintTab(pos);
-  };
-  const stopRaf = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
-  const end = () => {
-    stopRaf(); id = null; axis = null; tabX = null;
-    const wrap = pagerEl(); if (wrap) wrap.classList.remove('dragging');
-    // On ne LÈVE PAS le drapeau ici : le rangement qui suit est encore un
-    // mouvement de la bande. C'est setPagerColumn qui l'éteindra à l'arrivée.
-    // Seul l'abandon d'un geste vertical l'éteint tout de suite (voir plus bas).
-    // La pastille reprend sa propre transition : elle rejoindra son onglet en
-    // glissant, dans la continuité du geste.
-    document.getElementById('tab-indicator')?.classList.remove('snap');
-  };
-
-  document.addEventListener('pointerdown', e => {
-    if (!isPhone() || id !== null) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const wrap = pagerEl();
-    if (!wrap || !e.target || !wrap.contains(e.target)) return;
-    if (e.target.closest && e.target.closest(SWIPE_KEEP_OUT)) return;
-    const col = pagerColumnOf(state.view);
-    if (col == null) return;
-    id = e.pointerId; x0 = lastX = e.clientX; y0 = e.clientY; lastT = e.timeStamp;
-    base = PHONE_PAGES.indexOf(col);
-    w = wrap.clientWidth || innerWidth || 1;   // mesuré UNE fois : aucune lecture de layout pendant le geste
-    axis = null; dx = 0; vel = 0;
-  }, true);
-
-  document.addEventListener('pointermove', e => {
-    if (e.pointerId !== id) return;
-    const mx = e.clientX - x0, my = e.clientY - y0;
-    if (axis === null) {
-      if (Math.abs(mx) < SWIPE_START && Math.abs(my) < SWIPE_START) return;
-      if (Math.abs(my) >= Math.abs(mx)) { end(); clearPagerMoving(); return; }   // vertical : on rend la main
-      axis = 'x';
-      const wrap = pagerEl();
-      wrap?.classList.add('dragging');
-      // Le drapeau est posé sur la RACINE : la barre haute, la barre d'onglets et
-      // l'aurora sont hors de la bande, et c'est leur verre qui coûte le plus
-      // cher — le contenu défile derrière elles sur toute la largeur.
-      markPagerMoving(0);
-      tabX = readTabs();
-      // `snap` coupe la transition de la pastille : le temps du geste, elle est
-      // pilotée au pixel comme la bande.
-      document.getElementById('tab-indicator')?.classList.add('snap');
-      // Les événements suivants nous restent adressés même si le doigt quitte
-      // l'élément de départ (une carte, un bouton, un bord de page).
-      try { wrap?.setPointerCapture(e.pointerId); } catch {}
-    }
-    // Vitesse INSTANTANÉE (deux derniers événements) : un geste qui traîne puis
-    // se termine par une détente doit compter comme une détente.
-    const dt = e.timeStamp - lastT;
-    if (dt > 0) vel = (e.clientX - lastX) / dt;
-    lastX = e.clientX; lastT = e.timeStamp;
-    dx = mx;
-    if (!raf) raf = requestAnimationFrame(paint);
-  }, true);
-
-  const release = e => {
-    if (e.pointerId !== id) return;
-    const dragged = axis === 'x';
-    const moved = dx, from = base, width = w, v = vel;   // relevé AVANT end(), qui remet à zéro
-    end();
-    if (!dragged) return;
-    /* POURQUOI LE LÂCHER ÉTAIT INSTANTANÉ.
-       Pendant le geste, `.dragging` pose `transition:none` (la bande doit coller
-       au doigt). Au lâcher, on retirait la classe ET on écrivait la position
-       finale DANS LE MÊME CALCUL DE STYLE — et une transition ne démarre que si
-       l'état de DÉPART avait déjà une durée non nulle pour cette propriété. Elle
-       ne démarrait donc jamais : la bande sautait à sa page.
-       Cette lecture de `offsetWidth` force le navigateur à adopter l'état
-       « transition rallumée » comme point de départ. Ensuite, et ensuite
-       seulement, le changement de transform s'anime. */
-    const wrap = pagerEl();
-    if (wrap) void wrap.offsetWidth;
-    // Où en est la bande, en pages, puis où elle POINTE avec son élan.
-    const pos = from - moved / width;
-    const proj = pos - (v * SWIPE_PROJECT_MS) / width;
-    // Un cheveu de penchant vers la page visée : sans lui il faut dépasser la
-    // moitié pile de l'écran, et l'utilisateur trouve ça avare.
-    const bias = proj > from ? SWIPE_EAGER : proj < from ? -SWIPE_EAGER : 0;
-    let target = Math.round(proj + bias);
-    target = Math.max(from - 1, Math.min(from + 1, target));   // une page par geste
-    target = Math.max(0, Math.min(maxCol(), target));
-    // Un geste ne doit pas déclencher le clic de ce qu'il y avait sous le doigt.
-    if (Math.abs(moved) > SWIPE_START) swallowNextClick();
-    if (target === from) {
-      setPagerColumn(state.view);                              // retour élastique
-      repositionNavSoon();                                     // …et la pastille revient avec
-    } else navigate(PHONE_PAGES[target]);
-  };
-  document.addEventListener('pointerup', release, true);
-  // ANNULATION (iOS reprend le pointeur, deuxième doigt, appel entrant) : on la
-  // traite comme un lâcher. Ramener la bande en arrière au milieu du geste,
-  // c'était le défaut le plus visible.
-  document.addEventListener('pointercancel', release, true);
-}
-// Avale le prochain clic (celui qu'un glissement aurait déclenché malgré lui).
-function swallowNextClick() {
-  const eat = e => { e.stopPropagation(); e.preventDefault(); };
-  document.addEventListener('click', eat, { capture: true, once: true });
-  setTimeout(() => document.removeEventListener('click', eat, true), 400);
-}
+/* Le GLISSEMENT AU DOIGT entre les pages a été retiré le 2026-08-26, sur
+   demande : passer d'une page à l'autre par la barre du bas est plus net et plus
+   fluide. Le carrousel, lui, ne change pas — c'est toujours la même bande de
+   trois colonnes qui glisse, avec sa durée proportionnelle à la distance (voir
+   setPagerColumn). Seule la conduite au doigt disparaît. */
 // Les pages VOISINES sont garnies une fois, au repos, pour que le premier
 // glissement vers elles n'ait rien à construire. Le contenu de la page CIBLE
 // est de toute façon refait à chaque navigation (voir renderWithTransition) :
@@ -3610,9 +3431,9 @@ function markPagerStale() {
 // Garde les pages voisines PRÊTES, au repos. C'est ce qui rend le changement
 // d'onglet gratuit : quand on glisse, il n'y a plus rien à construire. Sans ça,
 // la moindre cote qui arrive périmait les trois pages et le prochain onglet
-// repayait son rendu (50 ms mesurées) au moment précis du geste.
+// repayait son rendu (50 ms mesurées) au moment précis du changement d'onglet.
 // La page REGARDÉE est exclue : elle se met à jour en place, et la reconstruire
-// sous le doigt remettrait son défilement à zéro.
+// sous les yeux remettrait son défilement à zéro.
 function warmPagerPages() {
   if (!isPhone()) return;
   const now = performance.now();
@@ -4219,12 +4040,10 @@ function renderWishlistCard(w) {
   const owned = w.cards.filter(c => c.owned).length;
   const pct = w.cards.length ? Math.round(owned/w.cards.length*100) : 0;
   return `
-    <!-- Déplaçable SEULEMENT hors téléphone. Sur iOS, un glissement qui part
-         d'un élément déplaçable déclenche le glisser-déposer NATIF, et le
-         système ANNULE alors le pointeur : le geste de carrousel mourait donc
-         sur toute la page Wishlists, dont les cartes couvrent l'essentiel. Le
-         réordonnancement à la souris reste sur Mac, où il sert. -->
-    <div class="wishlist-card spot" draggable="${isPhone() ? 'false' : 'true'}" data-id="${w.id}" data-cc="${esc(w.cards[0]?.id||'')}" role="button" tabindex="0"
+    <!-- Déplaçable à nouveau partout : on l'avait désactivé sur téléphone parce
+         que le glisser-déposer natif d'iOS faisait annuler le pointeur et tuait
+         le geste de carrousel. Ce geste n'existe plus, la contrainte non plus. -->
+    <div class="wishlist-card spot" draggable="true" data-id="${w.id}" data-cc="${esc(w.cards[0]?.id||'')}" role="button" tabindex="0"
       aria-label="Ouvrir la wishlist ${esc(w.name)}"
       onclick="navigate('wishlist-detail',{activeWishlistId:'${w.id}'})"
       onkeydown="if(event.key==='Enter'){navigate('wishlist-detail',{activeWishlistId:'${w.id}'})}">
@@ -8611,7 +8430,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui42';
+const BUILD = 'ui43';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
