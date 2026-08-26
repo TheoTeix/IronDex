@@ -2968,6 +2968,8 @@ function hexToRgbArr(h){ h = h.replace('#',''); const n = parseInt(h,16); return
 function darkenHex(h,f){ const a = hexToRgbArr(h); return `rgb(${Math.round(a[0]*f)},${Math.round(a[1]*f)},${Math.round(a[2]*f)})`; }
 const _colorCache = {};
 // Résout la couleur d'une carte via son type (cache API → sinon requête légère).
+// Couleur DÉJÀ connue (ou rien) : permet de peindre sans attendre une promesse.
+function cachedCardColor(id) { return (id && id in _colorCache) ? _colorCache[id] : null; }
 async function cardColor(card){
   const id = card && (card.cardId || card.id);
   if (!id) return DEFAULT_ACC;
@@ -3995,9 +3997,20 @@ function renderHome() {
   computeCollectionValue();
   fillWishlistRemaining(state.wishlists);
   hydrateFallbackImages(el);
-  // Prisme : la pièce maîtresse inonde l'écran de sa couleur.
-  if (featured) cardColor({ id: heroId }).then(setRootAccent);
-  else setRootAccent(DEFAULT_ACC);
+  /* Prisme : la pièce maîtresse inonde l'écran de sa couleur.
+     SYNCHRONE quand la couleur est déjà connue. C'était LE « chargement différé
+     d'interface » : `cardColor` renvoie une promesse, donc au retour sur
+     l'accueil l'accent restait celui de la page précédente puis basculait
+     quelques centaines de millisecondes plus tard — et comme il pilote tout
+     (verre teinté, aurora, pastilles, montants), c'est l'écran ENTIER qui
+     semblait se recolorer après coup. La couleur est en cache dès le premier
+     affichage : on la pose donc tout de suite, et on ne repasse par la promesse
+     que la première fois. */
+  if (featured) {
+    const cached = heroId ? cachedCardColor(heroId) : null;
+    if (cached) setRootAccent(cached);
+    else cardColor({ id: heroId }).then(setRootAccent);
+  } else setRootAccent(DEFAULT_ACC);
   paintCards(el);
   attachReveals(el);
   // Le catalogue Milobellus arrive en asynchrone : dès qu'il est là, les cases
@@ -8631,7 +8644,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui38';
+const BUILD = 'ui39';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
