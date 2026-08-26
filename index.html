@@ -3,11 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#06070A">
-  <!-- INSTALLABLE SUR IPHONE : « Partager › Sur l'écran d'accueil » donne une
-       app plein écran (pas de barre Safari), avec l'icône du coffre. Le mode
-       « black-translucent » laisse le contenu passer sous l'heure et la
-       batterie : les marges d'encoche sont gérées en CSS (env(safe-area-*)). -->
+  <!-- PAS de `theme-color`, ni ici ni dans le manifeste. Sur iOS 16.4+, une
+       couleur de thème déclarée fait peindre par le SYSTÈME la barre d'état et
+       la zone du trait d'accueil comme du chrome de navigateur, et la vue web
+       est encastrée entre les deux : c'était la bande sombre du bas (elle avait
+       exactement la couleur qu'on donnait, #06070A). Sans elle, iOS retombe sur
+       « black-translucent » + `viewport-fit=cover`, et la page occupe TOUT
+       l'écran — les marges d'encoche redevenant notre affaire, en CSS
+       (env(safe-area-*)).
+       INSTALLABLE SUR IPHONE : « Partager › Sur l'écran d'accueil ». -->
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -18,7 +22,7 @@
   <title>MiloDex — Le Coffre</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui36">
+  <link rel="stylesheet" href="style.css?v=ui37">
 </head>
 <body>
 
@@ -397,6 +401,6 @@
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
 <!-- Base locale des fiches Cardmarket (idProduct/numéro → slug exact). -->
 <script src="cm-slugs.js" defer></script>
-<script src="app.js?v=ui36"></script>
+<script src="app.js?v=ui37"></script>
 </body>
 </html>

@@ -268,10 +268,30 @@ function save() {
 }
 function flushSave() { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; } if (_saveDirty) return writeNow(); return Promise.resolve(_lastSaveOk); }
 // Écriture immédiate. Renvoie une promesse booléenne (succès).
+/* ── « ENVOI EN ATTENTE » ─────────────────────────────────────────────────
+   Une modification faite sur l'iPhone alors que le jeton ne marche plus ne
+   doit pas se perdre en silence. Deux choses manquaient :
+   · `_localUpdated` n'était mis à jour que par la RELECTURE du dépôt, jamais
+     par une écriture locale. Au démarrage suivant, `ghPull` comparait donc les
+     dates, les trouvait égales, et concluait qu'il n'y avait rien à envoyer :
+     la modification restait sur l'appareil pour toujours.
+   · la liste des envois ratés ne vivait qu'en mémoire — fermer l'app la
+     perdait.
+   Le drapeau est donc PERSISTÉ. Tant qu'il est là, chaque démarrage retente
+   l'envoi ; le jour où le jeton redevient valide, tout part d'un coup. */
+const PENDING_KEY = 'irondex_push_pending';
+function markPushPending(on) {
+  try { on ? localStorage.setItem(PENDING_KEY, '1') : localStorage.removeItem(PENDING_KEY); } catch {}
+}
+function pushPending() { try { return localStorage.getItem(PENDING_KEY) === '1'; } catch { return false; } }
 function writeNow() {
   _saveDirty = false;
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   const snap = collectionSnapshot();
+  // Le local vient de prendre de l'avance : c'est ce que `ghPull` doit voir au
+  // prochain démarrage pour décider qu'il faut pousser.
+  _localUpdated = Date.parse(snap.lastUpdated) || Date.now();
+  markPushPending(true);
   return idbSet(DB_KEY, snap)
     .then(() => { _lastSaveOk = true; pulseSaveDot(); autoBackupDaily(); ghPushSoon('collection'); return true; })
     .catch(err => {
@@ -659,6 +679,7 @@ async function ghFlush() {
     // réécrit pas par-dessus. Silencieux exprès — c'est le fonctionnement
     // normal de deux appareils, pas une panne à signaler à chaque fois.
     _ghErr = '';
+    markPushPending(false);          // tout est parti : plus rien en attente
     await ghPull().catch(() => {});
     ghPaintStatus('ok');
   } else if (fail) {
@@ -670,6 +691,7 @@ async function ghFlush() {
     if (!_ghTimer) _ghTimer = setTimeout(ghFlush, 30000);   // nouvelle tentative
   } else {
     _ghErr = '';
+    markPushPending(false);
     ghPaintStatus('ok');
   }
 }
@@ -776,7 +798,7 @@ function openCloud() {
   document.getElementById('cloud-body').innerHTML = `
     <p class="sealed-imp-hint">Ta collection est enregistrée dans le dépôt <b>${esc(c.owner || '?')}/${esc(c.repo || '?')}</b> (branche ${esc(c.branch)}), fichier <code>data/collection.json</code>. Chaque modification fait un commit : l'historique du dépôt est ta machine à remonter le temps.</p>
     <div class="cloud-field">
-      <label for="cloud-token">Jeton d'accès GitHub <span>(fine-grained, permission « Contents : Read and write » sur ce seul dépôt)</span></label>
+      <label for="cloud-token">Jeton d'accès GitHub <span>(jeton <b>classique</b>, expiration « <b>No expiration</b> », case <b>repo</b> — c'est le seul type qui n'expire jamais, donc à coller une fois pour toutes)</span></label>
       <input id="cloud-token" type="password" autocomplete="off" spellcheck="false" placeholder="${c.token ? '•••••••• (déjà enregistré)' : 'github_pat_…'}" value="">
     </div>
     <div class="cloud-row">
@@ -840,9 +862,13 @@ async function cloudCheck() {
     // et rappeler que la lecture, elle, continue de marcher : le dépôt est
     // public, la collection est relue sans aucun jeton.
     ghPaintStatus('read');
-    return cloudReport('Jeton refusé (401) — il a très probablement EXPIRÉ (GitHub fait expirer les jetons fine-grained, 90 jours par défaut). '
-      + 'Génère-en un nouveau sur github.com/settings/personal-access-tokens avec l\u2019accès « Contents : Read and write » sur ce dépôt, puis recolle-le ici. '
-      + 'En attendant, la lecture continue : ta collection est bien relue du dépôt à chaque ouverture, seul l\u2019ENVOI depuis cet appareil est en pause.', 'bad');
+    return cloudReport('Jeton refusé (401) — il a expiré ou été révoqué.<br><br>'
+      + '<b>Pour ne plus jamais avoir à le refaire</b>, prends un jeton <b>classique</b> et non « fine-grained » : '
+      + '<a href="https://github.com/settings/tokens/new?scopes=repo&description=IronDex" target="_blank" rel="noopener">ouvre cette page</a>, '
+      + 'choisis <b>Expiration : No expiration</b>, vérifie que la case <b>repo</b> est cochée, puis colle le jeton ici. '
+      + 'Les jetons fine-grained, eux, expirent au bout d\u2019un an au maximum — c\u2019est pour ça qu\u2019on retombe là-dessus.<br><br>'
+      + 'En attendant, rien n\u2019est perdu : la lecture continue (ta collection est relue du dépôt à chaque ouverture), et les modifications faites ici '
+      + 'sont GARDÉES puis envoyées automatiquement dès que le jeton remarche.', 'bad');
   }
   if (r.status === 404) return cloudReport(`Dépôt <b>${esc(c.owner)}/${esc(c.repo)}</b> introuvable — vérifie le nom, ou que le jeton donne accès à CE dépôt.`, 'bad');
   if (!r.ok) return cloudReport(`GitHub répond HTTP ${r.status}.`, 'bad');
@@ -8596,7 +8622,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui36';
+const BUILD = 'ui37';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
@@ -8643,6 +8669,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (ghCfg().owner) {
     ghPull().catch(e => console.warn('ghPull', e));
     ghPullPrices().catch(e => console.warn('ghPullPrices', e));
+    // Des modifications d'une session précédente n'ont jamais pu partir (jeton
+    // expiré, hors ligne, app fermée trop vite) ? On retente maintenant. Le
+    // garde-fou anti-écrasement de ghFlush protège le cas où le dépôt serait
+    // plus récent — et ghPull, qui tourne juste au-dessus, a déjà tranché.
+    if (pushPending() && ghOn()) setTimeout(() => ghPushSoon('collection'), 3000);
     // …et à CHAQUE retour au premier plan. Sur iPhone une app installée n'est
     // jamais « rechargée » : sans ça, les cartes ajoutées depuis un autre
     // appareil n'arrivaient qu'après une fermeture complète.
@@ -8651,6 +8682,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (Date.now() - _ghLastPull < 20000) return;   // pas à chaque va-et-vient
       ghPull().catch(() => {});
       ghPullPrices().catch(() => {});
+      if (pushPending() && ghOn()) ghPushSoon('collection');
     });
   }
   // LIRE NE DEMANDE AUCUN JETON : le dépôt est public, `ghRead` passe par

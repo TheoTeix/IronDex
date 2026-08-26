@@ -7,11 +7,26 @@
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#06070A",
-  "theme_color": "#06070A",
   "lang": "fr",
   "icons": [
-    { "src": "favicon.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
-    { "src": "logo.png", "sizes": "608x608", "type": "image/png", "purpose": "any" },
-    { "src": "logo.png", "sizes": "608x608", "type": "image/png", "purpose": "maskable" }
-  ]
+    {
+      "src": "favicon.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "logo.png",
+      "sizes": "608x608",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "logo.png",
+      "sizes": "608x608",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "_theme_color": "RETIRE le 2026-08-26 : sur iOS 16.4+, un manifeste qui declare theme_color fait peindre par le systeme la barre d'etat ET la zone du trait d'accueil comme du chrome de navigateur, et la vue web est alors ENCASTREE entre les deux. C'est exactement la bande sombre du bas (#06070A, la couleur qu'on donnait). Sans theme_color, iOS retombe sur apple-mobile-web-app-status-bar-style=black-translucent + viewport-fit=cover, et la page occupe tout l'ecran. background_color reste : il ne sert qu'a l'ecran de lancement."
 }
