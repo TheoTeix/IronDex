@@ -3300,7 +3300,11 @@ function renderViewChrome(view) {
     el.dataset.zero = n ? '0' : '1';
   });
   setBadge(['badge-wishlists', 'badge-wishlists-m'], state.wishlists.length);
-  setBadge(['badge-invest', 'badge-invest-m'], state.sealed.length + state.investCards.length);
+  // PAS de pastille sur Portefeuille : elle affichait « 999+ » en permanence
+  // (1 293 cartes + 37 scellés), c'est-à-dire un chiffre qui ne varie jamais et
+  // qui n'apprend rien. Une pastille de nav sert à signaler ce qui a CHANGÉ, pas
+  // à répéter la taille de la collection.
+  setBadge(['badge-invest', 'badge-invest-m'], 0);
   if (_actionsOn) setHeaderActions(false);   // changer de vue referme les actions
   const m = VIEW_META[view] || VIEW_META.home;
   const eb = document.getElementById('tb-eyebrow'); if (eb) eb.textContent = m.eyebrow;
@@ -7689,7 +7693,12 @@ function sealedTotals(list) {
 }
 function fmtPct(x) { return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(0)} %`; }
 function fmtSign(v) { return `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`; }
-function investBadge() { const b = document.getElementById('badge-invest'); if (b) b.textContent = state.sealed.length + state.investCards.length; }
+// La pastille du Portefeuille a été retirée (voir renderViewChrome) : cette
+// fonction ne fait donc plus rien, mais ses deux appelants restent lisibles —
+// « j'ai touché au portefeuille, je rafraîchis son compteur ». Le jour où un
+// compteur UTILE y trouve sa place (des cartes sans cote, par exemple), c'est
+// ici qu'il se branche.
+function investBadge() {}
 
 // ── Vue + slider ────────────────────────────────────────────────
 function renderInvest() {
@@ -8622,7 +8631,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui37';
+const BUILD = 'ui38';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);

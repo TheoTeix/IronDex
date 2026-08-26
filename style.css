@@ -561,11 +561,21 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* PAS de `overflow:hidden` ici : il découpait la prolongation de matière de la
    barre d'onglets (un pseudo-élément posé SOUS elle, donc hors du cadre), qui ne
    peignait donc rien. Le rognage horizontal est déjà porté par `.main`. */
-:root[data-mobile="on"] .app{position:fixed;inset:0;height:auto;min-height:0}
+/* La recette canonique du plein écran iOS : `html` ET `body` a la hauteur EXACTE
+   du viewport (100 %, pas une unité `vh` — celles-là sont calculées et, sur iOS,
+   ne coïncident pas toujours avec ce qu'on voit), et le cadre par-dessus. Sans
+   hauteur sur `html`, le `100 %` de `body` ne veut rien dire. */
+:root[data-mobile="on"], :root[data-mobile="on"] body{height:100%;min-height:0;overflow:hidden}
+:root[data-mobile="on"] .app{position:fixed;inset:0;height:100%;min-height:0}
 /* Et la barre d'onglets est ancrée au CADRE (absolute) plutôt qu'au viewport :
    son bas et celui de l'app sont alors le même bord, il ne peut plus rien
    s'ouvrir entre les deux. */
-:root[data-mobile="on"] .tabbar{position:absolute}
+/* ANCRÉE AU VIEWPORT (`fixed`), et non au cadre. Je l'avais passée en
+   `absolute` pour la coller au bas de `.app` — mais si `.app` ne descend pas
+   jusqu'au bord physique pour une raison qui m'échappe, `absolute` reproduit son
+   défaut alors que `fixed` va au bord, toujours. Le `bottom:0` de la règle de
+   base suffit ; on ne redéclare donc que la nature du positionnement. */
+:root[data-mobile="on"] .tabbar{position:fixed}
 /* PROLONGATION vers le bas. Si quoi que ce soit reste sous la barre — un
    dégagement d'encoche que le navigateur compte autrement que nous, une hauteur
    de viewport qui ne coïncide pas au pixel — c'est la MATIÈRE de la barre qui
@@ -650,6 +660,18 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* L'aurora est trois grandes nappes en mouvement perpétuel : autant de
    compositions par frame que le geste n'a pas besoin de payer. */
 :root[data-pager-move] .aurora>i{animation-play-state:paused}
+
+/* ── ET SURTOUT : QUE ÇA NE SE VOIE PAS ──
+   Couper le flou fait perdre au verre ce qui le rend opaque à l'œil : pendant
+   le mouvement, les deux barres devenaient quasi TRANSPARENTES, puis le verre
+   revenait d'un coup. On croyait à un style qui se charge en retard.
+   Le flou est donc remplacé, le temps du mouvement, par une teinte PLUS DENSE
+   qui rend le même service. À l'œil la barre ne change pas ; c'est seulement
+   beaucoup moins cher à peindre. */
+:root[data-pager-move] .app-header{background:color-mix(in srgb,var(--v-0) 96%,transparent)}
+:root[data-pager-move] .tabbar{background:color-mix(in srgb,var(--v-0) 96%,transparent)}
+:root[data-pager-move] .app-header::before,
+:root[data-pager-move] .tabbar::before{background:var(--v-0);opacity:.55}
 /* ── POURQUOI LE GESTE SACCADAIT ──
    `content-visibility:auto` fait sauter la mise en page et la peinture de tout
    ce qui n'est pas près de l'écran. Excellent pour défiler une longue liste —
