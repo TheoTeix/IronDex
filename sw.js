@@ -11,8 +11,8 @@
  * Les données (collection, cotes) ne passent JAMAIS par ici : elles viennent de
  * l'API GitHub / raw.githubusercontent, où une réponse périmée serait grave.
  */
-const V = 'irondex-v28';
-const SHELL = ['./', './index.html', './app.js?v=ui35', './style.css?v=ui35', './cm-slugs.js',
+const V = 'irondex-v29';
+const SHELL = ['./', './index.html', './app.js?v=ui36', './style.css?v=ui36', './cm-slugs.js',
                './manifest.json', './logo.png', './favicon.png'];
 
 self.addEventListener('install', e => {
@@ -41,8 +41,18 @@ self.addEventListener('fetch', e => {
   }
 
   // Code et pages : réseau d'abord, cache si hors ligne.
+  //
+  // LA PAGE est demandée en `cache:'reload'`, c'est-à-dire en IGNORANT le cache
+  // HTTP. C'était le trou : `index.html` est la seule ressource SANS `?v=` — les
+  // autres portent leur version dans l'URL — donc une copie périmée d'elle
+  // suffisait à épingler l'app sur l'ancien app.js et l'ancien style.css, quel
+  // que soit le nombre de réouvertures. « Réseau d'abord » ne servait à rien si
+  // le réseau répondait depuis le cache du navigateur.
   if (url.origin === location.origin) {
-    e.respondWith(fetch(req).then(res => {
+    const isDoc = req.mode === 'navigate' || req.destination === 'document'
+      || url.pathname.endsWith('/') || /\.html?$/.test(url.pathname)
+      || /(^|\/)version\.json$/.test(url.pathname);
+    e.respondWith(fetch(isDoc ? new Request(req, { cache: 'reload' }) : req).then(res => {
       if (res.ok) caches.open(V).then(c => c.put(req, res.clone()));
       return res;
     }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));

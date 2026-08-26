@@ -680,7 +680,9 @@ function ghPaintStatus(st) {
     el.dataset.state = st;
     el.title = { off: 'Coffre en ligne non configuré', warn: 'Coffre en ligne NON configuré : rien n\u2019est envoyé depuis cet appareil',
       pending: 'Envoi au dépôt dans quelques secondes…',
-      saving: 'Envoi au dépôt…', ok: 'Collection sauvegardée dans le dépôt', error: `Échec d'envoi : ${_ghErr}` }[st] || '';
+      saving: 'Envoi au dépôt…', ok: 'Collection sauvegardée dans le dépôt',
+      read: 'Lecture seule : la collection est bien relue du dépôt, mais rien n\u2019est envoyé depuis cet appareil (jeton absent ou expiré)',
+      error: `Échec d'envoi : ${_ghErr}` }[st] || '';
   }
 }
 // ── Relecture au démarrage ────────────────────────────────────────
@@ -832,7 +834,16 @@ async function cloudCheck() {
   // 1) le dépôt existe et le jeton peut ÉCRIRE (permissions.push)
   let r;
   try { r = await ghApi(''); } catch { return cloudReport('Réseau injoignable.', 'bad'); }
-  if (r.status === 401) return cloudReport('Jeton refusé (401) : expiré, mal collé, ou révoqué.', 'bad');
+  if (r.status === 401) {
+    // Cas le plus fréquent, et de loin : les jetons « fine-grained » de GitHub
+    // ont une DATE D'EXPIRATION (90 jours par défaut). Le message doit dire ça,
+    // et rappeler que la lecture, elle, continue de marcher : le dépôt est
+    // public, la collection est relue sans aucun jeton.
+    ghPaintStatus('read');
+    return cloudReport('Jeton refusé (401) — il a très probablement EXPIRÉ (GitHub fait expirer les jetons fine-grained, 90 jours par défaut). '
+      + 'Génère-en un nouveau sur github.com/settings/personal-access-tokens avec l\u2019accès « Contents : Read and write » sur ce dépôt, puis recolle-le ici. '
+      + 'En attendant, la lecture continue : ta collection est bien relue du dépôt à chaque ouverture, seul l\u2019ENVOI depuis cet appareil est en pause.', 'bad');
+  }
   if (r.status === 404) return cloudReport(`Dépôt <b>${esc(c.owner)}/${esc(c.repo)}</b> introuvable — vérifie le nom, ou que le jeton donne accès à CE dépôt.`, 'bad');
   if (!r.ok) return cloudReport(`GitHub répond HTTP ${r.status}.`, 'bad');
   const repo = await r.json().catch(() => ({}));
@@ -8565,7 +8576,59 @@ function confirmSealedImport() {
   toast(`${state.sealed.length} produits importés`, 'success');
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   AUTO-MISE À JOUR — que le code déployé ARRIVE, sans rien demander
+
+   Le 2026-08-26, trois corrections d'affilée n'ont jamais tourné sur l'iPhone :
+   l'app installée servait l'ancien code. La cause : `index.html` est la SEULE
+   ressource sans `?v=` dans son URL (app.js et style.css portent leur version).
+   Une copie périmée d'elle épingle donc l'app sur l'ancien app.js et l'ancien
+   style.css, indéfiniment, quel que soit le nombre de réouvertures.
+
+   Deux verrous, désormais :
+   · le service worker demande la PAGE en ignorant le cache HTTP (voir sw.js) ;
+   · l'app se compare elle-même au déploiement. `BUILD` est gravé dans ce
+     fichier ; `version.json` est relu à chaque démarrage SANS CACHE. S'ils
+     divergent, c'est que le code qui tourne est périmé : on vide les caches, on
+     congédie le service worker et on recharge UNE fois.
+
+   Le garde-fou anti-boucle est une clé de session : si le rechargement ne
+   suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
+   pas et on laisse l'app tourner telle quelle.
+   ══════════════════════════════════════════════════════════════════════ */
+const BUILD = 'ui36';
+async function purgeAppCaches() {
+  try {
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+  } catch (e) { console.warn('purge caches', e); }
+  try {
+    const regs = await navigator.serviceWorker?.getRegistrations?.() || [];
+    for (const r of regs) await r.unregister();
+  } catch (e) { console.warn('purge sw', e); }
+}
+async function selfHeal() {
+  if (!location.protocol.startsWith('http')) return;
+  // `?fresh=1` : sortie de secours à taper une fois, quand l'app est déjà
+  // collée à une version qui ne contient pas ce mécanisme.
+  const forced = /[?&]fresh=1/.test(location.search);
+  let remote = null;
+  try {
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (r.ok) remote = (await r.json()).build;
+  } catch {}
+  if (!forced && (!remote || remote === BUILD)) return;
+  if (sessionStorage.getItem('irondex-healed') === (remote || 'forced')) return;   // déjà tenté
+  try { sessionStorage.setItem('irondex-healed', remote || 'forced'); } catch {}
+  console.warn('[maj] code périmé', BUILD, '→', remote, '· purge et rechargement');
+  await purgeAppCaches();
+  const u = new URL(location.href);
+  u.searchParams.delete('fresh');
+  u.searchParams.set('maj', remote || String(Date.now()));
+  location.replace(u.toString());
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  selfHeal();   // non bloquant : si une mise à jour s'impose, elle recharge
   // Promesse « prêt à peindre », consommée par la barre de progression de
   // l'intro sur le chemin sans 3D.
   window._introReady = new Promise(res => { window._introReadyResolve = res; });
@@ -8590,7 +8653,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       ghPullPrices().catch(() => {});
     });
   }
-  ghPaintStatus(ghOn() ? 'ok' : 'off');
+  // LIRE NE DEMANDE AUCUN JETON : le dépôt est public, `ghRead` passe par
+  // raw.githubusercontent (voir ghRead) et ne retombe sur l'API authentifiée que
+  // pour un dépôt privé. Un jeton absent ou expiré n'empêche donc pas la
+  // collection d'arriver — il n'empêche que l'ENVOI. La pastille doit dire cette
+  // nuance au lieu d'afficher une erreur rouge qui laisse croire à une panne.
+  ghPaintStatus(ghOn() ? 'ok' : (ghCfg().owner ? 'read' : 'off'));
   // Signal pour la barre de l'intro (chemin sans 3D) : le catalogue est relu,
   // les cotes sont là, on peut peindre.
   try { window._introReadyResolve && window._introReadyResolve(); } catch {}
@@ -8600,8 +8668,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // grise ne suffisait pas.
   setTimeout(() => {
     if (!ghOn() && !ghLocalEmpty()) {
-      ghPaintStatus('warn');
-      toast('Coffre en ligne non configuré ici : tes modifications restent sur cet appareil.', 'error');
+      ghPaintStatus(ghCfg().owner ? 'read' : 'warn');
+      // Le ton compte : sans jeton, l'appareil n'est pas « en panne », il est en
+      // LECTURE SEULE. Il reçoit tout, il n'envoie rien.
+      toast(ghCfg().owner
+        ? 'Lecture seule sur cet appareil : la collection est bien relue du dépôt, mais tes modifications d\u2019ici ne sont pas envoyées.'
+        : 'Coffre en ligne non configuré ici : tes modifications restent sur cet appareil.', 'error');
     }
   }, 2600);
   // Service worker : rend l'app installable sur l'iPhone et lisible hors ligne.

@@ -3104,6 +3104,9 @@ body::before{display:none}
 .btn-cloud[data-state="ok"]::after{background:#3ddc97}
 .btn-cloud[data-state="pending"]::after,.btn-cloud[data-state="saving"]::after{background:#f5c344;animation:cloudPulse 1.1s ease-in-out infinite}
 .btn-cloud[data-state="error"]::after{background:#ff5c5c}
+/* « read » : la collection ARRIVE bien, seul l'envoi est en pause (jeton absent
+   ou expiré). Ce n'est pas une panne — donc pas de rouge : un bleu calme. */
+.btn-cloud[data-state="read"]::after{background:#5aa9e6}
 /* « warn » : des données locales, aucun jeton — l'appareil travaille dans le
    vide. Ça doit se voir sans lire l'infobulle. */
 .btn-cloud[data-state="warn"]::after{background:#f5c344;animation:cloudPulse 1.8s ease-in-out infinite}
