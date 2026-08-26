@@ -545,13 +545,18 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    (926 px de large) avec la mise en page du Mac alors que le JS, lui, le
    traitait déjà en téléphone.
    ═══════════════════════════════════════════════════════════════════════ */
-/* `dvh` et non `svh` ICI. Le passage à `svh` avait été fait pour que le
-   document ne se redimensionne pas pendant qu'on défile (barre d'adresse de
-   Safari qui se replie). Depuis le carrousel, le document ne défile PLUS du
-   tout sur téléphone — ce sont les pages qui défilent — donc cette instabilité
-   n'existe plus, et `dvh` devient strictement meilleur : le cadre fait
-   exactement la hauteur visible, sans bande morte sous la barre d'onglets. */
-:root[data-mobile="on"] .app{height:100dvh;overflow:hidden}
+/* AUCUNE unité de hauteur ici : `position:fixed;inset:0`.
+   `100svh` puis `100dvh` laissaient tous les deux une bande sous la barre
+   d'onglets, et pour cause — ces unités décrivent une hauteur QUE LE NAVIGATEUR
+   CALCULE, et sur iOS elle ne coïncide pas toujours avec ce qu'on voit
+   (installée ou pas, barre d'état translucide, encoche, trait d'accueil…).
+   `inset:0` sur un élément fixe ne calcule rien : il EST le viewport visible,
+   par définition. Le cadre colle donc à l'écran, quoi que dise `vh`. */
+:root[data-mobile="on"] .app{position:fixed;inset:0;height:auto;min-height:0;overflow:hidden}
+/* Et la barre d'onglets est ancrée au CADRE (absolute) plutôt qu'au viewport :
+   son bas et celui de l'app sont alors le même bord, il ne peut plus rien
+   s'ouvrir entre les deux. */
+:root[data-mobile="on"] .tabbar{position:absolute}
 :root[data-mobile="on"] .frame{height:100%;min-height:0;position:relative}
 :root[data-mobile="on"] .main{flex:1;min-height:0;overflow:hidden;padding:0}
 
@@ -609,6 +614,9 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* Les défileurs horizontaux internes gardent leur propre geste. */
 :root[data-mobile="on"] .strip-track,
 :root[data-mobile="on"] .inv-table-scroll{touch-action:pan-x}
+/* Aucun glisser-déposer natif sur téléphone : il faisait annuler le pointeur
+   par iOS et tuait le geste de carrousel (voir renderWishlists). */
+:root[data-mobile="on"] .wrap [draggable]{-webkit-user-drag:none;user-select:none}
 
 /* Une colonne par destination. Le détail d'une wishlist PARTAGE la colonne de
    sa liste : y entrer ne fait donc pas glisser la bande, c'est un push iOS à
@@ -3157,7 +3165,7 @@ body::before{display:none}
      libellés sur un iPhone 12 Pro Max, ça se lit comme une bande vide au bas de
      la barre. On garde de quoi ne pas coller au trait (Apple demande de le
      dégager) sans lui donner un tiers de la hauteur de la barre. */
-  .tabbar{padding:7px 6px max(6px,calc(env(safe-area-inset-bottom) - 10px))}
+  .tabbar{padding:7px 6px max(8px,calc(env(safe-area-inset-bottom) - 8px))}
   .tabbar .nav-btn{min-height:52px;gap:5px;padding:5px 2px;border-radius:14px}
   .tabbar .nav-icon{width:25px;height:25px}
   .tabbar .nav-svg{width:23px;height:23px}

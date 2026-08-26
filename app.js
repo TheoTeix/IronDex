@@ -3355,101 +3355,117 @@ function setPagerColumn(view, instant) {
    `pan-y` sur la bande lui laisse le défilement vertical et nous donne
    l'horizontal, ce qui est la seule méthode fiable sur iOS. */
 const SWIPE_KEEP_OUT = '.strip-track,.inv-table-scroll,.hscroll,.scroller,input,textarea,select';
-const SWIPE_START = 10;      // px de franchise avant de décider qu'il y a un geste
-const SWIPE_TAKE = 0.24;     // fraction d'écran au-delà de laquelle on change de page
-const SWIPE_FLICK_PX = 40;   // course minimale pour qu'un geste VIF compte
-const SWIPE_FLICK_V = 0.4;   // px/ms
+const SWIPE_START = 8;          // px de franchise avant de décider qu'il y a un geste
+const SWIPE_PROJECT_MS = 200;   // durée de « lancer » projetée après le lâcher
+const SWIPE_EAGER = 0.12;       // penche vers la page visée (seuil effectif ≈ 38 %)
+
+/* ── GLISSEMENT AU DOIGT ────────────────────────────────────────────────
+   La bande suit le doigt, et RIEN ne change de page tant que le doigt est posé.
+   Au lâcher, on calcule la position PROJETÉE — là où le geste pointe compte tenu
+   de son élan — et on va se ranger sur la page la plus proche de ce point.
+
+   Pourquoi une projection plutôt que des seuils : avec un seuil de distance, un
+   petit geste vif ne passait pas et un grand geste lent passait, ce qui ne
+   correspond à l'intention de personne. Là, le geste lent doit dépasser ~38 %
+   de l'écran, le geste vif suffit à lui seul, et les deux se combinent — c'est
+   ce que font les pages d'un écran d'accueil iOS.
+
+   Les écouteurs sont posés sur le DOCUMENT en phase de CAPTURE, et non sur la
+   bande : le geste ne peut donc plus être avalé en route par un enfant qui
+   arrête la propagation ou qui a son propre glisser-déposer (les cartes de
+   wishlist sont `draggable`, ce qui suffisait à tuer le geste sur toute la
+   page). C'est aussi ce qui le rend identique dans les deux sens et depuis
+   n'importe quelle page. */
 function bindPagerSwipe() {
-  const wrap = pagerEl();
-  if (!wrap || wrap.dataset.swipe) return;
-  wrap.dataset.swipe = '1';
-  let id = null, x0 = 0, y0 = 0, t0 = 0, base = 0, w = 1, axis = null;
+  if (document.documentElement.dataset.swipe) return;
+  document.documentElement.dataset.swipe = '1';
+  let id = null, x0 = 0, y0 = 0, base = 0, w = 1, axis = null;
   let dx = 0, lastX = 0, lastT = 0, vel = 0, raf = 0;
   const maxCol = () => PHONE_PAGES.length - 1;
 
-  // Élastique aux extrémités : la bande ne suit qu'au tiers dans le vide.
-  const clampPos = pos => {
+  const clampPos = pos => {                     // élastique : au tiers dans le vide
     if (pos < 0) return pos / 3;
     if (pos > maxCol()) return maxCol() + (pos - maxCol()) / 3;
     return pos;
   };
-  // UNE SEULE écriture par frame. iOS livre les `pointermove` à 120 Hz : écrire
-  // le transform à chaque événement demandait deux fois plus de compositions
-  // que l'écran n'en affiche, et le geste bavait derrière le doigt.
+  // UNE SEULE écriture par frame : iOS livre les pointermove à 120 Hz, soit deux
+  // fois plus que l'écran n'affiche, et la bande bavait derrière le doigt.
   const paint = () => { raf = 0; setPagerTransform(clampPos(base - dx / w)); };
-  const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
   const stopRaf = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
-  const end = () => { stopRaf(); id = null; axis = null; wrap.classList.remove('dragging'); };
+  const end = () => {
+    stopRaf(); id = null; axis = null;
+    const wrap = pagerEl(); if (wrap) wrap.classList.remove('dragging');
+  };
 
-  wrap.addEventListener('pointerdown', e => {
+  document.addEventListener('pointerdown', e => {
     if (!isPhone() || id !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const wrap = pagerEl();
+    if (!wrap || !e.target || !wrap.contains(e.target)) return;
     if (e.target.closest && e.target.closest(SWIPE_KEEP_OUT)) return;
     const col = pagerColumnOf(state.view);
     if (col == null) return;
-    id = e.pointerId; x0 = lastX = e.clientX; y0 = e.clientY; t0 = lastT = e.timeStamp;
+    id = e.pointerId; x0 = lastX = e.clientX; y0 = e.clientY; lastT = e.timeStamp;
     base = PHONE_PAGES.indexOf(col);
-    w = wrap.clientWidth || innerWidth || 1;   // mesuré UNE fois : pas de lecture de layout pendant le geste
+    w = wrap.clientWidth || innerWidth || 1;   // mesuré UNE fois : aucune lecture de layout pendant le geste
     axis = null; dx = 0; vel = 0;
-  }, { passive: true });
+  }, true);
 
-  wrap.addEventListener('pointermove', e => {
+  document.addEventListener('pointermove', e => {
     if (e.pointerId !== id) return;
     const mx = e.clientX - x0, my = e.clientY - y0;
     if (axis === null) {
       if (Math.abs(mx) < SWIPE_START && Math.abs(my) < SWIPE_START) return;
-      // Le premier mouvement franc décide de l'axe, et il ne change plus.
-      if (Math.abs(my) >= Math.abs(mx)) { end(); return; }      // vertical : on rend la main
+      if (Math.abs(my) >= Math.abs(mx)) { end(); return; }   // vertical : on rend la main
       axis = 'x';
-      wrap.classList.add('dragging');
+      const wrap = pagerEl();
+      wrap?.classList.add('dragging');
+      // Les événements suivants nous restent adressés même si le doigt quitte
+      // l'élément de départ (une carte, un bouton, un bord de page).
+      try { wrap?.setPointerCapture(e.pointerId); } catch {}
     }
-    // Vitesse INSTANTANÉE (les deux derniers événements) et non moyenne depuis
-    // le début : un geste qui traîne puis se termine par une détente rapide doit
-    // compter comme une détente, pas comme un geste lent.
+    // Vitesse INSTANTANÉE (deux derniers événements) : un geste qui traîne puis
+    // se termine par une détente doit compter comme une détente.
     const dt = e.timeStamp - lastT;
     if (dt > 0) vel = (e.clientX - lastX) / dt;
     lastX = e.clientX; lastT = e.timeStamp;
     dx = mx;
-    schedule();
-  }, { passive: true });
+    if (!raf) raf = requestAnimationFrame(paint);
+  }, true);
 
   const release = e => {
     if (e.pointerId !== id) return;
-    // Tout est relevé AVANT `end()`, qui remet les compteurs à zéro.
     const dragged = axis === 'x';
-    const moved = dx, from = base, width = w, speed = Math.abs(vel);
+    const moved = dx, from = base, width = w, v = vel;   // relevé AVANT end(), qui remet à zéro
     end();
     if (!dragged) return;
-    // Un quart d'écran parcouru, OU une détente vive. La vitesse seule ne
-    // suffit pas : un micro-mouvement rapide (le départ d'un tap un peu glissé)
-    // dépasse facilement le seuil, et la page changeait sous le doigt.
-    const far = Math.abs(moved) > width * SWIPE_TAKE;
-    const flick = Math.abs(moved) > SWIPE_FLICK_PX && speed > SWIPE_FLICK_V;
-    // Le sens vient du DÉPLACEMENT quand il est franc, de la VITESSE quand
-    // c'est une détente (on peut lancer vers la droite après avoir tiré à
-    // gauche : c'est le dernier geste qui commande).
-    const dir = far ? -Math.sign(moved) : -Math.sign(vel || moved || 1);
-    let target = (far || flick) ? from + dir : from;
+    // Où en est la bande, en pages, puis où elle POINTE avec son élan.
+    const pos = from - moved / width;
+    const proj = pos - (v * SWIPE_PROJECT_MS) / width;
+    // Un cheveu de penchant vers la page visée : sans lui il faut dépasser la
+    // moitié pile de l'écran, et l'utilisateur trouve ça avare.
+    const bias = proj > from ? SWIPE_EAGER : proj < from ? -SWIPE_EAGER : 0;
+    let target = Math.round(proj + bias);
+    target = Math.max(from - 1, Math.min(from + 1, target));   // une page par geste
     target = Math.max(0, Math.min(maxCol(), target));
-    // Un geste, même court, ne doit PAS déclencher le clic de ce qu'il y avait
-    // sous le doigt (une carte, un bouton). On avale le clic qui suit.
-    if (Math.abs(moved) > SWIPE_START) swallowNextClick(wrap);
-    if (target === from) setPagerColumn(state.view);             // retour élastique
+    // Un geste ne doit pas déclencher le clic de ce qu'il y avait sous le doigt.
+    if (Math.abs(moved) > SWIPE_START) swallowNextClick();
+    if (target === from) setPagerColumn(state.view);            // retour élastique
     else navigate(PHONE_PAGES[target]);
   };
-  wrap.addEventListener('pointerup', release, { passive: true });
-  // ANNULATION (iOS reprend le pointeur, appel entrant, deuxième doigt…) : si un
-  // glissement horizontal était en cours, on le TERMINE comme un lâcher plutôt
-  // que de ramener la bande en arrière — un retour brutal au milieu du geste,
-  // c'était le « bug » le plus visible.
-  wrap.addEventListener('pointercancel', release, { passive: true });
+  document.addEventListener('pointerup', release, true);
+  // ANNULATION (iOS reprend le pointeur, deuxième doigt, appel entrant) : on la
+  // traite comme un lâcher. Ramener la bande en arrière au milieu du geste,
+  // c'était le défaut le plus visible.
+  document.addEventListener('pointercancel', release, true);
 }
 // Avale le prochain clic (celui qu'un glissement aurait déclenché malgré lui).
-function swallowNextClick(root) {
+function swallowNextClick() {
   const eat = e => { e.stopPropagation(); e.preventDefault(); };
-  root.addEventListener('click', eat, { capture: true, once: true });
-  setTimeout(() => root.removeEventListener('click', eat, true), 400);
-}// Les pages VOISINES sont garnies une fois, au repos, pour que le premier
+  document.addEventListener('click', eat, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener('click', eat, true), 400);
+}
+// Les pages VOISINES sont garnies une fois, au repos, pour que le premier
 // glissement vers elles n'ait rien à construire. Le contenu de la page CIBLE
 // est de toute façon refait à chaque navigation (voir renderWithTransition) :
 // ce pré-remplissage ne sert qu'à supprimer la première image vide.
@@ -4067,7 +4083,12 @@ function renderWishlistCard(w) {
   const owned = w.cards.filter(c => c.owned).length;
   const pct = w.cards.length ? Math.round(owned/w.cards.length*100) : 0;
   return `
-    <div class="wishlist-card spot" draggable="true" data-id="${w.id}" data-cc="${esc(w.cards[0]?.id||'')}" role="button" tabindex="0"
+    <!-- Déplaçable SEULEMENT hors téléphone. Sur iOS, un glissement qui part
+         d'un élément déplaçable déclenche le glisser-déposer NATIF, et le
+         système ANNULE alors le pointeur : le geste de carrousel mourait donc
+         sur toute la page Wishlists, dont les cartes couvrent l'essentiel. Le
+         réordonnancement à la souris reste sur Mac, où il sert. -->
+    <div class="wishlist-card spot" draggable="${isPhone() ? 'false' : 'true'}" data-id="${w.id}" data-cc="${esc(w.cards[0]?.id||'')}" role="button" tabindex="0"
       aria-label="Ouvrir la wishlist ${esc(w.name)}"
       onclick="navigate('wishlist-detail',{activeWishlistId:'${w.id}'})"
       onkeydown="if(event.key==='Enter'){navigate('wishlist-detail',{activeWishlistId:'${w.id}'})}">
