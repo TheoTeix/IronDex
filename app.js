@@ -146,9 +146,18 @@ function isPhone() {
 // l'encoche, donc on la mesure au lieu de la deviner.
 function syncTopbarHeight() {
   const h = document.querySelector('.app-header');
-  if (!h) return;
-  const px = Math.round(h.getBoundingClientRect().height);
-  if (px > 20) document.documentElement.style.setProperty('--topbar-h', px + 'px');
+  if (h) {
+    const px = Math.round(h.getBoundingClientRect().height);
+    if (px > 20) document.documentElement.style.setProperty('--topbar-h', px + 'px');
+  }
+  // Même raison pour la barre du bas : sa hauteur dépend du dégagement du trait
+  // d'accueil, qui n'est pas le même d'un iPhone à l'autre. Mesurée, les pages
+  // s'arrêtent donc pile au-dessus — ni sous la barre, ni avec un trou.
+  const t = document.querySelector('.tabbar');
+  if (t && t.offsetWidth) {
+    const px = Math.round(t.getBoundingClientRect().height);
+    if (px > 20) document.documentElement.style.setProperty('--tabbar-h', px + 'px');
+  }
 }
 function paintDeviceFlag() {
   _isPhone = null;   // la taille a changé : on remesure une fois, ici
@@ -3346,14 +3355,31 @@ function setPagerColumn(view, instant) {
    `pan-y` sur la bande lui laisse le défilement vertical et nous donne
    l'horizontal, ce qui est la seule méthode fiable sur iOS. */
 const SWIPE_KEEP_OUT = '.strip-track,.inv-table-scroll,.hscroll,.scroller,input,textarea,select';
+const SWIPE_START = 10;      // px de franchise avant de décider qu'il y a un geste
+const SWIPE_TAKE = 0.24;     // fraction d'écran au-delà de laquelle on change de page
+const SWIPE_FLICK_PX = 40;   // course minimale pour qu'un geste VIF compte
+const SWIPE_FLICK_V = 0.4;   // px/ms
 function bindPagerSwipe() {
   const wrap = pagerEl();
   if (!wrap || wrap.dataset.swipe) return;
   wrap.dataset.swipe = '1';
-  let id = null, x0 = 0, y0 = 0, t0 = 0, base = 0, w = 1, axis = null, dx = 0;
+  let id = null, x0 = 0, y0 = 0, t0 = 0, base = 0, w = 1, axis = null;
+  let dx = 0, lastX = 0, lastT = 0, vel = 0, raf = 0;
   const maxCol = () => PHONE_PAGES.length - 1;
 
-  const reset = () => { id = null; axis = null; dx = 0; wrap.classList.remove('dragging'); };
+  // Élastique aux extrémités : la bande ne suit qu'au tiers dans le vide.
+  const clampPos = pos => {
+    if (pos < 0) return pos / 3;
+    if (pos > maxCol()) return maxCol() + (pos - maxCol()) / 3;
+    return pos;
+  };
+  // UNE SEULE écriture par frame. iOS livre les `pointermove` à 120 Hz : écrire
+  // le transform à chaque événement demandait deux fois plus de compositions
+  // que l'écran n'en affiche, et le geste bavait derrière le doigt.
+  const paint = () => { raf = 0; setPagerTransform(clampPos(base - dx / w)); };
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  const stopRaf = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+  const end = () => { stopRaf(); id = null; axis = null; wrap.classList.remove('dragging'); };
 
   wrap.addEventListener('pointerdown', e => {
     if (!isPhone() || id !== null) return;
@@ -3361,57 +3387,69 @@ function bindPagerSwipe() {
     if (e.target.closest && e.target.closest(SWIPE_KEEP_OUT)) return;
     const col = pagerColumnOf(state.view);
     if (col == null) return;
-    id = e.pointerId; x0 = e.clientX; y0 = e.clientY; t0 = e.timeStamp;
+    id = e.pointerId; x0 = lastX = e.clientX; y0 = e.clientY; t0 = lastT = e.timeStamp;
     base = PHONE_PAGES.indexOf(col);
-    w = wrap.clientWidth || innerWidth || 1;
-    axis = null; dx = 0;
+    w = wrap.clientWidth || innerWidth || 1;   // mesuré UNE fois : pas de lecture de layout pendant le geste
+    axis = null; dx = 0; vel = 0;
   }, { passive: true });
 
   wrap.addEventListener('pointermove', e => {
     if (e.pointerId !== id) return;
     const mx = e.clientX - x0, my = e.clientY - y0;
     if (axis === null) {
-      // 10 px de franchise : en dessous, c'est un tap, pas un geste.
-      if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
-      if (Math.abs(my) >= Math.abs(mx)) { reset(); return; }   // vertical : on rend la main
+      if (Math.abs(mx) < SWIPE_START && Math.abs(my) < SWIPE_START) return;
+      // Le premier mouvement franc décide de l'axe, et il ne change plus.
+      if (Math.abs(my) >= Math.abs(mx)) { end(); return; }      // vertical : on rend la main
       axis = 'x';
       wrap.classList.add('dragging');
     }
+    // Vitesse INSTANTANÉE (les deux derniers événements) et non moyenne depuis
+    // le début : un geste qui traîne puis se termine par une détente rapide doit
+    // compter comme une détente, pas comme un geste lent.
+    const dt = e.timeStamp - lastT;
+    if (dt > 0) vel = (e.clientX - lastX) / dt;
+    lastX = e.clientX; lastT = e.timeStamp;
     dx = mx;
-    let pos = base - dx / w;
-    if (pos < 0) pos /= 3;                                     // élastique en tête
-    else if (pos > maxCol()) pos = maxCol() + (pos - maxCol()) / 3;
-    setPagerTransform(pos);
+    schedule();
   }, { passive: true });
 
   const release = e => {
     if (e.pointerId !== id) return;
-    // TOUT est relevé avant le reset : `reset()` remet `dx` à zéro, et lire
-    // `dx` après lui donnait `Math.sign(0) === 0`, donc une page cible égale à
-    // la page de départ — le geste revenait toujours en arrière.
+    // Tout est relevé AVANT `end()`, qui remet les compteurs à zéro.
     const dragged = axis === 'x';
-    const moved = dx;
-    const from = base;
-    const width = w;
-    const speed = Math.abs(moved) / Math.max(1, e.timeStamp - t0);   // px/ms
-    reset();
-    if (!dragged || !moved) return;
-    // On change de page si le geste a parcouru un bon quart d'écran, OU s'il a
-    // été vif. La vitesse seule ne suffit PAS : un micro-mouvement rapide (le
-    // départ d'un tap un peu glissé) dépasse facilement le seuil de vitesse, et
-    // la page changeait sous le doigt. D'où un plancher de 44 px — la largeur
-    // d'un doigt, donc le minimum pour un geste voulu.
-    const far = Math.abs(moved) > width * 0.28;
-    const flick = Math.abs(moved) > 44 && speed > 0.45;
-    let target = (far || flick) ? from - Math.sign(moved) : from;
+    const moved = dx, from = base, width = w, speed = Math.abs(vel);
+    end();
+    if (!dragged) return;
+    // Un quart d'écran parcouru, OU une détente vive. La vitesse seule ne
+    // suffit pas : un micro-mouvement rapide (le départ d'un tap un peu glissé)
+    // dépasse facilement le seuil, et la page changeait sous le doigt.
+    const far = Math.abs(moved) > width * SWIPE_TAKE;
+    const flick = Math.abs(moved) > SWIPE_FLICK_PX && speed > SWIPE_FLICK_V;
+    // Le sens vient du DÉPLACEMENT quand il est franc, de la VITESSE quand
+    // c'est une détente (on peut lancer vers la droite après avoir tiré à
+    // gauche : c'est le dernier geste qui commande).
+    const dir = far ? -Math.sign(moved) : -Math.sign(vel || moved || 1);
+    let target = (far || flick) ? from + dir : from;
     target = Math.max(0, Math.min(maxCol(), target));
-    if (target === from) setPagerColumn(state.view);            // retour élastique
+    // Un geste, même court, ne doit PAS déclencher le clic de ce qu'il y avait
+    // sous le doigt (une carte, un bouton). On avale le clic qui suit.
+    if (Math.abs(moved) > SWIPE_START) swallowNextClick(wrap);
+    if (target === from) setPagerColumn(state.view);             // retour élastique
     else navigate(PHONE_PAGES[target]);
   };
   wrap.addEventListener('pointerup', release, { passive: true });
-  wrap.addEventListener('pointercancel', e => { if (e.pointerId === id) { reset(); setPagerColumn(state.view); } }, { passive: true });
+  // ANNULATION (iOS reprend le pointeur, appel entrant, deuxième doigt…) : si un
+  // glissement horizontal était en cours, on le TERMINE comme un lâcher plutôt
+  // que de ramener la bande en arrière — un retour brutal au milieu du geste,
+  // c'était le « bug » le plus visible.
+  wrap.addEventListener('pointercancel', release, { passive: true });
 }
-// Les pages VOISINES sont garnies une fois, au repos, pour que le premier
+// Avale le prochain clic (celui qu'un glissement aurait déclenché malgré lui).
+function swallowNextClick(root) {
+  const eat = e => { e.stopPropagation(); e.preventDefault(); };
+  root.addEventListener('click', eat, { capture: true, once: true });
+  setTimeout(() => root.removeEventListener('click', eat, true), 400);
+}// Les pages VOISINES sont garnies une fois, au repos, pour que le premier
 // glissement vers elles n'ait rien à construire. Le contenu de la page CIBLE
 // est de toute façon refait à chaque navigation (voir renderWithTransition) :
 // ce pré-remplissage ne sert qu'à supprimer la première image vide.
@@ -3538,8 +3576,14 @@ function renderWithTransition(from, to, kind) {
   };
 
   // La sortante est épinglée AVANT tout changement de hauteur ou de défilement.
+  // SAUF sur téléphone : la bande du carrousel porte un `transform`, ce qui en
+  // fait un bloc conteneur pour ses descendants `position:fixed` — les
+  // coordonnées d'écran de pinView() y seraient interprétées par rapport à la
+  // bande, donc décalées de la hauteur de la barre haute. Et l'épinglage n'y
+  // sert à rien : la liste et son détail partagent la même case de la grille,
+  // ils se superposent déjà tout seuls, et le document ne défile pas.
   if (animated) {
-    const unpin = pinView(fromEl);
+    const unpin = isPhone() ? () => {} : pinView(fromEl);
     // Ses classes d'ENTRÉE sautent d'abord : une vue qui garde `enter-forward`
     // (elle vient d'arriver) ne jouerait jamais sa sortie.
     fromEl.classList.remove(...ENTER_CLASSES);

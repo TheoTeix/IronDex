@@ -545,7 +545,13 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    (926 px de large) avec la mise en page du Mac alors que le JS, lui, le
    traitait déjà en téléphone.
    ═══════════════════════════════════════════════════════════════════════ */
-:root[data-mobile="on"] .app{height:100svh;overflow:hidden}
+/* `dvh` et non `svh` ICI. Le passage à `svh` avait été fait pour que le
+   document ne se redimensionne pas pendant qu'on défile (barre d'adresse de
+   Safari qui se replie). Depuis le carrousel, le document ne défile PLUS du
+   tout sur téléphone — ce sont les pages qui défilent — donc cette instabilité
+   n'existe plus, et `dvh` devient strictement meilleur : le cadre fait
+   exactement la hauteur visible, sans bande morte sous la barre d'onglets. */
+:root[data-mobile="on"] .app{height:100dvh;overflow:hidden}
 :root[data-mobile="on"] .frame{height:100%;min-height:0;position:relative}
 :root[data-mobile="on"] .main{flex:1;min-height:0;overflow:hidden;padding:0}
 
@@ -581,6 +587,25 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* Pendant le geste, la bande SUIT le doigt : aucune transition, sinon elle
    traînerait derrière lui. */
 :root[data-mobile="on"] .wrap.dragging{transition:none}
+/* ── POURQUOI LE GESTE SACCADAIT ──
+   `content-visibility:auto` fait sauter la mise en page et la peinture de tout
+   ce qui n'est pas près de l'écran. Excellent pour défiler une longue liste —
+   désastreux pendant un glissement horizontal : à chaque pixel, des dizaines de
+   tuiles de la page qui arrive franchissaient la frontière et se faisaient
+   calculer une par une, EN PLEIN GESTE. D'où les à-coups.
+   Le temps du geste, les pages du carrousel rendent tout : une seule mise en
+   page au dixième de seconde où le doigt part, puis plus rien à faire que
+   déplacer une texture. */
+:root[data-mobile="on"] .wrap.dragging .cardlist>.cardtile,
+:root[data-mobile="on"] .wrap.dragging .cards-grid>.card-thumb,
+:root[data-mobile="on"] .wrap.dragging .cardser-grid>.cardser-bubble{
+  content-visibility:visible;
+}
+/* `will-change` UNIQUEMENT pendant le geste. En permanence, il ferait de la
+   bande un bloc conteneur pour les `position:fixed` qu'elle contient (et
+   garderait en mémoire vidéo une texture de trois écrans). Le `translate3d` de
+   la règle de base suffit à la faire promouvoir pour la transition. */
+:root[data-mobile="on"] .wrap.dragging{will-change:transform}
 /* Les défileurs horizontaux internes gardent leur propre geste. */
 :root[data-mobile="on"] .strip-track,
 :root[data-mobile="on"] .inv-table-scroll{touch-action:pan-x}
@@ -605,7 +630,14 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 :root[data-mobile="on"] #view-invest{display:block}
 :root[data-mobile="on"] #view-wishlist-detail{display:none}
 :root[data-mobile="on"] #view-wishlist-detail.active{display:block}
-:root[data-mobile="on"] #pager:has(#view-wishlist-detail.active) #view-wishlists{display:none}
+/* `:not(.exiting)` : le temps que la liste s'efface, elle doit RESTER visible —
+   sinon son animation de sortie ne se voyait jamais (elle passait en
+   display:none à la frame où le détail devenait actif). */
+:root[data-mobile="on"] #pager:has(#view-wishlist-detail.active) #view-wishlists:not(.exiting){display:none}
+/* La vue sortante reste DANS sa case de grille (elle s'y superpose à celle qui
+   arrive) au lieu d'être épinglée en `position:fixed` : sous un ancêtre
+   transformé, « fixed » n'est plus relatif à l'écran. */
+:root[data-mobile="on"] .view.exiting{position:relative;inset:auto;width:auto;height:100%}
 :root[data-mobile="on"] #view-home,
 :root[data-mobile="on"] #view-wishlists,
 :root[data-mobile="on"] #view-wishlist-detail,
@@ -616,7 +648,8 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
      carrousel de travers. */
   overscroll-behavior:none;-webkit-overflow-scrolling:touch;
   /* En haut : la hauteur de la barre flottante. En bas : celle de la tab bar. */
-  padding:calc(var(--topbar-h,60px) + var(--s4)) var(--gutter) calc(84px + env(safe-area-inset-bottom));
+  padding:calc(var(--topbar-h,60px) + var(--s4)) var(--gutter)
+          calc(var(--tabbar-h,84px) + var(--s4));
 }
 /* Le mouvement, c'est la bande : les trois pages n'ont plus d'animation
    d'entrée ni de sortie propre. Le détail d'une wishlist, lui, garde son
@@ -3120,7 +3153,11 @@ body::before{display:none}
   .app-header{overflow:visible}
 
   /* ══ TAB BAR ═══════════════════════════════════════════════════ */
-  .tabbar{padding:7px 6px max(7px,env(safe-area-inset-bottom))}
+  /* Le dégagement du trait d'accueil est RESSERRÉ : 34 px de padding sous les
+     libellés sur un iPhone 12 Pro Max, ça se lit comme une bande vide au bas de
+     la barre. On garde de quoi ne pas coller au trait (Apple demande de le
+     dégager) sans lui donner un tiers de la hauteur de la barre. */
+  .tabbar{padding:7px 6px max(6px,calc(env(safe-area-inset-bottom) - 10px))}
   .tabbar .nav-btn{min-height:52px;gap:5px;padding:5px 2px;border-radius:14px}
   .tabbar .nav-icon{width:25px;height:25px}
   .tabbar .nav-svg{width:23px;height:23px}
