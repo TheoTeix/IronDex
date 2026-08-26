@@ -103,12 +103,6 @@
   --mono:var(--disp);
 
   --milo-headroom:86px;
-  /* SONDES (diagnostic) : les valeurs que le navigateur calcule vraiment pour
-     les marges d'encoche et les trois unités de hauteur. Le JS les relit pour
-     le diagnostic écran — impossible de lire `env()` autrement. */
-  --sa-top:env(safe-area-inset-top,0px);
-  --sa-bottom:env(safe-area-inset-bottom,0px);
-  --h-dvh:100dvh; --h-svh:100svh; --h-lvh:100lvh;
   transition:--acc var(--flow), --acc2 var(--flow);
 }
 
@@ -650,39 +644,32 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    composants, et en énumérer une liste serait faux dès le prochain composant
    ajouté. Il n'est évalué qu'aux deux instants où la classe change.
    ══════════════════════════════════════════════════════════════════════ */
-/* SEULEMENT LES DEUX BARRES. J'avais aussi coupé le flou de tout ce qui est
-   DANS les pages — et ça se voyait : chaque panneau, chaque tuile perdait son
-   verre le temps du mouvement puis le retrouvait, ce qui donnait exactement
-   l'impression d'un fond qui « se recharge » à chaque page. Compenser 68
-   déclarations une par une n'est pas tenable.
-   Et ce n'était de toute façon pas là que se trouvait le coût : un élément de
-   verre qui se déplace AVEC son fond garde le même résultat de flou. Les deux
-   barres, elles, ne bougent pas pendant que le contenu défile derrière elles —
-   leur flou est donc recalculé sur toute la largeur de l'écran à chaque frame.
-   C'est le seul vrai gouffre, et c'est le seul qu'on coupe. Leur aspect est
-   compensé juste en dessous, donc la coupure est invisible. */
-:root[data-pager-move] .app-header,
+/* ── LE FLOU DES DEUX BARRES EST ALLÉGÉ, PAS SUPPRIMÉ ──
+   Les deux barres ne bougent pas pendant que le contenu défile derrière elles :
+   leur flou est recalculé sur toute la largeur de l'écran à chaque frame. C'est
+   là qu'est le coût du glissement. Les éléments de verre DANS les pages, eux, se
+   déplacent AVEC leur fond et gardent le même résultat de flou : on n'y touche
+   pas (les couper faisait « clignoter » chaque panneau).
+
+   Mais le couper NET sur les barres était une mauvaise idée aussi. Sans flou,
+   une barre translucide ne montre plus que sa teinte : elle devenait donc
+   presque NOIRE le temps de l'animation, puis reprenait son aspect à l'arrivée.
+   C'est précisément le clignotement décrit. Et ma « compensation » — un aplat
+   opaque à 96 % — ne faisait que rendre ce noir plus franc.
+
+   On ne touche donc plus AUCUNE couleur : seul le RAYON baisse, 14 → 6 px. Le
+   coût d'un flou croît avec son rayon, l'économie est réelle ; et sur un fond
+   aussi sombre, l'écart entre 6 et 14 px ne se voit pas. */
 :root[data-pager-move] .app-header::before,
-:root[data-pager-move] .tabbar,
 :root[data-pager-move] .tabbar::before{
-  backdrop-filter:none!important;
-  -webkit-backdrop-filter:none!important;
+  backdrop-filter:blur(6px) saturate(1.65);
+  -webkit-backdrop-filter:blur(6px) saturate(1.65);
 }
 /* L'aurora est trois grandes nappes en mouvement perpétuel : autant de
-   compositions par frame que le geste n'a pas besoin de payer. */
+   compositions par frame que le geste n'a pas besoin de payer. Mise en pause,
+   elle reprend exactement où elle en était — invisible. */
 :root[data-pager-move] .aurora>i{animation-play-state:paused}
 
-/* ── ET SURTOUT : QUE ÇA NE SE VOIE PAS ──
-   Couper le flou fait perdre au verre ce qui le rend opaque à l'œil : pendant
-   le mouvement, les deux barres devenaient quasi TRANSPARENTES, puis le verre
-   revenait d'un coup. On croyait à un style qui se charge en retard.
-   Le flou est donc remplacé, le temps du mouvement, par une teinte PLUS DENSE
-   qui rend le même service. À l'œil la barre ne change pas ; c'est seulement
-   beaucoup moins cher à peindre. */
-:root[data-pager-move] .app-header{background:color-mix(in srgb,var(--v-0) 96%,transparent)}
-:root[data-pager-move] .tabbar{background:color-mix(in srgb,var(--v-0) 96%,transparent)}
-:root[data-pager-move] .app-header::before,
-:root[data-pager-move] .tabbar::before{background:var(--v-0);opacity:.55}
 /* ── POURQUOI LE GESTE SACCADAIT ──
    `content-visibility:auto` fait sauter la mise en page et la peinture de tout
    ce qui n'est pas près de l'écran. Excellent pour défiler une longue liste —
@@ -3560,18 +3547,3 @@ body::before{display:none}
 }
 
 
-/* ── DIAGNOSTIC ÉCRAN (temporaire, 2026-08-26) ──
-   Volontairement sans verre ni animation : il doit dire la vérité sur la
-   géométrie, pas la décorer. À retirer avec showScreenDiag(). */
-#screen-diag{position:fixed;inset:0;z-index:calc(var(--z-toast) + 2);
-  display:grid;place-items:center;padding:20px;background:rgba(2,3,5,.86)}
-#screen-diag .sd-card{width:100%;max-width:420px;padding:20px;border-radius:16px;
-  background:#0d1017;border:1px solid var(--line-2);box-shadow:var(--e4)}
-#screen-diag h3{margin:0 0 14px;font-size:16px;font-weight:800}
-#screen-diag dl{display:grid;grid-template-columns:1fr auto;gap:8px 12px;margin:0;
-  font-size:12.5px;font-variant-numeric:tabular-nums}
-#screen-diag dt{color:var(--t3)}
-#screen-diag dd{margin:0;font-weight:700;text-align:right}
-#screen-diag p{margin:16px 0 0;font-size:11.5px;color:var(--t3);line-height:1.5}
-#screen-diag .sd-alert{margin:0 0 14px;padding:10px 12px;border-radius:10px;font-size:12px;
-  color:#ffd9d9;background:rgba(255,92,92,.12);border:1px solid rgba(255,92,92,.32)}

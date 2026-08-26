@@ -2779,74 +2779,14 @@ function palCommands() {
     ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
     { kind: 'act', name: 'Récupérer les cotes du dépôt', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullPricesFromRepo() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
-    // TEMPORAIRE (2026-08-26) : relève ce que l'appareil dit VRAIMENT de son
-    // écran. La bande noire du bas résiste à trois corrections faites « à
-    // l'aveugle » ; ces chiffres disent lequel des deux cas c'est — le cadre ne
-    // couvre pas l'écran, ou il le couvre et c'est la barre qui s'arrête trop
-    // haut. À retirer dès que la question est tranchée.
-    { kind: 'act', name: 'Diagnostic écran', sub: 'Mesures à envoyer en cas de bande noire', ico: ICO.refresh, run: () => showScreenDiag() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
   ];
 }
-/* ── DIAGNOSTIC ÉCRAN (temporaire) ────────────────────────────────────────
-   Affiche, en gros et sur place, ce que l'appareil rapporte de sa propre
-   géométrie. Un iPhone n'a pas de console : c'est le seul moyen d'obtenir des
-   NOMBRES au lieu de continuer à deviner. Se referme au toucher. */
-/* Affiche le diagnostic DE LUI-MÊME quand la page ne remplit pas l'écran. Cinq
-   corrections a l'aveugle n'ont pas eu raison de la bande du bas ; sans les
-   nombres de l'appareil, la sixième serait une devinette de plus. La condition
-   est stricte (plus de 8 px d'écart entre la hauteur de la page et celle de
-   l'écran) et le panneau ne s'affiche qu'UNE fois par session : sur un appareil
-   où tout va bien, il ne se montre jamais. */
-function autoDiagIfLetterboxed() {
-  if (!isPhone()) return;
-  try {
-    if (sessionStorage.getItem('irondex-diag-shown')) return;
-    // `screen.height` est en points de l'appareil, orientation comprise : en
-    // portrait c'est bien la hauteur de l'écran. On compare à la page.
-    const ecran = Math.max(screen.height || 0, screen.width || 0);
-    const page = Math.max(innerHeight || 0, document.documentElement.clientHeight || 0);
-    const manque = ecran - page;
-    if (!(manque > 8)) return;
-    sessionStorage.setItem('irondex-diag-shown', '1');
-    showScreenDiag(`La page mesure ${page} px de haut pour un écran de ${ecran} px : il en manque ${manque}. `
-      + 'Envoie cette capture — ces nombres disent exactement où est le défaut.');
-  } catch {}
-}
-function showScreenDiag(alerte) {
-  closePalette();
-  const cs = getComputedStyle(document.documentElement);
-  const px = v => Math.round(parseFloat(v) || 0);
-  const r = el => { const b = el && el.getBoundingClientRect(); return b ? `${px(b.top)} → ${px(b.bottom)}` : 'absent'; };
-  const app = document.querySelector('.app'), bar = document.querySelector('.tabbar');
-  const barBottom = bar ? Math.round(bar.getBoundingClientRect().bottom) : 0;
-  const lignes = [
-    ['fenêtre (innerW × innerH)', `${innerWidth} × ${innerHeight}`],
-    ['écran (screen)', `${screen.width} × ${screen.height}`],
-    ['zone visuelle', visualViewport ? `${Math.round(visualViewport.width)} × ${Math.round(visualViewport.height)}` : 'inconnue'],
-    ['installée (standalone)', (navigator.standalone === true ? 'OUI' : navigator.standalone === false ? 'non' : '?')
-      + (matchMedia('(display-mode: standalone)').matches ? ' · display-mode ok' : ' · display-mode NON')],
-    ['encoche haut / bas', `${px(cs.getPropertyValue('--sa-top'))} / ${px(cs.getPropertyValue('--sa-bottom'))}`],
-    ['cadre .app', r(app)],
-    ['barre d\u2019onglets', r(bar)],
-    ['SOUS la barre', `${innerHeight - barBottom} px`],
-    ['100dvh / 100svh / 100lvh', `${px(cs.getPropertyValue('--h-dvh'))} / ${px(cs.getPropertyValue('--h-svh'))} / ${px(cs.getPropertyValue('--h-lvh'))}`],
-    ['racine (clientH) / html', `${document.documentElement.clientHeight} / ${px(getComputedStyle(document.documentElement).height)}`],
-    ['échelle · densité', `${visualViewport ? (Math.round(visualViewport.scale * 100) / 100) : '?'} · ${devicePixelRatio}`],
-    ['décalage zone visuelle', visualViewport ? `${Math.round(visualViewport.offsetTop)} / ${Math.round(visualViewport.pageTop)}` : '?'],
-    ['MANQUE en bas', `${Math.max(screen.height || 0, screen.width || 0) - (innerHeight || 0)} px`],
-  ];
-  const box = document.createElement('div');
-  box.id = 'screen-diag';
-  box.innerHTML = `<div class="sd-card"><h3>Diagnostic écran</h3>${
-    alerte ? `<p class="sd-alert">${esc(alerte)}</p>` : ''
-  }<dl>${
-    lignes.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join('')
-  }</dl><p>Fais une capture et envoie-la. Touche pour fermer.</p></div>`;
-  box.onclick = () => box.remove();
-  document.body.appendChild(box);
-}
+/* Le panneau « Diagnostic écran » a été retiré le 2026-08-26, la question qu'il
+   servait à trancher l'étant : il manquait exactement la hauteur de la barre
+   d'état (47 px), parce que les metas `apple-mobile-web-app-*` faisaient
+   dimensionner la vue par le chemin historique d'iOS. Voir index.html. */
 // Toutes les cartes atteignables, dédoublonnées, avec leur provenance.
 function palCards() {
   const seen = new Map();
@@ -8671,7 +8611,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui41';
+const BUILD = 'ui42';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
@@ -8788,7 +8728,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(checkForNewSeries, 1400);
     setTimeout(refreshSyncMeta, 600);         // « cotes il y a … » une fois l'accueil peint
     setTimeout(offerRecoveryIfNeeded, 900);   // propose la récupération si des sections sont vides
-    setTimeout(autoDiagIfLetterboxed, 2000);  // la page ne remplit pas l'écran ? on montre les chiffres
     bindBackupShortcuts();
     bindBrandReveal();                        // en-tête téléphone : actions au tap sur la marque
     bindPalette();                            // ⌘K / « / » — accélérateur global

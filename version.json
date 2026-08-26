@@ -1,4 +1,4 @@
 {
   "_": "Version du code en ligne. L'app la relit à chaque démarrage SANS PASSER PAR LE CACHE et se remet à jour toute seule si elle tourne sur une version périmée. À monter avec les ?v= de index.html et le V de sw.js.",
-  "build": "ui41"
+  "build": "ui42"
 }
