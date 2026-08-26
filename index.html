@@ -2,14 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <!-- `height=device-height` : sur une app iOS installée, sans lui, la hauteur du
-       viewport de mise en page peut rester plus PETITE que l'écran — la page est
-       alors posée dans une boîte trop courte et le système comble le reste. Le
-       symptôme est sans ambiguïté : zoomer à la main faisait disparaître la
-       bande, donc c'est bien la page qui était trop petite, pas une zone hors
-       de sa portée. Cette déclaration force le viewport à faire la hauteur de
-       l'appareil. -->
-  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <!-- PAS de `theme-color`, ni ici ni dans le manifeste. Sur iOS 16.4+, une
        couleur de thème déclarée fait peindre par le SYSTÈME la barre d'état et
        la zone du trait d'accueil comme du chrome de navigateur, et la vue web
@@ -22,14 +15,26 @@
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- `black` ET NON `black-translucent`. Le diagnostic sur l'appareil a donné le
+       verdict : écran 926 px, page 879 px, et l'encoche du HAUT vaut 47 px —
+       926 − 879 = 47, exactement. C'est le bug de `black-translucent` : iOS
+       réduit le viewport de la hauteur de la barre d'état MAIS garde la page
+       ancrée en haut, laissant donc 47 px que la page ne peut pas atteindre EN
+       BAS. Aucune correction CSS ne pouvait y arriver — c'est pour ça que cinq
+       tentatives ont échoué, et c'est pour ça que zoomer « corrigeait »
+       l'affichage : le zoom étirait la page par-dessus le trou.
+       Avec `black`, le viewport est ancré SOUS la barre d'état et descend
+       jusqu'au bord : plus de trou. Le haut reste visuellement identique — la
+       barre d'état est noire, le fond de l'app est #06070A. Et `viewport-fit=cover`
+       continue de nous donner le dégagement du trait d'accueil en `env()`. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="IronDex">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
   <meta name="description" content="MiloDex — le coffre de ta collection Pokémon : valeur, wishlists, portefeuille et classeurs 3D.">
   <title>MiloDex — Le Coffre</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui40">
+  <link rel="stylesheet" href="style.css?v=ui41">
 </head>
 <body>
 
@@ -408,6 +413,6 @@
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
 <!-- Base locale des fiches Cardmarket (idProduct/numéro → slug exact). -->
 <script src="cm-slugs.js" defer></script>
-<script src="app.js?v=ui40"></script>
+<script src="app.js?v=ui41"></script>
 </body>
 </html>

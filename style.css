@@ -650,10 +650,17 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    composants, et en énumérer une liste serait faux dès le prochain composant
    ajouté. Il n'est évalué qu'aux deux instants où la classe change.
    ══════════════════════════════════════════════════════════════════════ */
-:root[data-pager-move] .wrap,
-:root[data-pager-move] .wrap *,
-:root[data-pager-move] .wrap *::before,
-:root[data-pager-move] .wrap *::after,
+/* SEULEMENT LES DEUX BARRES. J'avais aussi coupé le flou de tout ce qui est
+   DANS les pages — et ça se voyait : chaque panneau, chaque tuile perdait son
+   verre le temps du mouvement puis le retrouvait, ce qui donnait exactement
+   l'impression d'un fond qui « se recharge » à chaque page. Compenser 68
+   déclarations une par une n'est pas tenable.
+   Et ce n'était de toute façon pas là que se trouvait le coût : un élément de
+   verre qui se déplace AVEC son fond garde le même résultat de flou. Les deux
+   barres, elles, ne bougent pas pendant que le contenu défile derrière elles —
+   leur flou est donc recalculé sur toute la largeur de l'écran à chaque frame.
+   C'est le seul vrai gouffre, et c'est le seul qu'on coupe. Leur aspect est
+   compensé juste en dessous, donc la coupure est invisible. */
 :root[data-pager-move] .app-header,
 :root[data-pager-move] .app-header::before,
 :root[data-pager-move] .tabbar,
@@ -685,6 +692,9 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    Le temps du geste, les pages du carrousel rendent tout : une seule mise en
    page au dixième de seconde où le doigt part, puis plus rien à faire que
    déplacer une texture. */
+/* Celui-ci reste : `content-visibility` n'a aucun effet VISUEL, il ne fait que
+   reporter du calcul. Le couper le temps du geste ne change donc rien à l'image
+   — seulement à la cadence. */
 :root[data-mobile="on"] .wrap.dragging .cardlist>.cardtile,
 :root[data-mobile="on"] .wrap.dragging .cards-grid>.card-thumb,
 :root[data-mobile="on"] .wrap.dragging .cardser-grid>.cardser-bubble{
