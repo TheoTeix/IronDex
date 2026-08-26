@@ -140,6 +140,16 @@ function isPhone() {
     || (matchMedia('(hover:none) and (pointer:coarse)').matches && Math.min(w, h) < 500);
   return _isPhone;
 }
+// La barre haute FLOTTE au-dessus des pages sur téléphone (c'est ce qui rend son
+// verre visible : il faut que quelque chose passe derrière). Les pages ont donc
+// besoin de sa hauteur exacte en rembourrage — et cette hauteur dépend de
+// l'encoche, donc on la mesure au lieu de la deviner.
+function syncTopbarHeight() {
+  const h = document.querySelector('.app-header');
+  if (!h) return;
+  const px = Math.round(h.getBoundingClientRect().height);
+  if (px > 20) document.documentElement.style.setProperty('--topbar-h', px + 'px');
+}
 function paintDeviceFlag() {
   _isPhone = null;   // la taille a changé : on remesure une fois, ici
   try { document.documentElement.dataset.mobile = isPhone() ? 'on' : 'off'; } catch {}
@@ -298,8 +308,20 @@ let _actionsOn = false;
 // style inline ne peut être écrasé par aucune règle du projet — la version CSS
 // se faisait neutraliser par une autre feuille et les icônes restaient
 // empilées sur le logo.
-const ARC = [{ a: -4 }, { a: 24 }, { a: 56 }, { a: 88 }];   // degrés : 0° = à droite, 90° = en dessous
-const ARC_R = 66;                                            // rayon, en pixels
+// L'arc des actions de l'en-tête, CALCULÉ et non tabulé. C'était une table de
+// quatre angles écrite pour quatre boutons ; il n'y en a plus que trois depuis
+// que les classeurs ont quitté le téléphone, et ils se retrouvaient tassés sur
+// le début de l'arc en laissant le bas vide. Les angles sont donc répartis sur
+// tout le balayage, quel que soit leur nombre.
+// Le balayage part SOUS l'horizontale (6° et non -8°) : au-dessus, le premier
+// bouton dépassait le haut de l'écran sur un appareil sans encoche, où le
+// centre du logo n'est qu'à 26 px du bord.
+const ARC_FROM = 6, ARC_TO = 96;    // degrés : 0° = à droite, 90° = en dessous
+const ARC_R = 78;                   // rayon, en pixels
+function arcAngle(i, n) {
+  if (n <= 1) return (ARC_FROM + ARC_TO) / 2;
+  return ARC_FROM + (i * (ARC_TO - ARC_FROM)) / (n - 1);
+}
 function setHeaderActions(on) {
   _actionsOn = !!on;
   const root = document.documentElement;
@@ -308,8 +330,7 @@ function setHeaderActions(on) {
   if (brand) brand.setAttribute('aria-expanded', _actionsOn ? 'true' : 'false');
   const btns = [...document.querySelectorAll('.header-actions > .btn')];
   btns.forEach((b, i) => {
-    const cfg = ARC[i] || ARC[ARC.length - 1];
-    const rad = (cfg.a * Math.PI) / 180;
+    const rad = (arcAngle(i, btns.length) * Math.PI) / 180;
     if (_actionsOn) {
       b.style.transitionDelay = `${20 + i * 42}ms`;
       b.style.transform = `translate(${Math.round(Math.cos(rad) * ARC_R)}px,${Math.round(Math.sin(rad) * ARC_R)}px) scale(1)`;
@@ -3217,6 +3238,8 @@ function render() {
   document.getElementById(`view-${state.view}`)?.classList.add('active');
   renderViewContent(state.view);
   setPagerColumn(state.view, true);   // en place d'un coup : on ne glisse pas au démarrage
+  bindPagerSwipe();
+  syncTopbarHeight();
   repositionNavSoon(true);
   // Les deux autres colonnes se garnissent au repos, après la première image.
   warmPagerPagesSoon();
@@ -3268,15 +3291,125 @@ function transitionKind(fromView, toView) {
   if (fromView === 'binder-detail' && toView === 'binders') return 'backward';
   return 'crossfade';
 }
-// Position de la bande. Écrite dans une variable CSS : le seul travail du
-// navigateur est ensuite d'animer un translate sur le compositeur.
+function pagerEl() { return document.getElementById('pager'); }
+
+/* ── POSITION DE LA BANDE ────────────────────────────────────────────────
+   Le `transform` est écrit DIRECTEMENT, et non via une variable CSS
+   (`translate3d(calc(var(--pg) * -100%),0,0)`). C'était un piège : changer une
+   propriété personnalisée NON ENREGISTRÉE ne déclenche aucune transition sur la
+   propriété qui l'utilise — la valeur calculée du `transform` reste le même flot
+   de jetons `calc(var(--pg)…)` avant et après. Vérifié avec
+   `getAnimations()` : zéro animation, et la page était déjà arrivée à la frame
+   suivante. La bande SAUTAIT au lieu de glisser.
+   En écrivant le pourcentage en dur, la valeur calculée change vraiment : la
+   transition démarre, et elle est portée par le compositeur.
+
+   `_pagerPos` est la source de vérité (en pages, fractionnaire pendant un
+   glissement au doigt) : plus fiable que relire le style. */
+let _pagerPos = 0;
+function setPagerTransform(pos) {
+  const wrap = pagerEl();
+  if (wrap) wrap.style.transform = `translate3d(${(-pos * 100).toFixed(4)}%,0,0)`;
+  _pagerPos = pos;
+}
+// La DURÉE suit la DISTANCE : sauter deux pages d'un coup doit se VOIR passer
+// par celle du milieu (c'est ce qu'on demande à un carrousel), pas y arriver
+// dans le même temps qu'un pas d'une seule page.
 function setPagerColumn(view, instant) {
-  const wrap = document.getElementById('pager');
+  const wrap = pagerEl();
+  if (!wrap) return;
+  // Sur Mac il n'y a pas de bande : on efface toute trace (utile après une
+  // rotation ou un passage d'une largeur à l'autre).
+  if (!isPhone()) { wrap.style.transform = ''; wrap.style.transitionDuration = ''; _pagerPos = 0; return; }
   const col = pagerColumnOf(view);
-  if (!wrap || col == null) return;
+  if (col == null) return;
+  const target = PHONE_PAGES.indexOf(col);
+  const dist = Math.min(2, Math.abs(target - _pagerPos));
+  wrap.style.transitionDuration = Math.round(230 + 170 * dist) + 'ms';
   if (instant) wrap.classList.add('no-anim');
-  wrap.style.setProperty('--pg', String(PHONE_PAGES.indexOf(col)));
+  setPagerTransform(target);
   if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); }
+}
+
+/* ── GLISSEMENT AU DOIGT ────────────────────────────────────────────────
+   La bande suit le doigt au pixel, puis se range sur la page la plus probable
+   (distance parcourue OU vitesse au lâcher). Trois précautions :
+
+   · L'AXE est décidé aux premiers pixels et ne change plus. Sans ça, un geste
+     de défilement vertical un peu oblique faisait partir le carrousel de
+     travers — c'est le bug classique de ce genre de composant.
+   · Les défileurs HORIZONTAUX internes (le film des pièces maîtresses, le
+     tableau du scellé) gardent leur geste : on ne prend pas la main dedans.
+   · Aux extrémités, la bande ne suit qu'au tiers : le geste répond, mais on
+     sent qu'il n'y a rien après.
+   Le partage avec le navigateur passe par `touch-action` (voir style.css) :
+   `pan-y` sur la bande lui laisse le défilement vertical et nous donne
+   l'horizontal, ce qui est la seule méthode fiable sur iOS. */
+const SWIPE_KEEP_OUT = '.strip-track,.inv-table-scroll,.hscroll,.scroller,input,textarea,select';
+function bindPagerSwipe() {
+  const wrap = pagerEl();
+  if (!wrap || wrap.dataset.swipe) return;
+  wrap.dataset.swipe = '1';
+  let id = null, x0 = 0, y0 = 0, t0 = 0, base = 0, w = 1, axis = null, dx = 0;
+  const maxCol = () => PHONE_PAGES.length - 1;
+
+  const reset = () => { id = null; axis = null; dx = 0; wrap.classList.remove('dragging'); };
+
+  wrap.addEventListener('pointerdown', e => {
+    if (!isPhone() || id !== null) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest && e.target.closest(SWIPE_KEEP_OUT)) return;
+    const col = pagerColumnOf(state.view);
+    if (col == null) return;
+    id = e.pointerId; x0 = e.clientX; y0 = e.clientY; t0 = e.timeStamp;
+    base = PHONE_PAGES.indexOf(col);
+    w = wrap.clientWidth || innerWidth || 1;
+    axis = null; dx = 0;
+  }, { passive: true });
+
+  wrap.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    const mx = e.clientX - x0, my = e.clientY - y0;
+    if (axis === null) {
+      // 10 px de franchise : en dessous, c'est un tap, pas un geste.
+      if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
+      if (Math.abs(my) >= Math.abs(mx)) { reset(); return; }   // vertical : on rend la main
+      axis = 'x';
+      wrap.classList.add('dragging');
+    }
+    dx = mx;
+    let pos = base - dx / w;
+    if (pos < 0) pos /= 3;                                     // élastique en tête
+    else if (pos > maxCol()) pos = maxCol() + (pos - maxCol()) / 3;
+    setPagerTransform(pos);
+  }, { passive: true });
+
+  const release = e => {
+    if (e.pointerId !== id) return;
+    // TOUT est relevé avant le reset : `reset()` remet `dx` à zéro, et lire
+    // `dx` après lui donnait `Math.sign(0) === 0`, donc une page cible égale à
+    // la page de départ — le geste revenait toujours en arrière.
+    const dragged = axis === 'x';
+    const moved = dx;
+    const from = base;
+    const width = w;
+    const speed = Math.abs(moved) / Math.max(1, e.timeStamp - t0);   // px/ms
+    reset();
+    if (!dragged || !moved) return;
+    // On change de page si le geste a parcouru un bon quart d'écran, OU s'il a
+    // été vif. La vitesse seule ne suffit PAS : un micro-mouvement rapide (le
+    // départ d'un tap un peu glissé) dépasse facilement le seuil de vitesse, et
+    // la page changeait sous le doigt. D'où un plancher de 44 px — la largeur
+    // d'un doigt, donc le minimum pour un geste voulu.
+    const far = Math.abs(moved) > width * 0.28;
+    const flick = Math.abs(moved) > 44 && speed > 0.45;
+    let target = (far || flick) ? from - Math.sign(moved) : from;
+    target = Math.max(0, Math.min(maxCol(), target));
+    if (target === from) setPagerColumn(state.view);            // retour élastique
+    else navigate(PHONE_PAGES[target]);
+  };
+  wrap.addEventListener('pointerup', release, { passive: true });
+  wrap.addEventListener('pointercancel', e => { if (e.pointerId === id) { reset(); setPagerColumn(state.view); } }, { passive: true });
 }
 // Les pages VOISINES sont garnies une fois, au repos, pour que le premier
 // glissement vers elles n'ait rien à construire. Le contenu de la page CIBLE
@@ -8317,7 +8450,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Positionne la pastille une fois la mise en page prête, puis une fois les
     // polices chargées (leurs largeurs changent) — évite les recalages/sautillements.
     repositionNavSoon(true);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => positionNavIndicator(true));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { positionNavIndicator(true); syncTopbarHeight(); });
     setTimeout(() => positionNavIndicator(true), 450);
     setTimeout(checkForNewSeries, 1400);
     setTimeout(refreshSyncMeta, 600);         // « cotes il y a … » une fois l'accueil peint
@@ -8348,5 +8481,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 // pendant que la barre change de largeur se lit comme un bug), et une seule
 // fois par frame — `resize` part en rafale sur iOS (barre d'adresse, clavier),
 // et chaque appel force un calcul de mise en page.
-window.addEventListener('resize', () => repositionNavSoon(true));
+window.addEventListener('resize', () => { repositionNavSoon(true); syncTopbarHeight(); setPagerColumn(state.view, true); });
 window.addEventListener('orientationchange', () => setTimeout(() => repositionNavSoon(true), 60));
