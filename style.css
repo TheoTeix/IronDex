@@ -2009,30 +2009,59 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 /* Tuile horizontale : la vignette à gauche, les chiffres à droite. C'est la
    disposition d'origine, réclamée après un essai « mur de cartes » : sur un
    portefeuille, on lit d'abord des valeurs, pas des illustrations. */
-.cardlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:var(--s4)}
+/* ══════════════════════════════════════════════════════════════════════
+   TUILE D'UNE CARTE SUIVIE (Portefeuille › Cartes) — refonte
+
+   Ce que la version d'avant faisait mal, et qui est corrigé ici :
+    · le VISUEL était le plus petit élément de la tuile (92 px) et rogné. C'est
+      pourtant le sujet : il passe à 104 px et il est ENTIER (`contain`), posé
+      sur une plaque sombre qui lui sert de passe-partout ;
+    · cinq lignes de même poids ne disaient pas quoi lire en premier. Il y en a
+      quatre, hiérarchisées : nom → cote → achat → commandes ;
+    · la cote et la plus-value — les deux nombres qu'on COMPARE — étaient
+      séparées par un bouton et par une ligne. Elles partagent maintenant la
+      même ligne, la plus-value poussée à droite ;
+    · le pied se disputait la place entre quantité, lien Cardmarket et
+      corbeille, au point qu'il avait fallu l'autoriser à passer à la ligne —
+      donc des tuiles de hauteurs différentes et une grille en dents de scie.
+      Les trois actions sont regroupées à droite, en icônes de même poids, sur
+      une ligne qui ne déborde plus.
+   ══════════════════════════════════════════════════════════════════════ */
+.cardlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(286px,1fr));gap:var(--s4)}
 .cardtile{
-  display:flex;gap:14px;padding:14px;--tc:var(--acc);
-  border-radius:var(--r-lg);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
+  display:flex;gap:14px;padding:13px;--tc:var(--acc);
+  border-radius:var(--r-lg);
+  /* La teinte du TYPE entre dans le fond, très bas (7 %) : deux cartes de types
+     différents ne se ressemblent plus tout à fait, sans qu'aucune ne devienne
+     une tuile colorée. */
+  background:
+    linear-gradient(180deg,color-mix(in srgb,var(--tc) 7%,transparent),transparent 58%),
+    linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
   border:1px solid var(--line);box-shadow:var(--e1);
   animation:rise var(--dur-2) var(--ease-out) both;animation-delay:calc(min(var(--i,0),14) * 26ms);
   transition:border-color var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),
              transform var(--dur-1) var(--ease-out);
 }
-.cardtile:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tc) 36%,transparent);
+.cardtile:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tc) 40%,transparent);
   box-shadow:var(--e2)}
-/* PAS de bande noire au-dessus ni en dessous du visuel. La cause n'était pas
-   le ratio des scans, c'était `align-items:stretch` : dans une ligne flex, le
-   cadre était ÉTIRÉ à la hauteur de la tuile (92×214 mesuré au lieu de 92×129),
-   donc `aspect-ratio` ne servait plus à rien et l'image flottait au milieu avec
-   du vide au-dessus et au-dessous. `align-self:flex-start` rend au cadre la
-   forme d'une carte ; `cover` finit le travail (~1 % de rognage sur un bord,
-   les scans TCGdex 245×337 et Cardmarket 255×361 n'ayant pas exactement le
-   2,5/3,5 du cadre). */
-.cardtile-art{position:relative;width:92px;flex:none;align-self:flex-start;
-  aspect-ratio:2.5/3.5;border-radius:10px;
-  overflow:hidden;background:none;border:1px solid var(--line);cursor:zoom-in}
-.cardtile-art img{width:100%;height:100%;object-fit:cover}
-.cardtile-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+/* LE VISUEL, ENTIER. `cover` rognait ~1 % sur un bord — donc le liseré de la
+   carte, précisément ce qu'un collectionneur regarde. `contain` sur une plaque
+   sombre garde la carte complète, et le fond ne se voit quasiment pas puisque
+   les scans (245×337, 255×361) ont presque le 2,5/3,5 du cadre.
+   `align-self:flex-start` reste indispensable : dans une ligne flex le cadre
+   serait ÉTIRÉ à la hauteur de la tuile et `aspect-ratio` ne servirait plus à
+   rien (92×214 mesuré au lieu de 92×129), l'image flottant au milieu avec du
+   vide au-dessus et au-dessous. */
+.cardtile-art{position:relative;width:104px;flex:none;align-self:flex-start;
+  aspect-ratio:2.5/3.5;border-radius:9px;
+  overflow:hidden;background:rgba(0,0,0,.34);border:1px solid var(--line);cursor:zoom-in;
+  transition:border-color var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out)}
+.cardtile-art img{width:100%;height:100%;object-fit:contain;display:block}
+/* Au survol, le cadre prend la couleur du type : la carte accroche la lumière
+   au lieu de s'assombrir. */
+.cardtile:hover .cardtile-art{border-color:color-mix(in srgb,var(--tc) 46%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 20%,transparent)}
+.cardtile-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
 /* Pas de backdrop-filter ici : une couche de flou est créée même à
    opacity:0, et il y a une loupe PAR carte suivie (91 sur une seule série).
    Un simple scrim au-dessus de l'artwork fait le même effet. */
@@ -2041,8 +2070,17 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   transition:opacity var(--dur-1) var(--ease-out)}
 .cardtile-zoom svg{width:20px;height:20px}
 .cardtile-art:hover .cardtile-zoom{opacity:1}
-.cardtile-name{font-size:14px;font-weight:700;letter-spacing:-.012em;
+/* ── LIGNE DE TITRE ──
+   Le nom prend toute la place disponible ; la quantité le suit en pastille, et
+   seulement à partir de deux exemplaires. C'est une information de LECTURE — le
+   réglage, lui, est dans la barre d'actions. */
+.cardtile-head{display:flex;align-items:center;gap:7px;min-width:0}
+.cardtile-name{flex:1;min-width:0;font-size:14.5px;font-weight:750;letter-spacing:-.014em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cardtile-mult{flex:none;height:18px;padding:0 6px;display:inline-flex;align-items:center;
+  border-radius:5px;background:color-mix(in srgb,var(--tc) 24%,transparent);
+  color:var(--t1);font-size:10.5px;font-weight:900;font-variant-numeric:tabular-nums}
+.cardtile-mult[hidden]{display:none}
 .cardtile-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .cardtile-num{font-size:10.5px;font-weight:700;color:var(--t3);font-variant-numeric:tabular-nums}
 /* Puce de rareté : la couleur est un RAPPEL, le libellé porte l'info. */
@@ -2056,28 +2094,24 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .r-illus{background:rgba(61,220,151,.18);color:#8BF0C4}
 .r-special{background:rgba(255,121,158,.2);color:#FFA8C0}
 .r-secret{background:linear-gradient(90deg,rgba(255,184,77,.26),rgba(255,121,158,.26));color:#FFD9A8}
-.cardtile-price{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.cardtile-cote{font-size:18px;font-weight:900;letter-spacing:-.024em;font-variant-numeric:tabular-nums}
+/* ── LES DEUX NOMBRES QU'ON COMPARE, SUR LA MÊME LIGNE ──
+   La cote mène (19 px, très gras) ; la plus-value est poussée à droite, de la
+   couleur de son signe. Avant, le bouton de recote s'asseyait entre les deux et
+   la plus-value vivait une ligne plus bas : on ne pouvait pas les lire ensemble. */
+.cardtile-price{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0}
+.cardtile-cote{font-size:19px;font-weight:900;letter-spacing:-.026em;font-variant-numeric:tabular-nums}
 .cote-wait{font-size:12px;font-weight:500;color:var(--t3);letter-spacing:0}
-.cardtile-sum{font-size:11.5px;font-weight:700;color:var(--t3);font-variant-numeric:tabular-nums}
-/* ── REFAIRE LA COTE DE CETTE CARTE ────────────────────────────────
-   Collé au montant, à droite : c'est CE prix qu'il recalcule, et rien d'autre.
-   Il a remplacé le « Sync » global de l'en-tête, qui recotait 1 400 cartes pour
-   corriger celle qu'on regarde. Discret au repos (c'est une réparation, pas
-   l'action principale de la tuile), franc au survol. */
-.cardtile-sync{
-  margin-left:auto;align-self:center;flex:none;
-  width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
-  color:var(--t3);
-  transition:color var(--dur-1) var(--ease-out),transform var(--dur-0) var(--ease-out);
-}
-.cardtile-sync svg{width:15px;height:15px}
-.cardtile-sync:hover:not(:disabled){color:var(--acc)}
-.cardtile-sync:active:not(:disabled){transform:scale(.9)}
-.cardtile-sync:disabled{opacity:1;color:var(--acc)}
-.cardtile-sync.spinning{pointer-events:none}
-.cardtile-sync.spinning svg{animation:spin .9s linear infinite}
-.cardtile-buyline{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cardtile-pnl{flex:none;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
+/* Ligne d'achat : la valeur payée à gauche, le total de la pile à droite (il
+   n'apparaît qu'au-delà d'un exemplaire — sinon il répéterait la cote). */
+.cardtile-buyline{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.cardtile-sum{flex:none;font-size:11px;font-weight:700;color:var(--t3);font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+/* Sur une colonne de 300 px, « achat 42,50 € » + « ×3 = 193 € » ne tenaient pas
+   et les DEUX passaient à la ligne (donc une tuile plus haute que ses voisines).
+   C'est la pastille d'achat qui cède : elle rétrécit avec des points de
+   suspension, le total de la pile reste entier. */
+.cardtile-buyline .buy-chip{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .buy-chip{min-height:26px;padding:0 9px;border-radius:var(--pill);
   background:rgba(255,255,255,.05);border:1px dashed var(--line-2);
   font-size:11px;font-weight:700;color:var(--t3);
@@ -2085,13 +2119,14 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
              background var(--dur-1) var(--ease-out)}
 .buy-chip:hover{color:var(--t1);border-color:var(--line-3);background:rgba(255,255,255,.09)}
 .buy-chip.set{border-style:solid;color:var(--t2)}
-.cardtile-pnl{font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
-/* Le pied doit pouvoir RÉTRÉCIR : sur une colonne de 268 px, quantité + lien
-   Cardmarket + corbeille dépassaient de la tuile. Il passe donc à la ligne
-   plutôt que de déborder, et ses éléments sont un cran plus compacts. */
-.cardtile-foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:8px;
+/* ── UNE SEULE BARRE D'ACTIONS ──
+   Quantité à gauche (la seule qu'on manipule souvent), le reste à droite en
+   icônes de MÊME POIDS : recoter, ouvrir Cardmarket, retirer. Plus de
+   `flex-wrap` : il n'y a plus assez d'éléments pour déborder, et un pied qui
+   passe à la ligne fait des tuiles de hauteurs inégales. */
+.cardtile-foot{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:9px;
   border-top:1px solid var(--line);min-width:0}
-.cardtile-foot>*{min-width:0}
+.cardtile-acts{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:2px}
 .qty{display:inline-flex;align-items:center;gap:1px;border-radius:var(--pill);
   background:rgba(255,255,255,.05);border:1px solid var(--line);padding:2px}
 .qty-btn{width:26px;height:26px;display:grid;place-items:center;border-radius:var(--pill);
@@ -2100,6 +2135,32 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .qty-btn:hover:not(:disabled){background:rgba(255,255,255,.12);color:var(--t1)}
 .qty-btn:disabled{opacity:.3}
 .qty-val{min-width:22px;text-align:center;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
+/* ── LES TROIS ICÔNES DE LA BARRE ──
+   Même gabarit (28×28), même couleur au repos, chacune sa couleur au survol.
+   Le lien Cardmarket a perdu son libellé : c'était le seul élément textuel du
+   pied, et c'est lui qui faisait déborder la ligne sur une colonne étroite. Le
+   titre au survol et l'aria-label portent le sens.
+   La corbeille n'est plus INVISIBLE au repos : un écran tactile n'a pas de
+   survol, donc sur iPhone elle apparaissait au premier tap — c'est-à-dire au
+   moment où l'on croyait toucher autre chose. Elle est discrète, et devient
+   rouge quand on la vise. */
+.cardtile-sync,.cardtile-del,.cardtile-foot .cm-link{
+  width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:9px;
+  padding:0;min-height:0;max-width:none;background:none;border:0;color:var(--t3);
+  transition:color var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out),
+             transform var(--dur-0) var(--ease-out);
+}
+.cardtile-sync svg,.cardtile-del svg,.cardtile-foot .cm-link svg{width:15px;height:15px}
+.cardtile-foot .cm-link span{display:none}
+.cardtile-sync:hover:not(:disabled),.cardtile-foot .cm-link:hover{
+  color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.cardtile-sync:active:not(:disabled){transform:scale(.9)}
+.cardtile-sync:disabled{opacity:1;color:var(--acc)}
+.cardtile-sync.spinning{pointer-events:none}
+.cardtile-sync.spinning svg{animation:spin .9s linear infinite}
+.cardtile-del:hover{background:rgba(255,84,112,.2);color:#FF8098}
+/* Le lien Cardmarket garde sa forme de pastille PARTOUT AILLEURS (fiche de
+   carte, listes) : seule la barre d'actions de la tuile le réduit à son icône. */
 .cm-link{display:inline-flex;align-items:center;gap:4px;min-height:26px;max-width:100%;padding:0 8px;
   overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
   border-radius:var(--pill);background:rgba(255,255,255,.05);border:1px solid var(--line);
@@ -2109,12 +2170,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cm-link svg{width:13px;height:13px}
 .cm-link:hover{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--t1);
   border-color:color-mix(in srgb,var(--acc) 40%,transparent)}
-.cardtile-del{width:26px;height:26px;margin-left:auto;flex:none;display:grid;place-items:center;
-  border-radius:9px;color:var(--t3);opacity:0;
-  transition:opacity var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out)}
-.cardtile-del svg{width:15px;height:15px}
-.cardtile:hover .cardtile-del,.cardtile-del:focus-visible{opacity:1}
-.cardtile-del:hover{background:rgba(255,84,112,.22);color:#FF8098}
 
 /* ── Import (confirmations) ── */
 .sealed-imp-hint{font-size:14.5px;color:var(--t2);line-height:1.6;margin-bottom:var(--s4)}
@@ -2206,17 +2261,37 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   border-radius:50%;background:var(--ok);color:#06251A;font-size:11px;font-weight:900;
   opacity:0;transform:scale(.5);
   transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out)}
-.card-picker-item.added{border-color:color-mix(in srgb,var(--ok) 60%,transparent)}
+/* ══════════════════════════════════════════════════════════════════════
+   CE QU'ON A DÉJÀ EST EN COULEUR, CE QUI MANQUE EST GRIS
+
+   C'était l'inverse : la carte possédée s'ASSOMBRISSAIT (opacity .55) et
+   portait une étiquette « Déjà à toi », tandis que les 170 cartes manquantes
+   restaient en pleine couleur. Parcourir un set revenait donc à chercher les
+   vignettes éteintes au milieu d'un mur de couleurs — la collection était
+   signalée comme un défaut.
+   Retourné : ce qu'on possède est en pleine couleur avec sa coche, ce qui
+   manque est désaturé. On lit sa collection au lieu de lire les trous, et
+   l'étiquette devient inutile (elle est partie).
+   La couleur n'informe pas seule : la coche reste, et le titre au survol dit
+   « Déjà à toi ».
+   ══════════════════════════════════════════════════════════════════════ */
+/* Manquante : grise et en retrait. `grayscale` plutôt qu'une simple opacité —
+   une carte à moitié transparente devient sale sur un fond sombre, alors qu'une
+   carte désaturée reste lisible et se relit comme « pas encore là ». */
+.card-picker-item:not(.added) img,
+.card-picker-item:not(.added) .card-noimg{
+  filter:grayscale(1) brightness(.66) contrast(.92);
+  transition:filter var(--dur-2) var(--ease-out)}
+.card-picker-item:not(.added) .card-picker-name{color:var(--t3)}
+/* Au survol / au doigt, la carte manquante reprend ses couleurs : on voit ce
+   qu'on est en train d'ajouter avant de le toucher. */
+.card-picker-item:not(.added):hover img,
+.card-picker-item:not(.added):active img{filter:none}
+/* Possédée : pleine couleur, bord vert franc, coche. Et rien de plus. */
+.card-picker-item.added{border-color:color-mix(in srgb,var(--ok) 62%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--ok) 26%,transparent)}
+.card-picker-item.added img,.card-picker-item.added .card-noimg{filter:none;opacity:1}
 .card-picker-item.added .card-picker-check{opacity:1;transform:none}
-/* Déjà possédée : la pastille verte ne suffit pas si on parcourt 200 vignettes
-   au pouce — le visuel s'assombrit un peu et porte une étiquette. La couleur
-   n'informe donc jamais seule. */
-.card-picker-item.added img,.card-picker-item.added .card-noimg{opacity:.55}
-.card-picker-have{position:absolute;left:5px;bottom:26px;z-index:3;
-  padding:2px 7px;border-radius:var(--pill);
-  background:color-mix(in srgb,var(--ok) 88%,#04120C);color:#04120C;
-  font-size:9px;font-weight:900;letter-spacing:.03em;text-transform:uppercase;
-  box-shadow:0 1px 4px rgba(0,0,0,.45)}
 .card-picker-check{min-width:22px;padding:0 4px;width:auto}
 @keyframes just-added{0%{transform:scale(1)}40%{transform:scale(1.05)}100%{transform:scale(1)}}
 .card-picker-item.just-added{animation:just-added var(--dur-2) var(--ease-out)}
@@ -3138,6 +3213,23 @@ body::before{display:none}
      défilent, plus le document) — voir le bloc CARROUSEL DE PAGES. */
   #toast-container{bottom:calc(88px + env(safe-area-inset-bottom))}
 
+  /* ── SÉLECTEUR D'AJOUT : TROIS CARTES PAR LIGNE ─────────────────
+     `minmax(112px,1fr)` n'en tenait que DEUX sur un écran de 375 px : des
+     vignettes énormes, et un set de 200 cartes qui demandait cent lignes de
+     défilement. Trois colonnes explicites (≈104 px chacune, la taille d'une
+     carte vue à bout de bras) montrent une fois et demie plus de set par écran
+     tout en restant confortablement cliquables au pouce.
+     Colonnes DÉCLARÉES et non `auto-fill` : sur une largeur donnée, `auto-fill`
+     décide seul et passait de 2 à 3 selon l'encoche et la barre de défilement.
+     Ici le compte est le même sur tous les iPhone. */
+  .card-picker-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:6px}
+  .card-picker-name{padding:5px 6px;font-size:9.5px}
+  .card-picker-check{top:4px;right:4px;width:18px;height:18px;min-width:18px;padding:0}
+  .card-picker-check svg{width:10px;height:10px}
+  /* Trois colonnes = des vignettes plus petites : la cascade d'entrée doit
+     suivre le nouveau rythme, sinon la dernière ligne visible arrive en retard. */
+  .card-picker-grid>.card-picker-item{contain-intrinsic-size:auto 168px}
+
   /* ── Confort tactile ──────────────────────────────────────────
      Pas de flash bleu au doigt, pas de zoom au double-tap, et AUCUN rebond de
      défilement (voir juste en dessous). */
@@ -3502,13 +3594,21 @@ body::before{display:none}
   .bloc-body{padding:0 10px}
 }
 
-/* Mur de cartes sur téléphone : deux colonnes, le visuel plein cadre. */
+/* Cartes suivies sur téléphone : une tuile par ligne, le visuel en vedette. */
 @media (max-width:767px){
-  /* Une tuile par ligne, et le visuel 10 % plus grand que sur PC : c'est la
+  /* Une tuile par ligne, et le visuel un peu plus grand que sur Mac : c'est la
      seule illustration de la ligne, elle peut se permettre d'exister. */
-  .cardlist{grid-template-columns:1fr;gap:12px}
-  .cardtile-art{width:101px}
-  .cardtile-foot{padding-top:6px}
+  .cardlist{grid-template-columns:1fr;gap:11px}
+  .cardtile{padding:11px;gap:12px}
+  .cardtile-art{width:106px}
+  .cardtile-name{font-size:14px}
+  .cardtile-cote{font-size:18px}
+  .cardtile-foot{padding-top:7px}
+  /* Cibles au pouce : les trois icônes de la barre passent à 34 px (la tuile a
+     de la largeur ici, elle peut la donner). */
+  .cardtile-sync,.cardtile-del,.cardtile-foot .cm-link{width:34px;height:34px}
+  .cardtile-sync svg,.cardtile-del svg,.cardtile-foot .cm-link svg{width:16px;height:16px}
+  .qty-btn{width:30px;height:30px}
 }
 
 

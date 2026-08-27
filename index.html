@@ -12,28 +12,39 @@
        d'encoche redevenant notre affaire, en CSS (env(safe-area-*)).
        INSTALLABLE SUR IPHONE : « Partager › Sur l'écran d'accueil ». -->
   <link rel="manifest" href="manifest.json">
-  <!-- PLUS DE METAS `apple-mobile-web-app-*` D'INSTALLATION.
-       Elles activent le chemin HISTORIQUE d'iOS, et c'est lui qui posait la page
-       de travers : la vue recevait une hauteur de (écran − barre d'état) mais
-       restait ANCRÉE EN HAUT, donc les 47 px de la barre d'état se retrouvaient
-       en trop tout en bas, hors d'atteinte de la page. Les mesures de l'appareil
-       le disaient noir sur blanc : écran 926, page 879, encoche haut 47 —
-       926 − 879 = 47. Et le symptôme « plein écran en paysage, pas en portrait »
-       finit de le prouver : en paysage il n'y a pas de barre d'état à retrancher,
-       donc rien ne manque.
-       Le manifeste (`display: standalone` + `viewport-fit=cover`) suffit depuis
-       iOS 16.4 et dimensionne la vue correctement, avec les marges d'encoche
-       fournies en `env()`. Le diagnostic confirmait que ce chemin est bien actif
-       sur l'appareil (« display-mode ok »).
-       IMPORTANT : iOS lit tout ça À L'INSTALLATION. Il faut donc supprimer
-       l'icône de l'écran d'accueil et la rajouter pour que ça prenne. -->
-  <meta name="apple-mobile-web-app-title" content="IronDex">
+  <!-- ══════════════════════════════════════════════════════════════════
+       PLEIN ÉCRAN SUR IPHONE — les deux bords, pas un seul
+
+       Historique de ce bloc, pour ne pas refaire le tour :
+        · avec `apple-mobile-web-app-capable` SEUL (barre d'état opaque), iOS
+          dimensionnait la vue à (écran − barre d'état) : 47 px manquaient tout
+          en bas. On a donc retiré les metas ;
+        · sans elles, le manifeste (`display:standalone`) prend la main, et là
+          c'est le HAUT qui n'est plus à nous : iOS peint lui-même une barre
+          d'état opaque et la page commence en dessous.
+
+       Ce qui donne les DEUX bords, c'est la paire complète — `capable` **et**
+       `status-bar-style: black-translucent`. `black-translucent` est
+       précisément ce qui fait passer la vue SOUS la barre d'état : la page
+       reçoit alors toute la hauteur de l'écran, et les marges d'encoche
+       redeviennent notre affaire en CSS (`env(safe-area-inset-*)`, déjà en
+       place sur la barre haute et la tab bar).
+       Le trou de 47 px en bas ne peut plus revenir : sur téléphone `.app` est
+       en `position:fixed; inset:0` (voir style.css), donc elle épouse le
+       viewport par construction, quelle que soit la hauteur qu'iOS lui donne.
+
+       IMPORTANT : iOS ne lit ces metas QU'À L'INSTALLATION. Il faut supprimer
+       l'icône de l'écran d'accueil et la rajouter pour que ça prenne.
+       ══════════════════════════════════════════════════════════════════ -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MiloDex">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
   <meta name="description" content="MiloDex — le coffre de ta collection Pokémon : valeur, wishlists, portefeuille et classeurs 3D.">
-  <title>MiloDex — Le Coffre</title>
+  <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui44">
+  <link rel="stylesheet" href="style.css?v=ui45">
 </head>
 <body>
 
@@ -426,6 +437,6 @@
      qu'à l'app ouverte en file://, et app.js l'injecte alors lui-même
      (voir ensureModelData). En https, les .glb sont chargés directement ;
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
-<script src="app.js?v=ui44"></script>
+<script src="app.js?v=ui45"></script>
 </body>
 </html>

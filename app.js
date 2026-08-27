@@ -906,7 +906,8 @@ function ghLocalEmpty() {
   return !state.wishlists.length && !state.binders.length && !state.investCards.length
     && !state.sealed.length && !Object.keys(state.milobellus || {}).length;
 }
-async function ghPull() {
+async function ghPull(opts) {
+  const boot = !!(opts && opts.boot);   // au démarrage : ni repeinture ni annonce
   const c = ghCfg();
   if (!c.owner || !c.repo) return;
   _ghLastPull = Date.now();
@@ -926,8 +927,13 @@ async function ghPull() {
   _localUpdated = rt;
   await writeNow();
   window._vaultCounted = false; window._investCountedCards = false; window._investCountedSealed = false;
-  renderViewContent(state.view);
-  if (!empty) toast('Collection mise à jour depuis le dépôt', 'success');
+  // Au démarrage, le premier rendu arrive juste après : repeindre ici ferait le
+  // travail deux fois, et le toast annoncerait une « mise à jour » sur un écran
+  // que l'utilisateur n'a pas encore vu.
+  if (!boot) {
+    renderViewContent(state.view);
+    if (!empty) toast('Collection mise à jour depuis le dépôt', 'success');
+  }
   ghPaintStatus('ok');
 }
 // Les cotes voyagent aussi : le pont Cardmarket ne tourne que sur le Mac,
@@ -4786,9 +4792,12 @@ function renderPickerCards() {
       ${filtered.map((c, i) => {
         const u = IMG(c.image, 'low');
         const have = inList(c.id), q = invQty[c.id] || 0;
-        return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}"${have?' title="Déjà dans ton portefeuille"':''}>
+        // PLUS D'ÉTIQUETTE « Déjà à toi » : c'est la COULEUR qui porte
+        // l'information maintenant (voir style.css). Une carte possédée est en
+        // pleine couleur avec sa coche ; une carte manquante est grisée. Rien
+        // d'autre à lire, et ça se voit d'un coup d'œil sur un set de 200.
+        return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}"${have?' title="Déjà à toi"':''}>
           <span class="card-picker-check" aria-hidden="true">${q > 1 ? '×' + q : ICO.check}</span>
-          ${have && state.pickerMode === 'investCard' ? '<span class="card-picker-have">Déjà à toi</span>' : ''}
           ${u ? `<img src="${u}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.__set||state.pickerSet||'')}','${jss(c.name)}')" alt="" loading="lazy">` : noImgHTML(c.localId, c.name, c.__set || state.pickerSet)}
           <div class="card-picker-name">${esc(c.name)}</div></div>`;
       }).join('')}
@@ -8306,29 +8315,54 @@ function cardTileHTML(p) {
   // DÉJÀ enregistré dans le portefeuille. On l'écrit donc en dur, et on ne
   // laisse `data-cc` que pour les rares cartes importées sans type.
   const tc = p.type ? TYPE_COLOR[p.type] : null;
+  /* ══════════════════════════════════════════════════════════════════════
+     LA TUILE D'UNE CARTE SUIVIE — refonte
+
+     CE QUI N'ALLAIT PAS, précisément :
+      · le VISUEL était l'élément le plus petit de la tuile (92 px) et rogné
+        (`object-fit:cover`). Dans une app de collection, la carte EST le sujet ;
+      · cinq lignes de même poids se succédaient dans le corps — nom, numéro +
+        rareté, cote + recote, achat + plus-value, quantité + Cardmarket +
+        corbeille. Rien ne menait la lecture, et le pied débordait si bien qu'il
+        avait fallu l'autoriser à passer à la ligne ;
+      · les deux chiffres qu'on COMPARE (la cote et la plus-value) étaient sur
+        deux lignes différentes, séparés par un bouton.
+
+     CE QUE FAIT CELLE-CI :
+      · le visuel est plus grand et ENTIER (`contain` sur une plaque sombre) ;
+      · une seule ligne de titre, avec la quantité en pastille quand il y en a
+        plusieurs — c'est une information de lecture, pas un réglage ;
+      · la cote et la plus-value côte à côte, la plus-value alignée à droite :
+        les deux nombres se lisent d'un seul regard ;
+      · les commandes (recoter, Cardmarket, quantité, retirer) descendent dans
+        UNE barre d'actions discrète, en icônes de même poids. Elle ne se
+        dispute plus la place avec les chiffres.
+     Les identifiants (`cote-`, `sum-`, `pnl-`, `qty-`, `cm-`) et les classes
+     lues par refreshCardTile / syncCardPrice sont conservés à l'identique : la
+     mise à jour en place continue de marcher sans reconstruire la tuile.
+     ══════════════════════════════════════════════════════════════════════ */
   return `<article class="cardtile" data-id="${p.id}"${tc ? ` style="--tc:${tc}"` : ` data-cc="${esc(p.cardId || '')}"`}>
     <button class="cardtile-art" onclick="openInvestCardPreview('${p.id}')" title="Agrandir ${esc(p.name)}" aria-label="Agrandir ${esc(p.name)}">
       ${img ? `<img src="${img}" alt="" loading="lazy" decoding="async" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
       <span class="cardtile-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
     </button>
     <div class="cardtile-body">
-      <h3 class="cardtile-name" title="${esc(p.name)}">${esc(p.name)}</h3>
+      <div class="cardtile-head">
+        <h3 class="cardtile-name" title="${esc(p.name)}">${esc(p.name)}</h3>
+        <span class="cardtile-mult" id="mult-${p.id}"${qty > 1 ? '' : ' hidden'}>×${qty}</span>
+      </div>
       <div class="cardtile-meta">
         ${p.number ? `<span class="cardtile-num">${esc(String(p.number))}</span>` : ''}
         ${p.rarity ? `<span class="cardtile-rar ${rarityClass(p.rarity)}">${esc(p.rarity)}</span>` : ''}
       </div>
       <div class="cardtile-price">
         <span class="cardtile-cote" id="cote-${p.id}">${cote != null ? fmt(cote) : '<span class="cote-wait">cote…</span>'}</span>
-        ${qty > 1 && total != null ? `<span class="cardtile-sum" id="sum-${p.id}">×${qty} = ${fmt(total)}</span>` : `<span class="cardtile-sum" id="sum-${p.id}"></span>`}
-        <button class="cardtile-sync" onclick="syncCardPrice('${p.id}',event)"
-          title="Refaire la cote de cette carte" aria-label="Refaire la cote de ${esc(p.name)}">
-          <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+        <span class="cardtile-pnl ${pnl == null ? '' : pnl >= 0 ? 'pos' : 'neg'}" id="pnl-${p.id}">${pnl == null ? '' : fmtSign(pnl)}</span>
       </div>
       <div class="cardtile-buyline">
         <button class="buy-chip ${p.buyPrice != null ? 'set' : ''}" onclick="toggleCardBuy(event,'${p.id}')"
           aria-label="Valeur d'achat de ${esc(p.name)}">${p.buyPrice != null ? `achat ${fmt(p.buyPrice)}` : `+ achat`}</button>
-        <span class="cardtile-pnl ${pnl == null ? '' : pnl >= 0 ? 'pos' : 'neg'}" id="pnl-${p.id}">${pnl == null ? '' : fmtSign(pnl)}</span>
+        <span class="cardtile-sum" id="sum-${p.id}">${qty > 1 && total != null ? `×${qty} = ${fmt(total)}` : ''}</span>
       </div>
       <div class="cardtile-foot">
         <div class="qty" role="group" aria-label="Quantité de ${esc(p.name)}">
@@ -8336,13 +8370,19 @@ function cardTileHTML(p) {
           <span class="qty-val" id="qty-${p.id}">${qty}</span>
           <button class="qty-btn" onclick="bumpCardQty('${p.id}',1)" aria-label="Ajouter un exemplaire">${ICO.plus}</button>
         </div>
-        <a class="cm-link" id="cm-${p.id}" href="${cmHref}" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4 11 13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M18 15v3.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-          <span>Cardmarket</span>
-        </a>
-        <button class="cardtile-del" onclick="deleteInvestCard('${p.id}')" aria-label="Retirer ${esc(p.name)}" title="Retirer la carte">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+        <span class="cardtile-acts">
+          <button class="cardtile-sync" onclick="syncCardPrice('${p.id}',event)"
+            title="Refaire la cote de cette carte" aria-label="Refaire la cote de ${esc(p.name)}">
+            <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <a class="cm-link" id="cm-${p.id}" href="${cmHref}" target="_blank" rel="noopener"
+            title="Voir la fiche Cardmarket" aria-label="Fiche Cardmarket de ${esc(p.name)}">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4 11 13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M18 15v3.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+          </a>
+          <button class="cardtile-del" onclick="deleteInvestCard('${p.id}')" aria-label="Retirer ${esc(p.name)}" title="Retirer la carte">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </span>
       </div>
     </div>
   </article>`;
@@ -8445,6 +8485,10 @@ function bumpCardQty(id, delta) {
 function refreshCardTile(p) {
   const qty = cardQty(p), cote = cardCote(p);
   const q = document.getElementById('qty-' + p.id); if (q) q.textContent = qty;
+  // Pastille « ×N » du titre : masquée à un seul exemplaire (elle n'apprendrait
+  // rien), affichée dès le deuxième.
+  const m = document.getElementById('mult-' + p.id);
+  if (m) { m.textContent = '×' + qty; m.hidden = qty <= 1; }
   const row = document.querySelector(`.cardtile[data-id="${p.id}"]`);
   if (row) { const minus = row.querySelector('.qty-btn'); if (minus) minus.disabled = qty <= 1; }
   const c = document.getElementById('cote-' + p.id); if (c) c.textContent = cote != null ? fmt(cote) : '—';
@@ -8794,7 +8838,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui44';
+const BUILD = 'ui45';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
@@ -8804,18 +8848,42 @@ async function purgeAppCaches() {
     for (const r of regs) await r.unregister();
   } catch (e) { console.warn('purge sw', e); }
 }
-async function selfHeal() {
-  if (!location.protocol.startsWith('http')) return;
+/* ══════════════════════════════════════════════════════════════════════
+   UNE SEULE OUVERTURE, PLUS JAMAIS DEUX
+
+   Avant, `selfHeal()` partait SANS être attendu : la version du dépôt arrivait
+   quelques centaines de millisecondes plus tard et, si le code local était
+   périmé, on rechargeait — en pleine intro. La barre de chargement repartait
+   alors de zéro sous les yeux de l'utilisateur : c'était le « double
+   chargement ».
+
+   Maintenant la requête part à la PREMIÈRE ligne du démarrage et on l'attend
+   juste avant de lancer l'intro. Deux cas, un seul chargement visible dans les
+   deux :
+    · code périmé → on remplace l'URL avant que l'intro n'ait animé quoi que ce
+      soit. L'écran de marque est déjà dans le HTML, il reste donc affiché tel
+      quel et la deuxième ouverture enchaîne sans rupture ;
+    · code à jour → on continue, et l'attente a été payée EN PARALLÈLE de la
+      lecture d'IndexedDB et de la relecture du dépôt : elle ne coûte rien.
+   ══════════════════════════════════════════════════════════════════════ */
+// Version en ligne. La requête est lancée tôt et bornée : hors ligne ou sur un
+// réseau muet, elle renvoie null et le démarrage continue.
+function fetchRemoteBuild() {
+  if (!location.protocol.startsWith('http')) return Promise.resolve(null);
+  return fetchTimeout(`version.json?t=${Date.now()}`, 2500, { cache: 'no-store' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => (d && d.build) || null)
+    .catch(() => null);
+}
+// Renvoie true si l'app est en train de se recharger — l'appelant doit alors
+// s'arrêter là et ne rien peindre.
+async function healIfStale(remote) {
+  if (!location.protocol.startsWith('http')) return false;
   // `?fresh=1` : sortie de secours à taper une fois, quand l'app est déjà
   // collée à une version qui ne contient pas ce mécanisme.
   const forced = /[?&]fresh=1/.test(location.search);
-  let remote = null;
-  try {
-    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (r.ok) remote = (await r.json()).build;
-  } catch {}
-  if (!forced && (!remote || remote === BUILD)) return;
-  if (sessionStorage.getItem('irondex-healed') === (remote || 'forced')) return;   // déjà tenté
+  if (!forced && (!remote || remote === BUILD)) return false;
+  if (sessionStorage.getItem('irondex-healed') === (remote || 'forced')) return false;   // déjà tenté
   try { sessionStorage.setItem('irondex-healed', remote || 'forced'); } catch {}
   console.warn('[maj] code périmé', BUILD, '→', remote, '· purge et rechargement');
   await purgeAppCaches();
@@ -8823,10 +8891,14 @@ async function selfHeal() {
   u.searchParams.delete('fresh');
   u.searchParams.set('maj', remote || String(Date.now()));
   location.replace(u.toString());
+  return true;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  selfHeal();   // non bloquant : si une mise à jour s'impose, elle recharge
+  // PREMIÈRE LIGNE : la version en ligne part maintenant, on l'attendra juste
+  // avant l'intro (voir healIfStale). C'est ce qui supprime le rechargement en
+  // pleine animation.
+  const versionCheck = fetchRemoteBuild();
   // Promesse « prêt à peindre », consommée par la barre de progression de
   // l'intro sur le chemin sans 3D.
   window._introReady = new Promise(res => { window._introReadyResolve = res; });
@@ -8849,9 +8921,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // (l'iPhone à sa première ouverture) c'est LUI qui remplit la collection ;
   // ailleurs, le plus récent gagne. Non bloquant : l'app s'affiche déjà avec
   // la copie locale, la mise à jour arrive quand le réseau répond.
+  // ARRIVER CONNECTÉ, PAS « PRESQUE ». La relecture du dépôt faisait partie du
+  // décor : elle partait sans être attendue, l'app s'affichait avec la copie
+  // locale, et les données du dépôt tombaient dedans une seconde plus tard (avec
+  // un toast et un re-rendu au milieu de l'écran d'accueil). Elle est maintenant
+  // dans la promesse « prêt à peindre » : l'intro l'attend, et quand l'app
+  // apparaît, elle est à jour ET prête à envoyer.
+  // `boot: true` dit à ghPull de ne PAS repeindre ni annoncer : le premier
+  // rendu, qui suit immédiatement, s'en charge.
+  let cloudReady = Promise.resolve();
   if (ghCfg().owner) {
-    ghPull().catch(e => console.warn('ghPull', e));
-    ghPullPrices().catch(e => console.warn('ghPullPrices', e));
+    cloudReady = Promise.allSettled([
+      ghPull({ boot: true }).catch(e => console.warn('ghPull', e)),
+      ghPullPrices().catch(e => console.warn('ghPullPrices', e)),
+    ]);
     // Des modifications d'une session précédente n'ont jamais pu partir (jeton
     // expiré, hors ligne, app fermée trop vite) ? On retente maintenant. Le
     // garde-fou anti-écrasement de ghFlush protège le cas où le dépôt serait
@@ -8874,9 +8957,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // collection d'arriver — il n'empêche que l'ENVOI. La pastille doit dire cette
   // nuance au lieu d'afficher une erreur rouge qui laisse croire à une panne.
   ghPaintStatus(ghOn() ? 'ok' : (ghCfg().owner ? 'read' : 'off'));
-  // Signal pour la barre de l'intro (chemin sans 3D) : le catalogue est relu,
-  // les cotes sont là, on peut peindre.
-  try { window._introReadyResolve && window._introReadyResolve(); } catch {}
+  // Signal pour la barre de l'intro : elle attend que le dépôt ait répondu (avec
+  // son propre plafond de 4 s dans runIntro, pour ne jamais retenir personne).
+  try { window._introReadyResolve && window._introReadyResolve(cloudReady); } catch {}
   // AVERTISSEMENT FRANC : une machine qui a des données mais pas de jeton
   // travaille dans le vide — c'est exactement ce qui est arrivé (des cartes
   // ajoutées sur un poste, jamais envoyées, invisibles ailleurs). La pastille
@@ -8915,6 +8998,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // qu'elle mettrait de toute façon à s'afficher. Si le CDN traîne ou tombe,
   // runIntro prend le chemin « fondu de marque » — celui du téléphone — au lieu
   // de retenir l'utilisateur.
+  // LA PORTE. Si le code est périmé, on recharge ICI — avant que l'intro ait
+  // animé quoi que ce soit, donc sans le deuxième chargement visible d'avant.
+  if (await healIfStale(await versionCheck).catch(() => false)) return;
+  // Le dépôt a eu tout ce temps pour répondre ; on lui laisse la fin du délai
+  // pour que l'app arrive vraiment à jour, sans jamais dépasser 3 s.
+  await Promise.race([cloudReady, new Promise(r => setTimeout(r, 3000))]).catch(() => {});
   if (!isPhone()) await Promise.race([three, new Promise(r => setTimeout(r, 1800))]).catch(() => {});
   // ARRIVÉE TARDIVE. Si le CDN a dépassé le plafond ci-dessus, l'intro est
   // partie sans 3D et le premier rendu de l'accueil a trouvé un THREE absent :

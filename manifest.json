@@ -1,7 +1,7 @@
 {
-  "name": "IronDex — Le Coffre",
-  "short_name": "IronDex",
-  "description": "Le coffre-fort d'une collection Pokémon : valeur, wishlists, portefeuille.",
+  "name": "MiloDex",
+  "short_name": "MiloDex",
+  "description": "MiloDex — le coffre de ta collection Pokémon : valeur, wishlists, portefeuille.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
