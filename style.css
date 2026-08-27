@@ -2328,9 +2328,16 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .intro-tag{font-size:11px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--t3)}
 .intro-bar-wrap{width:min(280px,64vw);height:3px;border-radius:99px;background:rgba(255,255,255,.1);
   overflow:hidden;margin-top:8px}
-/* Remplissage de progression : la largeur EST la donnée (affordance standard). */
-.intro-bar{height:100%;width:0;border-radius:99px;background:var(--acc);
-  transition:width 220ms var(--ease-out)}
+/* Remplissage de progression. La barre occupe TOUTE la largeur et c'est un
+   `transform:scaleX()` (posé par runIntro à chaque image) qui dit où elle en
+   est : le compositeur s'en charge seul, sans mise en page ni repeinture.
+   L'ancienne version animait `width` avec une transition CSS réécrite toutes
+   les 90 ms — jamais terminée, et un layout du document par image. C'était la
+   saccade du chargement.
+   Pas de `transition` ici : l'interpolation est faite en JS (rAF), une
+   transition par-dessus ne ferait que la retarder. */
+.intro-bar{height:100%;width:100%;border-radius:99px;background:var(--acc);
+  transform:scaleX(0);transform-origin:0 50%;will-change:transform}
 .intro-pct{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--t3);font-variant-numeric:tabular-nums}
 
 /* ═══════════════════ OVERLAY DE SYNCHRO ═══════════════════ */

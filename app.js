@@ -5,7 +5,16 @@ const API = 'https://api.tcgdex.net/v2/fr';
 // DIRECT:: posé par resolveMissingImage() — on les distingue ici.
 const IMG = (path, qual = 'high') => {
   if (!path) return '';
-  if (path.startsWith('DIRECT::')) return path.slice(8);
+  if (path.startsWith('DIRECT::')) {
+    const u = path.slice(8);
+    // Les visuels de repli viennent de pokemontcg.io, où la même carte existe en
+    // deux tailles : « TG01_hires.png » (~480 ko) et « TG01.png » (~170 ko). La
+    // qualité demandée doit être RESPECTÉE là aussi : une grille de 30 vignettes
+    // en `low` téléchargeait 14 Mo d'images pleine résolution — sur un iPhone en
+    // 4G, c'est le défilement qui le payait.
+    if (qual === 'low') return u.replace(/_hires(\.\w+)$/, '$1');
+    return u;
+  }
   return `${path}/${qual}.webp`;
 };
 // Placeholder propre pour les cartes sans visuel (certains sets TCGdex, ex.
@@ -164,7 +173,13 @@ function paintDeviceFlag() {
   try { document.documentElement.dataset.mobile = isPhone() ? 'on' : 'off'; } catch {}
 }
 paintDeviceFlag();
-addEventListener('resize', paintDeviceFlag);
+addEventListener('resize', () => {
+  const was = _isPhone;
+  paintDeviceFlag();
+  // Fenêtre élargie au-delà du seuil téléphone : la 3D redevient possible, et
+  // ses bibliothèques n'ont pas été chargées au départ — on les demande ici.
+  if (was && !_isPhone) ensureThree();
+});
 let _modelDataPromise = null;
 function ensureModelData() {
   if (_modelDataPromise) return _modelDataPromise;
@@ -179,6 +194,56 @@ function ensureModelData() {
       sc.onerror = () => { sc.remove(); res(false); };
       document.head.appendChild(sc);
     });
+  })());
+}
+
+// ── BIBLIOTHÈQUES EXTERNES : À LA DEMANDE, JAMAIS AU DÉMARRAGE ──────
+// index.html ne charge plus QUE app.js. Avant, trois bibliothèques partaient
+// avec la page — three.js + GLTFLoader (bloquantes), SheetJS et cm-slugs.js
+// (en `defer`, donc téléchargées ET ANALYSÉES avant DOMContentLoaded) : ~3,7 Mo
+// avant le premier pixel. Sur iPhone les trois sont inutiles (pas de 3D, pas
+// d'import Excel, pas de pont Cardmarket) : c'était le poste principal des
+// saccades du chargement.
+//
+// `injectScript` garde l'ORDRE (`async = false` sur un script inséré à la
+// main — sans ça GLTFLoader peut s'exécuter avant three.js et ne trouver
+// aucun THREE).
+function injectScript(src) {
+  return new Promise(res => {
+    try {
+      const s = document.createElement('script');
+      s.src = src; s.async = false;
+      s.onload = () => res(true);
+      s.onerror = () => { s.remove(); res(false); };
+      document.head.appendChild(s);
+    } catch { res(false); }
+  });
+}
+const THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+const GLTF_URL = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+let _threePromise = null;
+// Renvoie true quand THREE **et** son GLTFLoader sont prêts. Sur téléphone :
+// false immédiatement, aucune requête. Tous les appelants savent déjà vivre
+// sans 3D (runIntro retombe sur le fondu de marque, initHero3D sort tout de
+// suite) — cette fonction ne peut donc jamais empêcher un démarrage.
+function ensureThree() {
+  if (_threePromise) return _threePromise;
+  return (_threePromise = (async () => {
+    if (isPhone()) return false;
+    if (window.THREE && window.THREE.GLTFLoader) return true;
+    if (!window.THREE && !(await injectScript(THREE_URL))) return false;
+    if (window.THREE && !window.THREE.GLTFLoader) await injectScript(GLTF_URL);
+    return !!window.THREE;
+  })());
+}
+let _xlsxPromise = null;
+// SheetJS : ~900 ko qui ne servent qu'au moment où l'on choisit un .xlsx.
+function ensureXlsx() {
+  if (_xlsxPromise) return _xlsxPromise;
+  return (_xlsxPromise = (async () => {
+    if (typeof XLSX !== 'undefined') return true;
+    await injectScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    return typeof XLSX !== 'undefined';
   })());
 }
 
@@ -522,12 +587,57 @@ function pickRestoreFile(input) { const f = input.files && input.files[0]; input
 //  tourne sur le Mac, et l'iPhone lit simplement le résultat.
 // ══════════════════════════════════════════════════════════════════
 const GH_KEY = 'irondex-gh-v1';
+const GH_IDB_KEY = 'gh-config';
 const GH_PATHS = { collection: 'data/collection.json', prices: 'data/prices.json' };
+
+/* ══════════════════════════════════════════════════════════════════════
+   POURQUOI LE JETON DISPARAISSAIT DE L'IPHONE — et ce qui le garde
+
+   Il ne vivait QUE dans localStorage, écrit par un `setItem` enveloppé dans un
+   `try {} catch {}` muet. Or localStorage plafonne à ~5 Mo par origine, et
+   cette app y écrit beaucoup : l'ancienne sauvegarde de la collection d'avant
+   la migration IndexedDB (jamais supprimée, c'est le filet de récupération),
+   le cache des cotes, celui des séries/sets, celui des visuels de repli, celui
+   des fiches Cardmarket. Sur un iPhone bien rempli, le quota est atteint —
+   et alors `setItem` LÈVE. Le catch avalait l'exception : la fenêtre disait
+   « enregistré », et le jeton n'avait jamais touché le disque.
+   (Sur Mac le même quota est bien plus généreux : d'où un bug qui ne se
+   voyait que sur le téléphone.)
+
+   Trois verrous, donc :
+    1. `_ghMem` — la config reste en mémoire vive pour la session, quoi qu'il
+       arrive au disque. Coller le jeton marche IMMÉDIATEMENT.
+    2. IndexedDB — c'est là que vit déjà la collection, sans plafond de 5 Mo.
+       C'est désormais la copie de référence du jeton ; localStorage n'en est
+       qu'un miroir (pratique : il est synchrone, donc disponible avant même
+       que l'app ait fini de démarrer).
+    3. En cas de quota atteint, on FAIT DE LA PLACE (on jette les caches
+       reconstructibles, jamais les sauvegardes) puis on réessaie — et si ça
+       échoue encore, on le DIT au lieu de faire semblant.
+
+   Et `navigator.storage.persist()` demande au navigateur de ne pas évincer ce
+   stockage : c'est le seul mécanisme officiel contre le grand ménage de WebKit
+   après quelques jours sans visite. Voir requestPersistentStorage().
+
+   Le jeton n'est JAMAIS écrit dans le dépôt (qui est public) : ni dans la
+   collection, ni dans les cotes, ni nulle part ailleurs.
+   ══════════════════════════════════════════════════════════════════════ */
 let _ghCfg = null;
+// Dernière config CONNUE, en mémoire. Fait autorité sur ce que raconte le
+// disque : si le disque a refusé l'écriture, la session continue quand même de
+// pouvoir envoyer.
+let _ghMem = null;
+// Ce que le disque a réellement accepté — repris par la fenêtre « Coffre en
+// ligne » pour dire la vérité sur la durabilité du jeton.
+const _ghStore = { ls: null, idb: null };
 function ghCfg() {
   if (_ghCfg) return _ghCfg;
   let d = {};
   try { d = JSON.parse(localStorage.getItem(GH_KEY) || '{}') || {}; } catch {}
+  // La mémoire vive complète le disque champ par champ (jamais avec du vide) :
+  // un localStorage qui a rejeté l'écriture ne doit pas effacer le jeton collé
+  // il y a dix secondes.
+  if (_ghMem) for (const k of ['token', 'owner', 'repo', 'branch']) if (_ghMem[k]) d[k] = _ghMem[k];
   // Sur GitHub Pages, le dépôt se DEVINE depuis l'URL
   // (theoteixeira.github.io/IronDex/ → owner « theoteixeira », repo « IronDex »)
   // : l'utilisateur n'a donc qu'un jeton à coller, pas trois champs à remplir.
@@ -543,13 +653,94 @@ function ghCfg() {
     on: !!(d.token && owner && repo),
   });
 }
+// Caches PUREMENT reconstructibles de localStorage, du plus gros au plus petit.
+// On y puise de la place quand le quota est atteint. Les sauvegardes de la
+// collection (STORAGE_KEY, backup:*) n'y sont PAS : ce sont les filets de
+// récupération, on n'y touche jamais.
+const GH_EVICTABLE = [
+  'irondex-imgfb-v1',      // visuels de repli retrouvés — se retrouvent
+  'irondex-apicache-v1',   // séries/sets — se relisent
+  'irondex-cmurl-v1',      // fiches Cardmarket — se re-résolvent
+  'irondex-sold-v2',       // ventes récentes — expirent de toute façon
+  'irondex-fx-v1',         // taux de change — 1 requête
+];
+// Écrit la config sur les DEUX supports. Renvoie ce que chacun a accepté.
+function ghWriteCfg(next) {
+  const json = JSON.stringify(next);
+  let ls = false;
+  try { localStorage.setItem(GH_KEY, json); ls = true; } catch {}
+  if (!ls) {
+    // Quota atteint : on libère les caches reconstructibles et on réessaie.
+    // Quelques centaines de kilo-octets suffisent largement pour ~100 octets
+    // de configuration.
+    for (const k of GH_EVICTABLE) {
+      try { localStorage.removeItem(k); } catch {}
+      try { localStorage.setItem(GH_KEY, json); ls = true; break; } catch {}
+    }
+  }
+  _ghStore.ls = ls;
+  // IndexedDB : la copie de référence. Asynchrone, donc on ne l'attend pas ici
+  // (ghSave est appelé depuis des chemins synchrones), mais on note le résultat.
+  const idb = idbSet(GH_IDB_KEY, next)
+    .then(() => { _ghStore.idb = true; return true; })
+    .catch(() => { _ghStore.idb = false; return false; });
+  return { ls, idb };
+}
+let _ghLastWrite = null;   // pour qu'« Enregistrer » puisse ATTENDRE le disque
 function ghSave(patch) {
   const cur = ghCfg();
   const next = { token: cur.token, owner: cur.owner, repo: cur.repo, branch: cur.branch };
   Object.assign(next, patch || {});
-  try { localStorage.setItem(GH_KEY, JSON.stringify(next)); } catch {}
+  _ghMem = next;                          // verrou 1 : session opérationnelle tout de suite
+  _ghLastWrite = ghWriteCfg(next);        // verrous 2 et 3 : IndexedDB + localStorage (avec purge)
   _ghCfg = null;
   return ghCfg();
+}
+/* Relit le jeton depuis IndexedDB au démarrage, AVANT tout envoi.
+   C'est ce qui rend le collage « pour de bon » : même si le localStorage de
+   l'iPhone a été vidé (quota, ménage de WebKit, nettoyage du navigateur), la
+   copie IndexedDB — celle qui héberge déjà la collection — le ramène, et on
+   remet au passage le miroir localStorage d'aplomb.
+   Réciproquement : un appareil qui n'avait que localStorage (toutes les
+   versions précédentes) se voit doter de sa copie IndexedDB à sa première
+   ouverture après cette mise à jour, sans rien avoir à retaper. */
+async function ghHydrate() {
+  let d = null;
+  try { d = await idbGet(GH_IDB_KEY); } catch {}
+  const cur = ghCfg();     // ce que localStorage dit aujourd'hui
+  if (d && typeof d === 'object' && d.token && !cur.token) {
+    // Le disque rapide a perdu le jeton, le disque fiable l'avait : on le
+    // reprend et on répare le miroir.
+    _ghMem = { token: d.token, owner: d.owner || cur.owner, repo: d.repo || cur.repo, branch: d.branch || cur.branch || 'main' };
+    _ghCfg = null;
+    let ls = false;
+    try { localStorage.setItem(GH_KEY, JSON.stringify(_ghMem)); ls = true; } catch {}
+    _ghStore.ls = ls; _ghStore.idb = true;
+    console.info('[coffre] jeton récupéré depuis IndexedDB');
+    return ghCfg();
+  }
+  _ghStore.idb = !!(d && d.token);
+  // Jeton connu de localStorage mais pas encore d'IndexedDB (ou périmé là-bas) :
+  // on sème la copie fiable maintenant.
+  if (cur.token && (!d || d.token !== cur.token)) {
+    idbSet(GH_IDB_KEY, { token: cur.token, owner: cur.owner, repo: cur.repo, branch: cur.branch })
+      .then(() => { _ghStore.idb = true; })
+      .catch(() => { _ghStore.idb = false; });
+  }
+  return ghCfg();
+}
+/* Demande au navigateur de ne PAS évincer ce stockage. WebKit fait le ménage
+   dans tout ce qu'un script a écrit après quelques jours sans visite du site ;
+   un stockage marqué « persistant » y échappe. Accordé sans question pour une
+   app installée sur l'écran d'accueil — d'où l'intérêt d'ajouter IronDex à
+   l'écran d'accueil de l'iPhone plutôt que de l'ouvrir dans un onglet. */
+let _persistGranted = null;
+async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) return (_persistGranted = null);
+    if (await navigator.storage.persisted()) return (_persistGranted = true);
+    return (_persistGranted = await navigator.storage.persist());
+  } catch { return (_persistGranted = null); }
 }
 function ghOn() { return ghCfg().on; }
 // Base64 d'un texte UTF-8 (btoa ne prend que du latin-1, et la collection
@@ -806,7 +997,8 @@ function openCloud() {
       <div class="cloud-field"><label for="cloud-repo">Dépôt</label><input id="cloud-repo" value="${esc(c.repo)}" spellcheck="false"></div>
       <div class="cloud-field"><label for="cloud-branch">Branche</label><input id="cloud-branch" value="${esc(c.branch)}" spellcheck="false"></div>
     </div>
-    <p class="sealed-imp-note">Le jeton reste dans CE navigateur (localStorage) : il n'est jamais écrit dans le dépôt, qui est public. En cas de doute, révoque-le sur github.com et recolle-en un nouveau.</p>
+    <p class="sealed-imp-note">Le jeton reste dans CE navigateur : il n'est jamais écrit dans le dépôt, qui est public. En cas de doute, révoque-le sur github.com et recolle-en un nouveau.</p>
+    <p class="sealed-imp-note" id="cloud-durable">${cloudDurableLine()}</p>
     <div class="cloud-actions">
       <button class="btn btn-primary" onclick="cloudCheck()">Vérifier et enregistrer</button>
       <button class="btn btn-ghost" onclick="cloudPushNow()">Envoyer maintenant</button>
@@ -837,6 +1029,26 @@ async function cloudShowRemote() {
   }
   box.after(line);
 }
+/* Où le jeton est RÉELLEMENT enregistré, et pour combien de temps.
+   Cette ligne existe parce que le bug était invisible : la fenêtre disait
+   « enregistré » alors que le localStorage de l'iPhone avait rejeté l'écriture
+   (quota atteint). On affiche donc l'état des deux supports plutôt que de
+   supposer. */
+function cloudDurableLine() {
+  const c = ghCfg();
+  if (!c.token) return 'Aucun jeton sur cet appareil : il est en lecture seule (la collection arrive quand même, l\u2019envoi non).';
+  const bits = [];
+  bits.push(_ghStore.idb === false ? 'IndexedDB : <b>échec</b>' : 'IndexedDB : <b>oui</b>');
+  bits.push(_ghStore.ls === false ? 'localStorage : <b>plein</b>' : 'localStorage : <b>oui</b>');
+  const persist = _persistGranted === true ? ' · stockage marqué <b>persistant</b> par le navigateur'
+    : _persistGranted === false ? ' · le navigateur n\u2019a pas accordé la persistance : ajoute l\u2019app à l\u2019écran d\u2019accueil, il l\u2019accorde alors sans rien demander'
+    : '';
+  return `Jeton enregistré — ${bits.join(' · ')}${persist}. Il est relu au démarrage depuis IndexedDB, donc il survit à un localStorage vidé.`;
+}
+function cloudRefreshDurable() {
+  const el = document.getElementById('cloud-durable');
+  if (el) el.innerHTML = cloudDurableLine();
+}
 function cloudReport(html, kind) {
   const el = document.getElementById('cloud-report');
   if (el) { el.className = `cloud-report ${kind || ''}`; el.innerHTML = html; }
@@ -853,6 +1065,12 @@ async function cloudCheck() {
   if (!c.owner || !c.repo) return cloudReport('Il manque le compte ou le dépôt.', 'bad');
   if (!c.token) return cloudReport('Il manque le jeton d’accès.', 'bad');
   cloudReport('<span class="spinner spinner-sm"></span> Vérification…');
+  // On ATTEND l'écriture disque avant d'annoncer quoi que ce soit : c'est
+  // précisément ce qui manquait, et pourquoi l'iPhone repartait sans jeton.
+  await Promise.all([_ghLastWrite ? _ghLastWrite.idb : null, requestPersistentStorage()]).catch(() => {});
+  cloudRefreshDurable();
+  if (_ghStore.idb === false && _ghStore.ls === false)
+    return cloudReport('Le jeton n\u2019a pu être enregistré NI dans IndexedDB NI dans localStorage — le stockage de ce navigateur est bloqué (navigation privée ?). Rien ne sera gardé au prochain lancement.', 'bad');
   // 1) le dépôt existe et le jeton peut ÉCRIRE (permissions.push)
   let r;
   try { r = await ghApi(''); } catch { return cloudReport('Réseau injoignable.', 'bad'); }
@@ -1394,6 +1612,34 @@ async function fetchExternalImage(setId, localId) {
   if (url) return 'DIRECT::' + url;
   return null;
 }
+/* Remplit d'un coup les visuels d'un SET ENTIER dépourvu d'images chez TCGdex.
+   Le cas exact : les Galeries de Dresseurs (« swsh12tg », « swsh11tg »…). Le
+   set brief de TCGdex y renvoie 30 cartes SANS champ `image`, dans TOUTES les
+   locales, et les fichiers du CDN n'existent pas non plus (404 vérifié). Le
+   miroir GitHub de pokemontcg.io, lui, les a toutes.
+   Une seule requête pour les 30 cartes, au lieu de 30 résolutions
+   individuelles — et le résultat rejoint le cache persistant des visuels, donc
+   les ouvertures suivantes sont immédiates. */
+async function fillSetImages(cards, setId) {
+  if (!setId || !cards.length) return false;
+  if (cards.some(c => c.image)) return false;   // le set a ses visuels : rien à faire
+  for (const ext of ptcgSetCandidates(setId)) {
+    let map;
+    try { map = await fetchGhSetImages(ext); } catch { continue; }
+    if (!map || !map.size) continue;
+    let n = 0;
+    for (const c of cards) {
+      const hit = map.get(String(c.localId)) || map.get(normNum(c.localId));
+      if (!hit) continue;
+      c.image = hit;                                   // convention DIRECT:: — voir IMG()
+      fallbackCache[`${setId}#${c.localId}`] = hit;
+      n++;
+    }
+    if (n) { persistImgFallbackSoon(); return true; }
+  }
+  return false;
+}
+
 // ── Cache PERSISTANT des visuels retrouvés ─────────────────────────
 // Une fois un visuel de repli localisé (autre locale ou pokemontcg.io), on le
 // mémorise dans localStorage : les sessions suivantes l'affichent immédiatement,
@@ -3434,8 +3680,21 @@ function markPagerStale() {
 // repayait son rendu (50 ms mesurées) au moment précis du changement d'onglet.
 // La page REGARDÉE est exclue : elle se met à jour en place, et la reconstruire
 // sous les yeux remettrait son défilement à zéro.
+/* UNE page par tour, et JAMAIS pendant que la bande glisse.
+   Deux défauts restaient ici :
+    · les deux pages voisines étaient reconstruites dans la MÊME tâche — sur une
+      collection de plus de mille cartes, ça fait une seule longue tâche au
+      lieu de deux courtes, et c'est la longue qui fait tomber une image ;
+    · `requestIdleCallback` n'existe pas sur les Safari iOS un peu anciens, où
+      l'on retombait sur un `setTimeout(500)` qui n'a rien d'oisif : il pouvait
+      atterrir en plein milieu d'un changement d'onglet. Or `markPagerStale()`
+      est appelé à CHAQUE cote qui arrive — donc très souvent.
+   Maintenant : si la bande bouge, on repasse plus tard ; et on ne garnit qu'une
+   page à la fois, en redemandant un tour s'il en reste. */
 function warmPagerPages() {
   if (!isPhone()) return;
+  // La bande glisse : le fil principal appartient à l'animation.
+  if (document.documentElement.dataset.pagerMove) { warmPagerPagesSoon(160); return; }
   const now = performance.now();
   for (const v of PHONE_PAGES) {
     if (v === state.view) continue;
@@ -3446,12 +3705,22 @@ function warmPagerPages() {
     if (now - (_pagerWarmedAt[v] || 0) < 1000) continue;
     _pagerWarmedAt[v] = now;
     try { renderViewBody(v); } catch (e) { console.warn('page du carrousel', v, e); }
+    warmPagerPagesSoon();   // la suivante attendra son propre tour
+    return;
   }
 }
-function warmPagerPagesSoon() {
+function warmPagerPagesSoon(delay) {
   if (!isPhone() || _pagerWarmIdle) return;
   const run = () => { _pagerWarmIdle = 0; warmPagerPages(); };
-  _pagerWarmIdle = window.requestIdleCallback ? requestIdleCallback(run, { timeout: 1500 }) : setTimeout(run, 500);
+  if (delay) { _pagerWarmIdle = setTimeout(run, delay); return; }
+  if (window.requestIdleCallback) { _pagerWarmIdle = requestIdleCallback(run, { timeout: 1500 }); return; }
+  // Sans requestIdleCallback (Safari iOS un peu ancien) : on attend d'abord la
+  // fin de l'image en cours, PUIS un délai — de cette façon on ne s'insère
+  // jamais dans la frame que le navigateur est en train de composer.
+  _pagerWarmIdle = setTimeout(() => {
+    _pagerWarmIdle = 0;
+    requestAnimationFrame(() => setTimeout(run, 0));
+  }, 400);
 }
 let _viewTransitionTimer = null;
 // Durée après laquelle la vue sortante est désépinglée : celle de sa SORTIE
@@ -4464,6 +4733,22 @@ async function pickSet(setId) {
     }
     state.pickerCards = cards;
     renderPickerCards();
+    /* ── LES GALERIES DE DRESSEURS N'ONT AUCUN VISUEL CHEZ TCGdex ─────────
+       C'est pour ça que TOUTES les TG s'affichaient « Visuel indisponible » sur
+       le « + », alors qu'elles étaient bien visibles ailleurs dans l'app : les
+       cartes DÉJÀ dans la collection portent leur propre set (« swsh12tg »),
+       donc la chaîne de repli trouvait le visuel ; ici on ne connaissait que le
+       set du parent affiché (« swsh12 »), et chercher « TG01 » dans « swsh12 »
+       ne donne évidemment rien.
+       Deux corrections : chaque vignette déclare maintenant SON set (voir
+       renderPickerCards), et on remplit ici la donnée pour de bon — une requête
+       par set concerné, puis un repaint. */
+    const gaps = [...new Set(cards.filter(c => !c.image).map(c => c.__set).filter(Boolean))];
+    for (const g of gaps) {
+      fillSetImages(cards.filter(c => c.__set === g), g)
+        .then(ok => { if (ok && state.pickerSet === setId) renderPickerCards(); })
+        .catch(() => {});
+    }
   } catch (e) { console.error('[picker] cartes', e); body.innerHTML = errBox('retryPicker()', e); }
 }
 function renderPickerCards() {
@@ -4504,7 +4789,7 @@ function renderPickerCards() {
         return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}"${have?' title="Déjà dans ton portefeuille"':''}>
           <span class="card-picker-check" aria-hidden="true">${q > 1 ? '×' + q : ICO.check}</span>
           ${have && state.pickerMode === 'investCard' ? '<span class="card-picker-have">Déjà à toi</span>' : ''}
-          ${u ? `<img src="${u}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(state.pickerSet||'')}','${jss(c.name)}')" alt="" loading="lazy">` : noImgHTML(c.localId, c.name, state.pickerSet)}
+          ${u ? `<img src="${u}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.__set||state.pickerSet||'')}','${jss(c.name)}')" alt="" loading="lazy">` : noImgHTML(c.localId, c.name, c.__set || state.pickerSet)}
           <div class="card-picker-name">${esc(c.name)}</div></div>`;
       }).join('')}
     </div>`;
@@ -4512,7 +4797,10 @@ function renderPickerCards() {
   // lookup dans pickerCards) prendra automatiquement le bon visuel — plus
   // besoin de réécrire un onclick.
   hydrateFallbackImages(body, (setId, localId, found) => {
-    const c = state.pickerCards.find(x => String(x.localId) === String(localId));
+    // Le set fait partie de la clé : un parent et sa galerie sont affichés
+    // ENSEMBLE, et deux cartes peuvent y porter le même numéro.
+    const c = state.pickerCards.find(x => String(x.localId) === String(localId)
+      && String(x.__set || state.pickerSet) === String(setId));
     if (c) c.image = found;
   });
 }
@@ -7124,8 +7412,30 @@ function runIntro(onReveal) {
 
   // Révèle l'app une seule fois (avec garde-fou anti-échec)
   let revealed = false;
+  /* ── ON PEINT D'ABORD, ON ANIME ENSUITE ─────────────────────────────
+     Avant : on retirait `booting`, on posait `arrive` (720 ms d'animation),
+     PUIS on appelait onReveal() — c'est-à-dire le premier render() complet de
+     l'app. L'animation démarrait donc, et la frame suivante était mangée par
+     plusieurs dizaines de millisecondes de JavaScript : le fondu d'arrivée
+     sautait systématiquement ses premières images.
+     Maintenant onReveal() tourne pendant que `.app` est encore à opacity:0
+     (l'élément est en page, donc toutes les mesures — position de la pastille
+     de nav, hauteur des barres — restent valables), et l'animation ne part
+     qu'à la frame d'après, sur un fil principal libre. */
   const reveal = () => {
     if (revealed) return; revealed = true;
+    try { onReveal && onReveal(); } catch (e) { console.warn(e); }
+    // Deux images d'attente pour que le fil principal soit libre quand
+    // l'animation part… ET un filet de sécurité : requestAnimationFrame ne
+    // tourne PAS dans un onglet en arrière-plan, et l'app resterait alors
+    // invisible pour toujours. `startArrive` est idempotent, le premier des
+    // deux qui arrive gagne.
+    requestAnimationFrame(() => requestAnimationFrame(startArrive));
+    setTimeout(startArrive, 120);
+  };
+  let arrived = false;
+  const startArrive = () => {
+    if (arrived) return; arrived = true;
     shell?.classList.remove('booting'); shell?.classList.add('arrive');
     // La classe est RETIRÉE dès l'animation finie, et ce n'est pas cosmétique :
     // `animation-fill-mode:both` garde la propriété `transform` sous contrôle de
@@ -7135,7 +7445,6 @@ function runIntro(onReveal) {
     const done = () => shell?.classList.remove('arrive');
     shell?.addEventListener('animationend', done, { once: true });
     setTimeout(done, 900);   // filet si l'événement ne vient pas (reduced-motion)
-    try { onReveal && onReveal(); } catch (e) { console.warn(e); }
   };
   const teardown = () => { try { intro && intro.remove(); } catch {} };
 
@@ -7145,15 +7454,52 @@ function runIntro(onReveal) {
   // l'impression d'un chargement cassé. Elle suit maintenant les vraies étapes
   // du démarrage (catalogue relu, cotes prêtes, premier rendu).
   if (reduce || !canvas || !THREE) {
+    /* ── LA BARRE, EN 60 IMAGES PAR SECONDE ──────────────────────────────
+       Version d'avant : `setInterval(…, 90)` écrivait `style.width` en
+       pourcentage, et le CSS mettait une `transition:width 220ms` par-dessus.
+       Trois problèmes cumulés, et c'est exactement ce qu'on voyait :
+        · 11 écritures par seconde pour animer quelque chose de continu ;
+        · chaque transition de 220 ms était ÉCRASÉE 90 ms après son départ,
+          donc jamais terminée — la barre repartait sans cesse ;
+        · `width` se calcule en MISE EN PAGE : chaque image repassait par le
+          layout du document au moment précis où le démarrage a besoin du fil
+          principal.
+       Maintenant : une seule animation pilotée par requestAnimationFrame, sur
+       `transform:scaleX()` — c'est-à-dire sur le compositeur, sans layout ni
+       repeinture. Le pourcentage écrit à côté ne change qu'à l'entier près,
+       donc au plus une écriture de texte par point de progression. */
     const bar0 = document.getElementById('intro-bar'), pct0 = document.getElementById('intro-pct');
-    const set0 = v => { if (bar0) bar0.style.width = v + '%'; if (pct0) pct0.textContent = Math.round(v) + '%'; };
-    let p = 6; set0(p);
+    let p = 6, target = 6, lastPct = -1, raf = 0, running = true;
+    const paint = () => {
+      if (bar0) bar0.style.transform = `scaleX(${(p / 100).toFixed(4)})`;
+      const r = Math.round(p);
+      if (r !== lastPct) { lastPct = r; if (pct0) pct0.textContent = r + '%'; }
+    };
     // Montée continue et honnête : on avance vers 92 % pendant le vrai travail
     // (lecture IndexedDB, relecture du dépôt, préparation du rendu), et on
-    // termine à 100 % au moment où l'app se révèle.
-    const tick = setInterval(() => { p = Math.min(92, p + (92 - p) * 0.18 + 1.5); set0(p); }, 90);
+    // termine à 100 % au moment où l'app se révèle. `dt` normalise la vitesse :
+    // une image sautée n'a plus d'effet sur la progression.
+    let prev = performance.now(), lastFrame = prev;
+    const loop = now => {
+      if (!running) return;
+      const dt = Math.min(64, now - prev); prev = now; lastFrame = now;
+      p += (target - p) * (1 - Math.pow(0.0025, dt / 1000));
+      paint();
+      raf = requestAnimationFrame(loop);
+    };
+    paint();
+    raf = requestAnimationFrame(loop);
+    const climb = setInterval(() => {
+      target = Math.min(92, target + (92 - target) * 0.3 + 2);
+      // FILET : requestAnimationFrame ne tourne pas dans un onglet en
+      // arrière-plan. Sans ceci, la barre resterait plantée à 6 % puis
+      // sauterait à 100 % au retour. On la fait avancer d'ici, au rythme de ce
+      // minuteur, dès que plus aucune image n'est arrivée.
+      if (performance.now() - lastFrame > 250) { p += (target - p) * 0.35; paint(); }
+    }, 140);
+    const set0 = v => { target = p = v; paint(); };
     const done = () => {
-      clearInterval(tick); set0(100);
+      clearInterval(climb); running = false; cancelAnimationFrame(raf); set0(100);
       const flash = document.getElementById('intro-flash');
       if (flash) flash.classList.add('bloom');
       setTimeout(() => { intro && intro.classList.add('exit'); reveal(); }, 220);
@@ -7299,7 +7645,15 @@ function runIntro(onReveal) {
   const flashEl = document.getElementById('intro-flash');
   const strikeEl = document.getElementById('intro-strike');
   let progress = 0;
-  const setProg = v => { progress = v; if (bar) bar.style.width = v + '%'; if (pct) pct.textContent = Math.round(v) + '%'; };
+  // Même convention que le chemin sans 3D : `scaleX`, pas `width` (voir la note
+  // dans style.css). Ici on est déjà dans une boucle rAF, donc rien à ajouter.
+  let _pctLast = -1;
+  const setProg = v => {
+    progress = v;
+    if (bar) bar.style.transform = `scaleX(${(v / 100).toFixed(4)})`;
+    const r = Math.round(v);
+    if (r !== _pctLast) { _pctLast = r; if (pct) pct.textContent = r + '%'; }
+  };
 
   const t0 = performance.now();
   // Le chargement est RÉEL : on précharge les modèles 3D (les cotes, elles, sont
@@ -8334,7 +8688,17 @@ function drawPortfolioChart(list) {
 let _sealedImport = null;
 function onSealedFile(input) {
   const file = input.files && input.files[0]; if (!file) return;
-  if (typeof XLSX === 'undefined') { toast('Lecteur Excel pas encore prêt, réessaie dans un instant', 'error'); input.value = ''; return; }
+  // SheetJS n'est plus chargé avec la page : on va le chercher maintenant.
+  if (typeof XLSX === 'undefined') {
+    const el = input, f0 = el.files && el.files[0];
+    if (!f0) { el.value = ''; return; }
+    toast('Préparation du lecteur Excel…', '');
+    ensureXlsx().then(ok => {
+      if (!ok) { toast('Lecteur Excel injoignable (vérifie ta connexion)', 'error'); el.value = ''; return; }
+      onSealedFile(el);   // le fichier est toujours dans l'input : on reprend au début
+    });
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
     try {
@@ -8430,7 +8794,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui43';
+const BUILD = 'ui44';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
@@ -8467,9 +8831,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // l'intro sur le chemin sans 3D.
   window._introReady = new Promise(res => { window._introReadyResolve = res; });
   ensureSoftButtonAssets();    // matériau des boutons prêt avant le 1er rendu
+  // La 3D part MAINTENANT sur desktop, en parallèle du reste du démarrage :
+  // elle n'est plus dans le <head>, donc plus dans le chemin critique, mais on
+  // veut qu'elle soit là au moment de l'intro. Sur téléphone : aucune requête.
+  const three = ensureThree();
   loadApiCache();   // réinjecte les séries/sets déjà connus (navigation instantanée)
   loadPriceCache(); // cotes de la dernière session → valeur du coffre instantanée
   try { await load(); } catch (e) { console.warn('load', e); }  // copie locale prête avant le rendu
+  // LE JETON, AVANT TOUT ÉCHANGE AVEC LE DÉPÔT. Sa copie de référence vit dans
+  // IndexedDB (voir la note au-dessus de ghCfg) : on la relit ici, donc avant
+  // ghPull / ghPushSoon, sinon un appareil dont le localStorage a été vidé se
+  // croirait en lecture seule alors que son jeton est intact.
+  try { await ghHydrate(); } catch (e) { console.warn('ghHydrate', e); }
+  // …et on demande au navigateur de ne pas évincer ce stockage (non bloquant).
+  requestPersistentStorage();
   // Le DÉPÔT est l'arbitre : on le relit tout de suite. Sur un appareil vierge
   // (l'iPhone à sa première ouverture) c'est LUI qui remplit la collection ;
   // ailleurs, le plus récent gagne. Non bloquant : l'app s'affiche déjà avec
@@ -8536,6 +8911,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       .then(reg => { try { reg.update(); } catch {} })
       .catch(e => console.warn('sw', e));
   }
+  // L'intro 3D a besoin de THREE : on l'attend, mais jamais plus que le temps
+  // qu'elle mettrait de toute façon à s'afficher. Si le CDN traîne ou tombe,
+  // runIntro prend le chemin « fondu de marque » — celui du téléphone — au lieu
+  // de retenir l'utilisateur.
+  if (!isPhone()) await Promise.race([three, new Promise(r => setTimeout(r, 1800))]).catch(() => {});
+  // ARRIVÉE TARDIVE. Si le CDN a dépassé le plafond ci-dessus, l'intro est
+  // partie sans 3D et le premier rendu de l'accueil a trouvé un THREE absent :
+  // son canvas resterait vide jusqu'au prochain changement de vue. On rebranche
+  // donc la scène quand la bibliothèque finit par arriver. initHero3D est
+  // réentrant (une scène déjà construite est simplement réveillée), l'appel est
+  // sans risque.
+  three.then(ok => {
+    if (!ok || isPhone()) return;
+    setTimeout(() => { if (state.view === 'home') { try { initHero3D(); } catch (e) { console.warn('hero 3D tardif', e); } } }, 1200);
+  });
   warmupModels();  // parse les GLB au plus tôt → cache chaud avant la fin de l'intro
   runIntro(() => {
     render();

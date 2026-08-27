@@ -11,8 +11,13 @@
  * Les données (collection, cotes) ne passent JAMAIS par ici : elles viennent de
  * l'API GitHub / raw.githubusercontent, où une réponse périmée serait grave.
  */
-const V = 'irondex-v36';
-const SHELL = ['./', './index.html', './app.js?v=ui43', './style.css?v=ui43', './cm-slugs.js',
+const V = 'irondex-v37';
+// cm-slugs.js (2,1 Mo) N'EST PLUS pré-caché : le télécharger pendant
+// l'installation du worker, c'est-à-dire pendant le premier démarrage, volait
+// de la bande passante à l'app elle-même. app.js ne le charge plus qu'à la
+// première fiche Cardmarket à résoudre — et la règle « réseau d'abord » plus
+// bas le met alors en cache pour l'hors-ligne, exactement comme avant.
+const SHELL = ['./', './index.html', './app.js?v=ui44', './style.css?v=ui44',
                './manifest.json', './logo.png', './favicon.png'];
 
 self.addEventListener('install', e => {
