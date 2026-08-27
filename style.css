@@ -568,8 +568,38 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    du viewport (100 %, pas une unité `vh` — celles-là sont calculées et, sur iOS,
    ne coïncident pas toujours avec ce qu'on voit), et le cadre par-dessus. Sans
    hauteur sur `html`, le `100 %` de `body` ne veut rien dire. */
-:root[data-mobile="on"], :root[data-mobile="on"] body{height:100%;min-height:0;overflow:hidden}
-:root[data-mobile="on"] .app{position:fixed;inset:0;height:100%;min-height:0}
+/* ══════════════════════════════════════════════════════════════════════
+   PLEIN ÉCRAN, JUSQU'AU DERNIER PIXEL DU BAS
+
+   `--fill-h` et `--ios-gap` sont MESURÉES par syncFillHeight() (voir app.js) :
+   en app installée avec `black-translucent`, iOS raccourcit le viewport de mise
+   en page de la hauteur de la barre d'état (mesuré : écran 926, viewport 879,
+   écart 47) tout en gardant la vue ancrée en haut. Tout ce qui est calé sur ce
+   viewport — `.app` en `inset:0`, la tab bar en `bottom:0` — s'arrêtait donc
+   47 px avant le bord, et ces pixels ne montraient que le canvas nu : la
+   fameuse bande. Ce n'est PAS une zone interdite (elle reçoit bien le fond de
+   `html`), c'était juste une zone que rien ne couvrait.
+
+   Toutes les couches plein écran prennent donc `--fill-h`, et la tab bar
+   descend de l'écart pour toucher le bord physique. Hors de ce cas précis
+   `--ios-gap` vaut 0 et ces règles retombent sur le comportement d'avant : le
+   repli `100%` couvre le tout premier rendu, avant la mesure.
+   ══════════════════════════════════════════════════════════════════════ */
+:root[data-mobile="on"], :root[data-mobile="on"] body{height:var(--fill-h,100%);min-height:0;overflow:hidden}
+/* `bottom:auto` : avec top, bottom ET height tous déclarés, la règle est
+   sur-contrainte et le navigateur laisse tomber l'un des trois. On tranche
+   nous-mêmes — c'est la HAUTEUR qui doit gagner. */
+:root[data-mobile="on"] .app{position:fixed;inset:0;bottom:auto;height:var(--fill-h,100%);min-height:0}
+/* Les autres couches plein écran : l'intro, la scène de fond, les feuilles
+   modales, la palette, la visionneuse, l'écran de synchro. Sans elles, chacune
+   laissait la même bande à son tour — la feuille modale par exemple s'arrêtait
+   47 px au-dessus du bord. */
+:root[data-mobile="on"] #intro,
+:root[data-mobile="on"] .aurora,
+:root[data-mobile="on"] .modal-overlay,
+:root[data-mobile="on"] .palette,
+:root[data-mobile="on"] .lightbox,
+:root[data-mobile="on"] .refresh-overlay{bottom:auto;height:var(--fill-h,100%)}
 /* Et la barre d'onglets est ancrée au CADRE (absolute) plutôt qu'au viewport :
    son bas et celui de l'app sont alors le même bord, il ne peut plus rien
    s'ouvrir entre les deux. */
@@ -578,7 +608,13 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    jusqu'au bord physique pour une raison qui m'échappe, `absolute` reproduit son
    défaut alors que `fixed` va au bord, toujours. Le `bottom:0` de la règle de
    base suffit ; on ne redéclare donc que la nature du positionnement. */
-:root[data-mobile="on"] .tabbar{position:fixed}
+/* La tab bar reste ANCRÉE AU VIEWPORT (`fixed`) — la leçon de la fois d'avant
+   tient : `absolute` la rendait dépendante de la hauteur de `.app`. Mais son
+   `bottom:0` visait le bas du viewport de mise en page, pas le bas de l'écran.
+   On la descend donc de l'écart mesuré : son bord bas retrouve le bord physique
+   et le trou disparaît. Écart nul (Mac, Safari en onglet, paysage) → `bottom:0`,
+   c'est-à-dire exactement le comportement d'avant. */
+:root[data-mobile="on"] .tabbar{position:fixed;bottom:calc(-1 * var(--ios-gap,0px))}
 /* Plus de « prolongation » sous la barre : ce pseudo-élément peignait un aplat
    quasi noir SOUS elle. Quand la barre n'atteignait pas le bord, il ne comblait
    pas le trou — il le rendait plus franc, en posant du noir plat à côté du
@@ -3211,7 +3247,10 @@ body::before{display:none}
     padding:calc(9px + env(safe-area-inset-top)) var(--gutter) 9px;gap:10px}
   /* Le rembourrage du bas est passé DANS chaque colonne du carrousel (elles
      défilent, plus le document) — voir le bloc CARROUSEL DE PAGES. */
-  #toast-container{bottom:calc(88px + env(safe-area-inset-bottom))}
+  /* Les toasts se posent juste au-dessus de la tab bar. Comme elle est
+     descendue de `--ios-gap`, ils la suivent — sinon ils flottaient 47 px trop
+     haut, avec un vide sous eux. */
+  #toast-container{bottom:calc(88px + env(safe-area-inset-bottom) - var(--ios-gap,0px))}
 
   /* ── SÉLECTEUR D'AJOUT : TROIS CARTES PAR LIGNE ─────────────────
      `minmax(112px,1fr)` n'en tenait que DEUX sur un écran de 375 px : des
@@ -3310,7 +3349,11 @@ body::before{display:none}
      sa matière qui doit occuper ces pixels, sinon on voit le fond de l'app
      dessous et ça se lit comme une bande. Je l'avais rogné de 8 px pour gagner
      de la densité — mauvaise économie, elle créait la couture. */
-  .tabbar{padding:7px 6px max(8px,env(safe-area-inset-bottom))}
+  /* `--tabbar-floor` est posé par syncFillHeight() (app.js) : il vaut la
+     formule habituelle quand il n'y a pas d'écart à reprendre, et un plancher
+     garanti de 24 px quand la barre a été descendue jusqu'au bord physique —
+     là où `env(safe-area-inset-bottom)` peut annoncer 0. */
+  .tabbar{padding:7px 6px var(--tabbar-floor,max(8px,env(safe-area-inset-bottom)))}
   .tabbar .nav-btn{min-height:52px;gap:5px;padding:5px 2px;border-radius:14px}
   .tabbar .nav-icon{width:25px;height:25px}
   .tabbar .nav-svg{width:23px;height:23px}

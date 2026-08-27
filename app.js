@@ -168,14 +168,113 @@ function syncTopbarHeight() {
     if (px > 20) document.documentElement.style.setProperty('--tabbar-h', px + 'px');
   }
 }
+/* ══════════════════════════════════════════════════════════════════════
+   LA BANDE DU BAS SUR IPHONE — la vraie cause, et la vraie correction
+
+   Symptôme : app installée, `black-translucent`. Le HAUT passe bien sous la
+   barre d'état (c'est ce qu'on voulait), mais il reste une bande en bas.
+
+   CE QUI AVAIT ÉTÉ CONCLU LA FOIS D'AVANT, et qui était à moitié faux : « les
+   47 px sont hors d'atteinte de la page ». Le diagnostic de l'appareil disait
+   écran 926 · page 879 · encoche 47 (926 − 879 = 47), et on en avait déduit
+   qu'il fallait abandonner `black-translucent`.
+
+   CE QUI PROUVE LE CONTRAIRE : la bande a la couleur `#06070A`, c'est-à-dire
+   `var(--v-0)` — le fond de l'élément racine, PROPAGÉ AU CANVAS. Le canvas,
+   c'est toute la surface peinte de la vue web. Si ces 47 px reçoivent le fond
+   de `html`, ils sont DANS la vue web : ce n'est pas une zone interdite, c'est
+   une zone que rien ne couvre.
+
+   Pourquoi rien ne la couvre : iOS raccourcit le viewport de MISE EN PAGE de la
+   hauteur de la barre d'état tout en gardant la vue ancrée en haut de l'écran.
+   Or toute la coque du téléphone est calée sur ce viewport — `.app` est en
+   `position:fixed; inset:0`, la tab bar en `bottom:0` — donc tout s'arrête à
+   879 et les 47 derniers pixels ne montrent que le canvas nu. Ça explique aussi
+   pourquoi les corrections précédentes ne pouvaient pas marcher : elles
+   redimensionnaient des boîtes À L'INTÉRIEUR d'un viewport déjà trop court.
+
+   LA CORRECTION : on MESURE l'écart et on le donne en variables CSS. La coque
+   prend la hauteur réelle (`--fill-h`) et la tab bar descend de l'écart
+   (`--ios-gap`) pour toucher le bord physique.
+
+   GARDE-FOUS, parce qu'une erreur ici pousse la barre d'onglets hors de l'écran :
+    · UNIQUEMENT en app installée (`display-mode: standalone`). Dans un onglet
+      Safari, `screen.height − innerHeight` vaut la hauteur du chrome du
+      navigateur et n'a rien à voir ;
+    · uniquement en portrait — `screen.height` sur iOS reste la hauteur du
+      portrait quelle que soit l'orientation ;
+    · et seulement si l'écart est plausible pour une barre d'état (≤ 80 px).
+   Hors de ces trois conditions, l'écart vaut 0 et rien ne change.
+   ══════════════════════════════════════════════════════════════════════ */
+function isStandaloneApp() {
+  try {
+    if (navigator.standalone === true) return true;
+    return !!(window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  } catch { return false; }
+}
+// Écart mesuré entre l'écran et le viewport de mise en page, en px CSS.
+function iosViewportGap() {
+  if (!isStandaloneApp()) return 0;
+  const inner = window.innerHeight || 0, innerW = window.innerWidth || 0;
+  const scr = (window.screen && screen.height) || 0;
+  if (!inner || !scr) return 0;
+  if (inner < innerW) return 0;                 // paysage : on ne touche à rien
+  const gap = scr - inner;
+  if (gap <= 0 || gap > 80) return 0;           // pas une barre d'état : on s'abstient
+  return gap;
+}
+let _iosGap = -1;
+function syncFillHeight() {
+  const r = document.documentElement;
+  if (!isPhone()) {
+    if (_iosGap !== 0) {
+      r.style.removeProperty('--ios-gap'); r.style.removeProperty('--fill-h');
+      r.style.removeProperty('--tabbar-floor'); _iosGap = 0;
+    }
+    return 0;
+  }
+  const gap = iosViewportGap();
+  const h = (window.innerHeight || 0) + gap;
+  r.style.setProperty('--ios-gap', gap + 'px');
+  r.style.setProperty('--fill-h', h + 'px');
+  /* DÉGAGEMENT DU TRAIT D'ACCUEIL. En descendant la tab bar de `gap`, son bord
+     bas rejoint le bord PHYSIQUE de l'écran — or `env(safe-area-inset-bottom)`
+     ne le sait pas forcément : dans ce régime le viewport de mise en page ne
+     touche pas le bas de l'écran, et iOS peut donc annoncer 0. Les icônes se
+     retrouveraient sous le trait d'accueil. On garantit un plancher nous-mêmes
+     dès qu'un écart est repris — 24 px, sans jamais rogner sur ce qu'iOS
+     annonce s'il annonce mieux. Écart nul : la formule d'avant, à l'identique. */
+  r.style.setProperty('--tabbar-floor', gap
+    ? 'max(env(safe-area-inset-bottom), 24px)'
+    : 'max(8px, env(safe-area-inset-bottom))');
+  if (gap !== _iosGap) {
+    _iosGap = gap;
+    if (gap) console.info('[plein écran] viewport', window.innerHeight, '+ écart', gap, '=', h, '(écran', screen.height + ')');
+    // Les hauteurs des deux barres ont bougé avec la coque : on les remesure.
+    try { syncTopbarHeight(); } catch {}
+  }
+  return gap;
+}
+
 function paintDeviceFlag() {
   _isPhone = null;   // la taille a changé : on remesure une fois, ici
   try { document.documentElement.dataset.mobile = isPhone() ? 'on' : 'off'; } catch {}
 }
 paintDeviceFlag();
+syncFillHeight();
+/* iOS ne donne pas sa géométrie définitive à la première frame d'une app
+   installée : `innerHeight` peut valoir la hauteur d'écran pendant un instant,
+   puis se raccourcir. On remesure donc aux quatre moments où elle peut changer —
+   et c'est sans coût : syncFillHeight ne touche au DOM que si l'écart a bougé. */
+addEventListener('orientationchange', () => setTimeout(syncFillHeight, 120));
+// Retour au premier plan : iOS relaie parfois la vue après une mise en veille.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncFillHeight(); });
+if (window.visualViewport) visualViewport.addEventListener('resize', syncFillHeight);
+addEventListener('load', () => { syncFillHeight(); setTimeout(syncFillHeight, 300); });
 addEventListener('resize', () => {
   const was = _isPhone;
   paintDeviceFlag();
+  syncFillHeight();
   // Fenêtre élargie au-delà du seuil téléphone : la 3D redevient possible, et
   // ses bibliothèques n'ont pas été chargées au départ — on les demande ici.
   if (was && !_isPhone) ensureThree();
@@ -3033,12 +3132,36 @@ function palCommands() {
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
+    // Sur téléphone seulement : la question « la page remplit-elle l'écran ? »
+    // ne se pose que là, et elle s'est déjà posée deux fois.
+    ...(isPhone() ? [{ kind: 'act', name: 'Diagnostic écran', sub: 'Vérifier que l\u2019app remplit tout l\u2019écran', ico: ICO.info, run: () => screenDiag() }] : []),
   ];
 }
-/* Le panneau « Diagnostic écran » a été retiré le 2026-08-26, la question qu'il
-   servait à trancher l'étant : il manquait exactement la hauteur de la barre
-   d'état (47 px), parce que les metas `apple-mobile-web-app-*` faisaient
-   dimensionner la vue par le chemin historique d'iOS. Voir index.html. */
+/* ── DIAGNOSTIC ÉCRAN ──────────────────────────────────────────────
+   Il avait été retiré, puis la bande du bas est revenue et il a fallu deviner.
+   Il revient donc, mais minuscule : quatre nombres et un verdict, dans un
+   toast. C'est exactement ce qu'il faut pour trancher « la page remplit-elle
+   l'écran ? » sans brancher l'iPhone à un Mac.
+   Il est aussi le témoin de la correction : quand l'écart est repris, il dit
+   « comblé », et la ligne du bas doit indiquer 0 px de manque. */
+function screenDiag() {
+  const gap = iosViewportGap();
+  const fill = getComputedStyle(document.documentElement).getPropertyValue('--fill-h').trim() || '(non posée)';
+  const tb = document.querySelector('.tabbar');
+  // `r.bottom` est déjà exprimé depuis le HAUT du viewport de mise en page ; la
+  // tab bar ayant un `bottom` négatif, son rect dépasse innerHeight tout seul.
+  // Pas de correction à appliquer : ce nombre EST la position réelle à l'écran.
+  const r = tb ? tb.getBoundingClientRect() : null;
+  const manque = r ? Math.round((screen.height || 0) - r.bottom) : null;
+  const lines = [
+    `écran ${screen.height || '?'} · viewport ${window.innerHeight} · écart repris ${gap} px`,
+    `hauteur imposée ${fill} · installée : ${isStandaloneApp() ? 'oui' : 'NON'}`,
+    r ? `bas de la tab bar à ${Math.round(r.bottom)} px — manque ${Math.max(0, manque)} px` : 'tab bar absente',
+  ];
+  console.info('[diagnostic écran]', lines.join(' | '));
+  toast(lines.join(' — '), gap && manque === 0 ? 'success' : manque ? 'error' : '');
+  return lines;
+}
 // Toutes les cartes atteignables, dédoublonnées, avec leur provenance.
 function palCards() {
   const seen = new Map();
@@ -8838,7 +8961,7 @@ function confirmSealedImport() {
    suffit pas (serveur en retard, déploiement à moitié propagé), on n'insiste
    pas et on laisse l'app tourner telle quelle.
    ══════════════════════════════════════════════════════════════════════ */
-const BUILD = 'ui45';
+const BUILD = 'ui46';
 async function purgeAppCaches() {
   try {
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
