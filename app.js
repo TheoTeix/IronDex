@@ -1094,7 +1094,16 @@ async function vaultPull(opts) {
 // ── TEMPS RÉEL ─────────────────────────────────────────────────────
 // Une carte ajoutée sur l'iPhone apparaît sur le Mac sans rien rouvrir. La RLS
 // s'applique au flux : on ne peut s'abonner qu'à sa propre ligne.
-let _vaultChan = null;
+let _vaultChan = null, _rtStatus = '';
+function rtLabel() {
+  switch (_rtStatus) {
+    case 'SUBSCRIBED': return 'Actif — les modifications des autres appareils arrivent seules';
+    case 'CHANNEL_ERROR': return 'Indisponible — repli sur une vérification toutes les 45 s';
+    case 'TIMED_OUT': return 'Expiré — repli sur une vérification toutes les 45 s';
+    case 'CLOSED': return 'Fermé — repli sur une vérification toutes les 45 s';
+    default: return 'Connexion…';
+  }
+}
 async function vaultWatch() {
   if (!vaultOn() || _vaultChan) return;
   try {
@@ -1102,16 +1111,31 @@ async function vaultWatch() {
     _vaultChan = sb.channel('collection-' + _user.id)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'collections', filter: 'user_id=eq.' + _user.id },
-        payload => {
-          const rt = Date.parse(payload?.new?.data?.lastUpdated || 0) || 0;
-          // Notre propre écriture nous revient : ne pas se repeindre dessus.
-          if (!rt || rt <= _localUpdated) return;
-          vaultPull({ quiet: false }).catch(() => {});
+        () => {
+          /* ON NE LIT PLUS L'ÉVÉNEMENT, et c'est la correction essentielle.
+             Supabase Realtime plafonne les enregistrements diffusés à ~1 Mo ;
+             l'instantané en fait près de 5. L'événement arrivait donc TRONQUÉ,
+             `payload.new.data.lastUpdated` valait undefined, et le code
+             concluait « rien de neuf » puis abandonnait. Le temps réel était
+             branché, écoutait bien, et ne servait à rien.
+             L'événement ne sert plus que de SONNETTE : quelque chose a bougé,
+             on va voir. La sonde de vaultPull ne coûte que quelques octets et
+             tranche elle-même s'il faut descendre le document. */
+          vaultPull({ quiet: true }).catch(() => {});
         })
-      .subscribe();
+      .subscribe(status => {
+        _rtStatus = status;
+        // L'état est AFFICHÉ dans la page de profil : une synchro qu'on croit
+        // instantanée alors que la websocket est tombée, c'est pire que pas de
+        // synchro du tout — on ne va pas vérifier ce qu'on croit acquis.
+        const e = document.getElementById('pf-rt'); if (e) e.textContent = rtLabel();
+        if (status === 'SUBSCRIBED') console.info('[coffre] temps réel actif');
+        else console.warn('[coffre] temps réel :', status);
+      });
   } catch (e) { console.warn('[coffre] temps réel', e); }
 }
 function vaultUnwatch() {
+  _rtStatus = '';
   if (!_vaultChan) return;
   try { _vaultChan.unsubscribe(); } catch {}
   _vaultChan = null;
@@ -1519,7 +1543,6 @@ function renderProfile() {
   const cards = state.investCards.reduce((a, p) => a + Math.max(1, Number(p.qty) || 1), 0);
   const value = (typeof cardsTotalValue === 'function') ? cardsTotalValue() : 0;
   const wishLeft = (state.wishlists || []).reduce((a, w) => a + wishlistRemainingValue(w), 0);
-  const coted = Object.keys(priceCache).filter(k => priceCache[k]).length;
   const since = (_profile && _profile.created_at) ? new Date(_profile.created_at) : null;
 
   el.innerHTML = `
@@ -1564,11 +1587,6 @@ function renderProfile() {
         <span class="pf-stat-k">Wishlists</span>
         <span class="pf-stat-sub">${wishLeft > 0 ? fmt(wishLeft) + ' à trouver' : (state.wishlists.length ? 'tout est trouvé' : 'aucune liste')}</span>
       </div>
-      <div class="pf-stat">
-        <span class="pf-stat-v">${coted.toLocaleString('fr-FR')}</span>
-        <span class="pf-stat-k">Cotes en cache</span>
-        <span class="pf-stat-sub">${esc(agoLabel(priceSyncedAt()))}</span>
-      </div>
     </section>
 
     <!-- ── LA SYNCHRONISATION ────────────────────────────────────────
@@ -1580,6 +1598,7 @@ function renderProfile() {
         <span class="pf-sync-dot" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
       </div>
       <p class="pf-line" id="account-sync-line">${esc(vaultStatusLine())}</p>
+      <p class="pf-note">Temps réel : <span id="pf-rt">${esc(rtLabel())}</span></p>
       <p class="pf-note">Tes données vivent dans ta ligne à toi. La base refuse au niveau du moteur de les servir à quelqu'un d'autre : te connecter sur un autre appareil suffit à les y retrouver, et personne d'autre ne peut les lire.</p>
       <div class="pf-actions">
         <button class="btn btn-ghost btn-sm" onclick="accountPull()">Relire mon compte</button>
@@ -4161,7 +4180,10 @@ function render() {
    cochées comptent toujours dans la valeur du coffre.
    ══════════════════════════════════════════════════════════════════════ */
 const TAB_ORDER = ['home', 'wishlists', 'invest', 'binders'];
-const PHONE_PAGES = ['home', 'wishlists', 'invest'];
+// Le profil a SA colonne : ajouté à la bande sans y être déclaré, il s'y
+// insérait sans case de grille — page invisible et voisines déréglées.
+// Il n'est pas dans la barre du bas pour autant : on y entre par l'avatar.
+const PHONE_PAGES = ['home', 'wishlists', 'invest', 'profile'];
 const PHONE_HIDDEN = ['binders', 'binder-detail'];
 // La colonne du carrousel qui héberge une vue. Le détail d'une wishlist vit
 // DANS la colonne « Wishlists » : y entrer ne fait donc pas glisser la bande.
@@ -9501,6 +9523,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // apparaît, elle est à jour, pas « à jour une seconde plus tard ».
   let cloudReady = Promise.resolve();
   if (vaultOn()) {
+    /* ENVOYER D'ABORD, RELIRE ENSUITE — l'ordre inverse perdait des données.
+       Une modification faite sur l'iPhone puis coupée par la mise en veille
+       reste « en attente ». Si l'autre appareil a écrit entre-temps, la
+       relecture au démarrage trouvait le serveur plus récent, appliquait sa
+       version, et la modification jamais envoyée disparaissait — exactement le
+       symptôme « mes modifs iPhone ne se voient pas sur le Mac ». En envoyant
+       d'abord, le travail de cet appareil existe sur le serveur avant que quoi
+       que ce soit ne puisse l'écraser. */
+    if (pushPending()) {
+      _vaultPend.collection = true;
+      try { await vaultFlush(); } catch (e) { console.warn('envoi en attente', e); }
+    }
     cloudReady = Promise.allSettled([
       vaultPull({ boot: true }).catch(e => console.warn('vaultPull', e)),
       vaultPullPrices().catch(e => console.warn('vaultPullPrices', e)),
@@ -9511,7 +9545,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ligne, session expirée, app fermée trop vite) ? On retente maintenant.
     // L'arbitrage de vaultPull, qui tourne juste au-dessus, a déjà tranché qui
     // du local ou du serveur est le plus récent.
-    if (pushPending()) setTimeout(() => vaultPushSoon('collection'), 3000);
+    // (l'envoi en attente est traité AVANT la relecture, plus haut)
     // …et à CHAQUE retour au premier plan. Sur iPhone une app installée n'est
     // jamais « rechargée » : sans ça, les cartes ajoutées depuis un autre
     // appareil n'arrivaient qu'après une fermeture complète.

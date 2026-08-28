@@ -636,7 +636,11 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 }
 :root[data-mobile="on"] .wrap{
   height:100%;max-width:none;margin:0;
-  display:grid;grid-template-columns:repeat(3,100%);grid-template-rows:100%;
+  /* QUATRE colonnes : les trois destinations de la barre du bas, plus le
+     profil — qui n'y figure pas mais vit dans la même bande, atteint par
+     l'avatar de la barre haute. Sans sa case déclarée ici, il s'insérait dans
+     la grille au petit bonheur et déréglait les voisines. */
+  display:grid;grid-template-columns:repeat(4,100%);grid-template-rows:100%;
   /* Le `transform` est posé en style inline par setPagerTransform() — et NON
      via une variable CSS : une propriété personnalisée non enregistrée ne
      déclenche pas de transition sur le transform qui l'utilise, et la bande
@@ -700,6 +704,7 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 :root[data-mobile="on"] #view-wishlists,
 :root[data-mobile="on"] #view-wishlist-detail{grid-area:1/2}
 :root[data-mobile="on"] #view-invest{grid-area:1/3}
+:root[data-mobile="on"] #view-profile{grid-area:1/4}
 /* LES CLASSEURS N'EXISTENT PAS ICI (demande du 2026-08-26). Le feuilletage 3D
    reste sur Mac ; les cases cochées continuent de compter dans le coffre. */
 :root[data-mobile="on"] #view-binders,
@@ -710,7 +715,8 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    d'une grande page. `.active` ne sert donc plus qu'à la pile liste/détail. */
 :root[data-mobile="on"] #view-home,
 :root[data-mobile="on"] #view-wishlists,
-:root[data-mobile="on"] #view-invest{display:block}
+:root[data-mobile="on"] #view-invest,
+:root[data-mobile="on"] #view-profile{display:block}
 :root[data-mobile="on"] #view-wishlist-detail{display:none}
 :root[data-mobile="on"] #view-wishlist-detail.active{display:block}
 /* `:not(.exiting)` : le temps que la liste s'efface, elle doit RESTER visible —
