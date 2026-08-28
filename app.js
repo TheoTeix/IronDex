@@ -808,7 +808,14 @@ async function fetchProfile() {
   try {
     const sb = await sbClient();
     const { data } = await sb.from('profiles').select('*').eq('id', _user.id).maybeSingle();
-    if (data) { _profile = data; paintAccountButton(); }
+    if (data) {
+      _profile = data;
+      paintAccountButton();
+      // La fiche arrive du réseau, donc APRÈS le premier rendu : la page de
+      // profil affichait un pseudo de repli et pas de date d'ouverture, et ne
+      // se corrigeait qu'au prochain passage. On la repeint si on la regarde.
+      if (state.view === 'profile') renderProfile();
+    }
   } catch (e) { console.warn('[coffre] profil', e); }
 }
 
@@ -905,6 +912,9 @@ function vaultPaintStatus(st, err) {
   if (b) b.dataset.sync = st;
   const l = document.getElementById('account-sync-line');
   if (l) l.textContent = vaultStatusLine();
+  // La page de profil porte le même état à deux endroits : l'anneau du
+  // portrait et la pastille de la carte « Synchronisation ».
+  document.querySelectorAll('.pf-ring, .pf-sync-dot').forEach(e => { e.dataset.sync = st; });
 }
 function vaultStatusLine() {
   switch (_vaultStatus) {
@@ -1380,9 +1390,15 @@ function ensureAccountModal() {
 }
 function openAccount() {
   if (!vaultOn()) { showAuthGate(); return; }
+  navigate('profile');
+}
+// La feuille modale d'origine reste joignable pour un diagnostic rapide, mais
+// ce n'est plus la porte d'entrée : voir renderProfile().
+function openAccountSheet() {
+  if (!vaultOn()) { showAuthGate(); return; }
   ensureAccountModal();
   const av = vaultAvatar();
-  const n = state.wishlists.length + state.binders.length + state.sealed.length + state.investCards.length;
+  const n = state.wishlists.length + state.binders.length + state.investCards.length;
   document.getElementById('account-body').innerHTML = `
     <div class="acc-head">
       ${av ? `<img class="acc-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
@@ -1394,7 +1410,7 @@ function openAccount() {
     </div>
     <dl class="acc-facts">
       <div><dt>Synchronisation</dt><dd id="account-sync-line">${esc(vaultStatusLine())}</dd></div>
-      <div><dt>Dans ton coffre</dt><dd>${n.toLocaleString('fr-FR')} entrées · ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} scellés</dd></div>
+      <div><dt>Dans ton coffre</dt><dd>${n.toLocaleString('fr-FR')} entrées · ${state.investCards.length} cartes · ${state.wishlists.length} wishlists</dd></div>
       <div><dt>Cotes</dt><dd>${Object.keys(priceCache).length.toLocaleString('fr-FR')} en cache · ${esc(agoLabel(priceSyncedAt()))}</dd></div>
       <div><dt>Version</dt><dd>${esc(appVersion())}</dd></div>
     </dl>
@@ -1413,9 +1429,183 @@ function openAccount() {
     <div id="account-report" class="cloud-report"></div>`;
   openModal('modal-account');
 }
+/* ══════════════════════════════════════════════════════════════════
+   LA PAGE DE PROFIL
+
+   Ce que cette page doit répondre, dans cet ordre : qui je suis, ce que
+   contient mon coffre, où en est la synchronisation, et comment je pars.
+   Rien d'autre — un profil n'est pas un panneau de réglages.
+
+   Le portrait vient de Google et n'est pas hébergé ici : c'est une décision,
+   pas un manque. Stocker des photos demanderait un bucket, des règles d'accès
+   et une modération ; l'avatar Google est déjà là, déjà à jour, et ne coûte
+   rien. Le PSEUDO, lui, appartient à l'app : il est modifiable et vit dans
+   `profiles.display_name`.
+   ══════════════════════════════════════════════════════════════════ */
+function renderProfile() {
+  const el = document.getElementById('view-profile');
+  if (!el) return;
+  if (!vaultOn()) { el.innerHTML = ''; showAuthGate(); return; }
+
+  const av = vaultAvatar();
+  const name = vaultDisplayName();
+  const cards = state.investCards.reduce((a, p) => a + Math.max(1, Number(p.qty) || 1), 0);
+  const value = (typeof cardsTotalValue === 'function') ? cardsTotalValue() : 0;
+  const wishLeft = (state.wishlists || []).reduce((a, w) => a + wishlistRemainingValue(w), 0);
+  const coted = Object.keys(priceCache).filter(k => priceCache[k]).length;
+  const since = (_profile && _profile.created_at) ? new Date(_profile.created_at) : null;
+
+  el.innerHTML = `
+    <div class="pf-head">
+      <button class="cardser-back" onclick="navigate('home')" title="Retour au coffre" aria-label="Retour au coffre">${ICO.left}</button>
+    </div>
+
+    <!-- ── L'IDENTITÉ ────────────────────────────────────────────────
+         Le portrait est grand et rond, le pseudo est le seul titre de la
+         page. L'adresse e-mail passe en dessous, en gris : elle identifie
+         le compte, elle ne le nomme pas. -->
+    <section class="pf-identity reveal" style="--i:0">
+      <div class="pf-portrait">
+        ${av
+          ? `<img class="pf-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
+          : `<span class="pf-face pf-face-ini">${esc(name.charAt(0).toUpperCase())}</span>`}
+        <span class="pf-ring" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
+      </div>
+      <h1 class="pf-name" id="pf-name">${esc(name)}</h1>
+      <button class="title-edit-btn pf-rename" onclick="openRenamePseudo()"
+        title="Changer de pseudo" aria-label="Changer de pseudo">${ICO.edit}</button>
+      <p class="pf-mail">${esc(vaultEmail())}</p>
+      <p class="pf-since">${since ? 'Coffre ouvert le ' + since.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</p>
+    </section>
+
+    <!-- ── CE QUE CONTIENT LE COFFRE ─────────────────────────────────
+         Quatre mesures, jamais une de plus : ce qu'il vaut, ce qu'il
+         contient, ce qu'il reste à trouver, et combien de cotes le
+         soutiennent. -->
+    <section class="pf-stats reveal" style="--i:1">
+      <div class="pf-stat">
+        <span class="pf-stat-v">${fmt(value)}</span>
+        <span class="pf-stat-k">Valeur du coffre</span>
+      </div>
+      <div class="pf-stat">
+        <span class="pf-stat-v">${cards.toLocaleString('fr-FR')}</span>
+        <span class="pf-stat-k">Cartes</span>
+        <span class="pf-stat-sub">${state.investCards.length.toLocaleString('fr-FR')} références</span>
+      </div>
+      <div class="pf-stat">
+        <span class="pf-stat-v">${state.wishlists.length}</span>
+        <span class="pf-stat-k">Wishlists</span>
+        <span class="pf-stat-sub">${wishLeft > 0 ? fmt(wishLeft) + ' à trouver' : (state.wishlists.length ? 'tout est trouvé' : 'aucune liste')}</span>
+      </div>
+      <div class="pf-stat">
+        <span class="pf-stat-v">${coted.toLocaleString('fr-FR')}</span>
+        <span class="pf-stat-k">Cotes en cache</span>
+        <span class="pf-stat-sub">${esc(agoLabel(priceSyncedAt()))}</span>
+      </div>
+    </section>
+
+    <!-- ── LA SYNCHRONISATION ────────────────────────────────────────
+         Une phrase en toutes lettres, parce que la pastille de la barre
+         haute dit la couleur mais jamais la raison. -->
+    <section class="pf-card plate reveal" style="--i:2">
+      <div class="pf-card-top">
+        <h2 class="pf-card-title">Synchronisation</h2>
+        <span class="pf-sync-dot" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
+      </div>
+      <p class="pf-line" id="account-sync-line">${esc(vaultStatusLine())}</p>
+      <p class="pf-note">Tes données vivent dans ta ligne à toi. La base refuse au niveau du moteur de les servir à quelqu'un d'autre : te connecter sur un autre appareil suffit à les y retrouver, et personne d'autre ne peut les lire.</p>
+      <div class="pf-actions">
+        <button class="btn btn-ghost btn-sm" onclick="accountPull()">Relire mon compte</button>
+        <button class="btn btn-ghost btn-sm" onclick="accountPush()">Envoyer maintenant</button>
+        <button class="btn btn-ghost btn-sm" onclick="accountPublishPrices()">Publier mes cotes</button>
+      </div>
+      <div id="account-report" class="cloud-report" hidden></div>
+    </section>
+
+    <!-- ── LA SORTIE ─────────────────────────────────────────────────
+         Séparée du reste : c'est le seul geste de la page qui fait
+         quitter, il ne doit pas voisiner avec les boutons de synchro. -->
+    <section class="pf-card plate pf-exit reveal" style="--i:3">
+      <h2 class="pf-card-title">Cet appareil</h2>
+      <p class="pf-note">« Effacer cet appareil » ne touche que la copie hors ligne d'ici — ton compte garde tout. C'est le geste à faire sur un ordinateur qui n'est pas le tien.</p>
+      <div class="pf-actions">
+        <button class="btn btn-ghost btn-sm" onclick="exportData()">Télécharger une copie</button>
+        <button class="btn btn-ghost btn-sm" onclick="vaultSignOut(false)">Se déconnecter</button>
+        <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
+      </div>
+      <p class="pf-version">Version ${esc(appVersion())}</p>
+    </section>`;
+
+  // Une vue rendue à la volée doit RÉARMER les deux moteurs d'ambiance : les
+  // sections `.reveal` naissent à opacité 0 et attendent l'observateur, et le
+  // spotlight ne suit le curseur que sur les surfaces qu'on lui a présentées.
+  // Sans ça la page est bien dans le DOM, mais invisible.
+  setTimeout(() => { attachSpotlights(el); attachReveals(el); }, 0);
+}
+
+/* Le pseudo est la seule chose de ce profil que l'app possède vraiment (le
+   portrait et l'adresse viennent de Google). Il est écrit dans `profiles`,
+   donc il suit le compte d'un appareil à l'autre. */
+function ensurePseudoModal() {
+  let m = document.getElementById('modal-pseudo');
+  if (m) return m;
+  m = document.createElement('div');
+  m.className = 'modal-overlay'; m.id = 'modal-pseudo';
+  m.innerHTML = `<div class="modal" style="max-width:420px">
+      <div class="modal-header"><div class="modal-title">Ton pseudo</div><button class="modal-close" onclick="closeModal('modal-pseudo')" aria-label="Fermer">${ICO.close}</button></div>
+      <div class="modal-body">
+        <div class="cloud-field" style="margin:0">
+          <label for="pseudo-input">Le nom sous lequel s'ouvre ton coffre</label>
+          <input id="pseudo-input" type="text" maxlength="40" autocomplete="off" spellcheck="false"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();confirmPseudo()}">
+        </div>
+        <p class="sealed-imp-note" style="margin-top:12px">Il suit ton compte : tu le retrouveras sur tous tes appareils. Ta photo et ton adresse, elles, viennent de Google et se modifient là-bas.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-pseudo')">Annuler</button>
+        <button class="btn btn-primary" onclick="confirmPseudo()">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  return m;
+}
+function openRenamePseudo() {
+  ensurePseudoModal();
+  const i = document.getElementById('pseudo-input');
+  i.value = vaultDisplayName();
+  openModal('modal-pseudo');
+  setTimeout(() => { i.focus(); i.select(); }, 100);
+}
+function confirmPseudo() {
+  const v = String(document.getElementById('pseudo-input').value || '').trim().slice(0, 40);
+  if (!v) { toast('Donne-toi un pseudo', 'error'); return; }
+  closeModal('modal-pseudo');
+  if (v === vaultDisplayName()) return;
+  savePseudo(v);
+}
+async function savePseudo(v) {
+  const el = document.getElementById('pf-name');
+  if (el) el.textContent = v;              // réponse immédiate, on corrige si ça échoue
+  try {
+    const sb = await sbClient();
+    const { error } = await sb.from('profiles')
+      .upsert({ id: _user.id, display_name: v }, { onConflict: 'id' });
+    if (error) throw error;
+    _profile = Object.assign({}, _profile, { display_name: v });
+    paintAccountButton();
+    // Repeinture complète, et pas seulement du titre : l'initiale du portrait
+    // vient elle aussi du pseudo, et « Milobellus » sous un médaillon marqué
+    // « T » se lit comme un bug.
+    if (state.view === 'profile') renderProfile();
+    toast('Pseudo enregistré', 'success');
+  } catch (e) {
+    if (el) el.textContent = vaultDisplayName();
+    toast('Pseudo non enregistré : ' + vaultErrText(e), 'error');
+  }
+}
 function accountReport(html, kind) {
   const el = document.getElementById('account-report');
-  if (el) { el.innerHTML = html; el.dataset.kind = kind || ''; }
+  if (el) { el.hidden = false; el.innerHTML = html; el.className = 'cloud-report' + (kind ? ' ' + kind : ''); }
 }
 async function accountPush() {
   accountReport('<span class="spinner spinner-sm"></span> Envoi…');
@@ -1427,7 +1617,7 @@ async function accountPull() {
   accountReport('<span class="spinner spinner-sm"></span> Lecture…');
   const changed = await vaultPull({ quiet: true }).catch(() => false);
   accountReport(changed
-    ? `Relu : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} scellés.`
+    ? `Relu : ${state.investCards.length} cartes · ${state.wishlists.length} wishlists.`
     : 'Rien de plus récent dans ton compte — cet appareil est déjà à jour.', 'good');
 }
 // « Publier mes cotes » : verse le cache local dans la table partagée, pour que
@@ -3329,7 +3519,7 @@ function palCommands() {
   return [
     { kind: 'nav', name: 'Le Coffre', sub: 'Valeur, pièce maîtresse', ico: ICO.vault, run: () => navigate('home') },
     { kind: 'nav', name: 'Wishlists', sub: `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''}`, ico: ICO.heart, run: () => navigate('wishlists') },
-    { kind: 'nav', name: 'Portefeuille', sub: `${state.sealed.length} scellés · ${state.investCards.length} cartes`, ico: ICO.chart, run: () => navigate('invest') },
+    { kind: 'nav', name: 'Collection', sub: `${state.investCards.length} cartes suivies`, ico: ICO.chart, run: () => navigate('invest') },
     // Les classeurs ne sont pas atteignables sur téléphone : la commande non plus.
     ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
     { kind: 'act', name: 'Récupérer les cotes partagées', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullSharedPrices() },
@@ -3814,13 +4004,15 @@ const VIEW_META = {
   home:              { eyebrow: 'MiloDex',      name: 'Accueil' },
   wishlists:         { eyebrow: 'Recherche',    name: 'Wishlists' },
   'wishlist-detail': { eyebrow: 'Wishlists',    name: 'Détail de la liste' },
-  invest:            { eyebrow: 'Suivi',        name: 'Portefeuille' },
+  invest:            { eyebrow: 'Suivi',        name: 'Collection' },
+  profile:           { eyebrow: 'Compte',       name: 'Profil' },
   binders:           { eyebrow: 'Collection',   name: 'Classeurs' },
   'binder-detail':   { eyebrow: 'Classeurs',    name: 'Feuilletage 3D' },
 };
 const VIEW_RENDERERS = {
   home: renderHome, wishlists: renderWishlists, 'wishlist-detail': renderWishlistDetail,
   invest: renderInvest, binders: renderBinders, 'binder-detail': renderBinderDetail,
+  profile: renderProfile,
 };
 // Peuple le CORPS d'une vue, sans rien dire sur celle qu'on regarde. Séparé du
 // châssis (titre de la barre haute, badges) parce que le carrousel du téléphone
@@ -4073,7 +4265,11 @@ const VIEW_TRANSITION_CLASSES = [...EXIT_CLASSES, ...ENTER_CLASSES];
    quitter le bas de l'accueil pour une vue courte faisait « tomber » la page
    d'un coup (le navigateur ramène le défilement dans les bornes). */
 const _viewScroll = {};
-const DEEP_VIEWS = ['wishlist-detail', 'binder-detail'];
+// Le profil est une vue PROFONDE, pas une cinquième destination : la
+// navigation en compte quatre et c'est une décision de design, pas une place
+// disponible. On y entre par l'avatar de la barre haute, on en sort par la
+// flèche — exactement comme le détail d'une wishlist.
+const DEEP_VIEWS = ['wishlist-detail', 'binder-detail', 'profile'];
 function scrollYNow() { return window.scrollY || document.documentElement.scrollTop || 0; }
 // Sur téléphone, le document ne défile plus : c'est CHAQUE page du carrousel
 // qui a sa barre de défilement. Le navigateur garde donc leurs positions tout
@@ -4257,7 +4453,6 @@ function renderHome() {
   const entries = ownedCardEntries();
   const strip = entries.filter(e => e.value > 0).slice(0, 10);
   const copies = entries.reduce((a, e) => a + e.qty, 0);
-  const sealedN = (state.sealed || []).length;
   const tracked = trackedCardIds().length;
 
   const heroF = resolveHero();
@@ -4292,12 +4487,6 @@ function renderHome() {
           <span class="vstat-v" id="hero-cards-val">—</span>
           <span class="vstat-k">Cartes</span>
           <span class="vstat-sub">${copies ? copies.toLocaleString('fr-FR') + ' exemplaire' + (copies > 1 ? 's' : '') : 'aucune'}</span>
-        </div>
-        <div class="vstat">
-          <span class="vstat-ico">${ICO.box}</span>
-          <span class="vstat-v" id="hero-sealed-val">—</span>
-          <span class="vstat-k">Scellé</span>
-          <span class="vstat-sub">${sealedN ? sealedN + ' produit' + (sealedN > 1 ? 's' : '') : 'aucun'}</span>
         </div>
         <div class="vstat">
           <span class="vstat-ico">${ICO.spark}</span>
@@ -4513,10 +4702,10 @@ function computeCollectionValue() {
   // Cartes : cote enregistrée × nombre d'exemplaires (dédoublonné, cf. ownedCardEntries).
   let cardsV = 0;
   for (const e of entries) cardsV += e.value;
-  // Scellé : valeur courante (dernier semestre renseigné, report en avant).
-  let sealedV = 0;
-  for (const p of (state.sealed || [])) sealedV += sealedCurrent(p);
-  const total = cardsV + sealedV;
+  // Le scellé ne compte plus : sa section a été retirée, et un total qui
+  // inclurait une valeur qu'aucun écran ne permet plus d'ouvrir serait pire
+  // qu'un total plus petit — un chiffre qu'on ne peut pas vérifier.
+  const total = cardsV;
   const skel = document.getElementById('hero-skel'); if (skel) skel.style.display = 'none';
   // Le count-up ne joue qu'une fois par session : ensuite la valeur s'affiche
   // telle quelle (fini l'effet « le prix recharge » à chaque retour à l'accueil).
@@ -4527,7 +4716,7 @@ function computeCollectionValue() {
     else { window._vaultCounted = true; animateCount(val, total); }
   }
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = fmt(v); };
-  set('hero-cards-val', cardsV); set('hero-sealed-val', sealedV);
+  set('hero-cards-val', cardsV);
   // Le « reste à acquérir » toutes wishlists confondues : la seule autre
   // valeur que l'accueil a besoin de dire.
   const wishLeft = (state.wishlists || []).reduce((a, w) => a + wishlistRemainingValue(w), 0);
@@ -8191,41 +8380,33 @@ function fmtSign(v) { return `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`; }
 function investBadge() {}
 
 // ── Vue + slider ────────────────────────────────────────────────
+/* ── COLLECTION (ex-« Portefeuille ») ──────────────────────────────
+   La section avait deux volets, Scellé et Cartes, séparés par un sélecteur.
+   Le volet Scellé est retiré : la section ne parle plus que de cartes, donc
+   le sélecteur n'a plus rien à sélectionner et disparaît avec lui — un
+   commutateur à une seule position est un bouton qui ment.
+
+   `state.sealed` et `state.sealedPeriods` restent LUS ET RÉÉCRITS tels quels
+   par collectionSnapshot(), exactement comme `gradedCards` avant eux : aucune
+   interface ne les touche plus, mais rien n'est détruit et les 37 produits
+   restent dans le compte, récupérables par « Télécharger une copie ». */
 function renderInvest() {
-  if (!state.investMode) state.investMode = 'sealed';
+  state.investMode = 'cards';
   state.investSeriesOpen = null;   // entrer dans la section ramène toujours à la grille des séries
-  const el = document.getElementById('view-invest');
-  const m = state.investMode;
-  el.innerHTML = `
-    <div class="inv-switch-wrap">
-      <div class="inv-switch" id="inv-switch" data-mode="${m}">
-        <span class="inv-switch-pill"></span>
-        <button class="inv-switch-btn ${m === 'sealed' ? 'active' : ''}" data-mode="sealed" onclick="setInvestMode('sealed')">Scellé</button>
-        <button class="inv-switch-btn ${m === 'cards' ? 'active' : ''}" data-mode="cards" onclick="setInvestMode('cards')">Cartes</button>
-      </div>
-    </div>
-    <div id="inv-mode-body"></div>`;
+  document.getElementById('view-invest').innerHTML = '<div id="inv-mode-body"></div>';
   renderInvestBody();
   investBadge();
-}
-function setInvestMode(m) {
-  if (state.investMode === m) return;
-  state.investMode = m; save();
-  const sw = document.getElementById('inv-switch');
-  if (sw) { sw.dataset.mode = m; sw.querySelectorAll('.inv-switch-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m)); }
-  renderInvestBody();
 }
 function renderInvestBody() {
   const body = document.getElementById('inv-mode-body'); if (!body) return;
   // Dans une série ouverte, le sélecteur Scellé/Cartes fait partie du « haut de
   // section » qui n'a plus lieu d'être : la flèche de retour ramène à la grille,
   // et il réapparaît là. Un attribut, pas un re-render (la bascule est animée).
-  document.getElementById('view-invest')?.toggleAttribute('data-series-open',
-    !!(state.investMode === 'cards' && state.investSeriesOpen));
+  document.getElementById('view-invest')?.toggleAttribute('data-series-open', !!state.investSeriesOpen);
   // La lumière au curseur et les révélations sont (ré)attachées après chaque
   // rendu du volet : les deux moteurs ignorent les nœuds déjà équipés.
   setTimeout(() => { attachSpotlights(body); attachReveals(body); }, 0);
-  if (state.investMode === 'cards') {
+  {
     body.innerHTML = investCardsBodyHTML();
     // Visuels manquants (promos surtout : absents du catalogue FR mais présents
     // en anglais) → retrouvés puis ENREGISTRÉS pour ne plus jamais les chercher.
@@ -8246,10 +8427,6 @@ function renderInvestBody() {
         () => { if (state.view === 'invest' && String(state.investSeriesOpen) === String(sid)) renderInvestBody(); });
     }
     if (!window._investCountedCards && state.investCards.length) { window._investCountedCards = true; animateCount(document.getElementById('inv-kpi-value'), cardsTotalValue()); }
-  } else {
-    body.innerHTML = investSealedBodyHTML();
-    if (state.sealed.length) drawPortfolioChart(state.sealed);
-    if (!window._investCountedSealed && state.sealed.length) { window._investCountedSealed = true; animateCount(document.getElementById('inv-kpi-value'), sealedTotals(state.sealed).value); }
   }
 }
 function investKpisHTML(t) {

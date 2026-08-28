@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui48">
+  <link rel="stylesheet" href="style.css?v=ui49">
 </head>
 <body>
 
@@ -156,7 +156,7 @@
       </button>
       <button class="nav-btn" data-view="invest" onclick="navigate('invest')">
         <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m7 14 3.4-3.6 3 2.4L20.5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 6h4v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg></span>
-        <span class="nav-label">Portefeuille</span>
+        <span class="nav-label">Collection</span>
         <span class="nav-badge" id="badge-invest">0</span>
       </button>
       <button class="nav-btn" data-view="binders" onclick="navigate('binders')">
@@ -235,6 +235,7 @@
         <div id="view-invest" class="view"></div>
         <div id="view-binders" class="view"></div>
         <div id="view-binder-detail" class="view"></div>
+        <div id="view-profile" class="view"></div>
       </div>
     </main>
   </div>
@@ -257,7 +258,7 @@
     </button>
     <button class="nav-btn" data-view="invest" onclick="navigate('invest')">
       <span class="nav-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m7 14 3.4-3.6 3 2.4L20.5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <span class="nav-label">Portefeuille</span>
+      <span class="nav-label">Collection</span>
       <span class="nav-badge" id="badge-invest-m">0</span>
     </button>
     <button class="nav-btn" data-view="binders" onclick="navigate('binders')">
@@ -444,7 +445,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui48"></script>
-<script src="app.js?v=ui48"></script>
+<script src="cloud-config.js?v=ui49"></script>
+<script src="app.js?v=ui49"></script>
 </body>
 </html>
