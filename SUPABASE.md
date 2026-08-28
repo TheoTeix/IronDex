@@ -155,12 +155,23 @@ comptes → **Continuer avec Google**.
 ou dans `data/collection.json`, l'app te propose de **la rapatrier dans ton
 compte**. Accepte : c'est la migration, elle n'a lieu qu'une fois.
 
-Ensuite, une dernière requête pour pouvoir alimenter les cotes — **SQL
-Editor**, avec ton adresse :
+Ensuite, il reste à t'autoriser à alimenter les cotes. **Sans écrire une ligne
+de SQL** — c'est une case à cocher :
+
+**Table Editor** → table **`profiles`** → ta ligne → colonne **`is_curator`** →
+coche-la → **Save**.
+
+`https://supabase.com/dashboard/project/pmwruopefnwziogfdegq/editor`
+
+Si tu préfères le SQL Editor, l'équivalent est :
 
 ```sql
 update public.profiles set is_curator = true where email = 'ton@email';
 ```
+
+> Ce drapeau ne peut PAS être coché depuis l'app, et c'est voulu : le trigger
+> `protect_curator_flag` refuse toute modification portant un jeton
+> utilisateur. Seul le tableau de bord peut l'accorder.
 
 Ton Mac est le seul à faire tourner le pont Cardmarket : ce drapeau autorise
 ton compte à écrire dans le cache de cotes partagé. Les autres comptes le

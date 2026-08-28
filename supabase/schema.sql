@@ -146,6 +146,32 @@ create policy "cotes majes par les curateurs" on public.prices
     exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_curator)
   );
 
+-- ── 4 bis. LE DRAPEAU CURATEUR NE DOIT PAS ÊTRE AUTO-ATTRIBUABLE ───────
+-- Défaut repéré le 2026-08-28 : la politique « profil modifiable par son
+-- propriétaire » autorise un compte à modifier N'IMPORTE QUELLE colonne de sa
+-- ligne — `is_curator` compris. Autrement dit, n'importe qui pouvait se
+-- promouvoir curateur et écrire dans le cache de cotes partagé. Le garde-fou
+-- ne tenait que par le fait que l'app ne propose pas le geste.
+--
+-- Ce trigger le rend réel : une requête PORTANT UN JETON UTILISATEUR
+-- (auth.uid() non nul) ne peut pas faire bouger le drapeau — la valeur d'avant
+-- est silencieusement remise. Le tableau de bord Supabase, lui, n'a pas de
+-- auth.uid() : l'attribution depuis le Table Editor ou le SQL Editor continue
+-- de fonctionner.
+
+create or replace function public.protect_curator_flag()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and new.is_curator is distinct from old.is_curator then
+    new.is_curator = old.is_curator;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists profiles_protect_curator on public.profiles;
+create trigger profiles_protect_curator before update on public.profiles
+  for each row execute function public.protect_curator_flag();
+
 -- ── 5. TEMPS RÉEL ──────────────────────────────────────────────────────
 -- Pour que le Mac voie arriver une carte ajoutée sur l'iPhone sans rien
 -- rouvrir. La RLS s'applique AUSSI au flux temps réel : personne ne reçoit

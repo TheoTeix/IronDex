@@ -538,7 +538,12 @@ function setHeaderActions(on) {
   root.dataset.actions = _actionsOn ? 'on' : 'off';
   const brand = document.getElementById('tb-brand');
   if (brand) brand.setAttribute('aria-expanded', _actionsOn ? 'true' : 'false');
-  const btns = [...document.querySelectorAll('.header-actions > .btn')];
+  // Le bouton de COMPTE ne fait plus partie de l'arc : il est épinglé en haut à
+  // droite, toujours visible (c'est lui qui porte la pastille de synchro, donc
+  // le seul endroit où un échec d'envoi se voit sur téléphone). Il est exclu du
+  // calcul, sinon l'arc réserverait une place vide pour un bouton qui n'y est
+  // plus — et les deux qui restent se retrouveraient tassés sur son début.
+  const btns = [...document.querySelectorAll('.header-actions > .btn')].filter(b => b.id !== 'account-btn');
   btns.forEach((b, i) => {
     const rad = (arcAngle(i, btns.length) * Math.PI) / 180;
     if (_actionsOn) {
@@ -589,8 +594,41 @@ function bindBackupShortcuts() {
     else if (k === 'r' && e.shiftKey) { e.preventDefault(); openRecovery(); }
   });
 }
-window.addEventListener('beforeunload', () => { if (_saveDirty) writeNow(); flushPriceCache(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden) { if (_saveDirty) writeNow(); flushPriceCache(); } });
+/* ── LE MOMENT OÙ L'APP DISPARAÎT ──────────────────────────────────────────
+   C'est le moment le plus dangereux de toute la synchro, et il ne se voit pas
+   sur un Mac.
+
+   Ce qu'on faisait : `writeNow()`, qui écrit en local puis PROGRAMME l'envoi
+   1,5 s plus tard. Sur un Mac l'onglet reste vivant, le minuteur part, tout
+   monte. Sur iPhone, iOS suspend l'app à la seconde où elle passe en fond : le
+   minuteur ne se déclenche JAMAIS. Résultat exact rapporté par l'utilisateur —
+   « les modifs du Mac arrivent sur l'iPhone, l'inverse non ».
+
+   On appelle donc `vaultFlush()` DIRECTEMENT, sans débounce. Un envoi déjà
+   parti bénéficie d'un sursis du système ; un envoi jamais parti n'a aucune
+   chance. Et si le système coupe quand même, `pushPending` garde la trace et
+   le prochain démarrage réessaie.
+
+   `pagehide` en plus de `visibilitychange` : sur iOS c'est lui qui se déclenche
+   de façon fiable quand une PWA installée est balayée hors de l'écran. */
+function flushEverything() {
+  try { if (_saveDirty) writeNow(); } catch {}
+  try { flushPriceCache(); } catch {}
+  // On MET EN FILE À LA MAIN avant de vider, et ce n'est pas une précaution
+  // superflue : `writeNow()` est asynchrone et n'appelle `vaultPushSoon` qu'une
+  // fois IndexedDB revenu. Appeler `vaultFlush()` juste après trouvait donc une
+  // file VIDE et ne partait pas — le bug exact qu'on corrige ici. `vaultFlush`
+  // lit `collectionSnapshot()` en direct, il n'a pas besoin d'attendre le
+  // disque.
+  if (vaultOn()) {
+    _vaultPend.collection = true;
+    if (_vaultTimer) { clearTimeout(_vaultTimer); _vaultTimer = null; }
+    try { vaultFlush(); } catch {}
+  }
+}
+window.addEventListener('beforeunload', flushEverything);
+window.addEventListener('pagehide', flushEverything);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushEverything(); });
 function applyLoaded(d) {
   if (!d) return;
   state.wishlists = d.wishlists || [];
@@ -898,8 +936,11 @@ function repaintAll() {
 
 // ── ÉTAT DE LA SYNCHRO ─────────────────────────────────────────────
 let _vaultTimer = null, _vaultBusy = false, _vaultPend = {}, _vaultStatus = 'off', _vaultErr = '';
-let _localUpdated = 0, _vaultLastPull = 0;
+let _localUpdated = 0, _vaultLastPull = 0, _pushWarned = false;
 const _priceDirty = new Set();
+// Dernier `updated_at` vu côté serveur : sert de sonde pour éviter de
+// retélécharger un instantané identique (voir vaultPull).
+let _remoteStamp = '';
 
 function vaultStatus() { return { state: _vaultStatus, err: _vaultErr }; }
 function vaultLocalEmpty() {
@@ -950,10 +991,16 @@ async function vaultFlush() {
     const sb = await sbClient();
     if (pend.collection) {
       const snap = collectionSnapshot();
-      const { error } = await sb.from('collections')
-        .upsert({ user_id: _user.id, data: snap }, { onConflict: 'user_id' });
+      // On demande à l'écriture de RENVOYER son `updated_at`. Sans ça la sonde
+      // de vaultPull verrait un horodatage qu'elle ne connaît pas et
+      // retéléchargerait aussitôt les 5 Mo qu'on vient d'envoyer — un
+      // aller-retour complet après chaque modification.
+      const { data: row, error } = await sb.from('collections')
+        .upsert({ user_id: _user.id, data: snap }, { onConflict: 'user_id' })
+        .select('updated_at').maybeSingle();
       if (error) throw error;
       _localUpdated = Date.parse(snap.lastUpdated) || Date.now();
+      if (row && row.updated_at) _remoteStamp = row.updated_at;
       markPushPending(false);
     }
     if (pend.prices) await vaultPushPrices();
@@ -961,11 +1008,19 @@ async function vaultFlush() {
     ok = false;
     console.warn('[coffre] envoi', e);
     markPushPending(true);
-    vaultPaintStatus(navigator.onLine === false ? 'offline' : 'error', vaultErrText(e));
+    const off = navigator.onLine === false;
+    vaultPaintStatus(off ? 'offline' : 'error', vaultErrText(e));
+    // Une pastille ne suffit pas : sur téléphone elle est minuscule, et un
+    // utilisateur qui croit avoir enregistré doit être détrompé tout de suite.
+    // Une seule fois par rafale d'échecs, sinon c'est un mur de toasts.
+    if (!off && !_pushWarned) {
+      _pushWarned = true;
+      try { toast('Modification pas encore envoyée : ' + vaultErrText(e) + '. Elle repartira toute seule.', 'error'); } catch {}
+    }
   } finally {
     _vaultBusy = false;
   }
-  if (ok) vaultPaintStatus('ok');
+  if (ok) { vaultPaintStatus('ok'); _pushWarned = false; }
   // Des modifications sont arrivées PENDANT l'envoi : on réarme le minuteur
   // sans rien ajouter à la file. Relancer par `vaultPushSoon('collection')`
   // aurait renvoyé la collection entière alors que seule une cote avait bougé.
@@ -993,6 +1048,18 @@ async function vaultPull(opts) {
   opts = opts || {};
   if (!vaultOn()) return false;
   const sb = await sbClient();
+  // SONDER AVANT DE TÉLÉCHARGER. L'instantané pèse ~5 Mo ; le relire à chaque
+  // retour au premier plan (et a fortiori toutes les 45 s) coûterait une
+  // fortune en données mobiles pour, neuf fois sur dix, retrouver exactement ce
+  // qu'on a déjà. `updated_at` est tenu par la base : quelques octets suffisent
+  // à savoir s'il y a lieu de descendre le document.
+  if (!opts.force) {
+    const probe = await sb.from('collections').select('updated_at').eq('user_id', _user.id).maybeSingle();
+    if (probe.error) { console.warn('[coffre] sonde', probe.error); return false; }
+    const stamp = probe.data && probe.data.updated_at;
+    if (stamp && stamp === _remoteStamp && !vaultLocalEmpty()) { _vaultLastPull = Date.now(); return false; }
+    _remoteStamp = stamp || '';
+  }
   const { data, error } = await sb.from('collections')
     .select('data').eq('user_id', _user.id).maybeSingle();
   if (error) { console.warn('[coffre] relecture', error); vaultPaintStatus('error', vaultErrText(error)); return false; }
@@ -9450,11 +9517,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     // appareil n'arrivaient qu'après une fermeture complète.
     document.addEventListener('visibilitychange', () => {
       if (document.hidden || !vaultOn()) return;
-      if (Date.now() - _vaultLastPull < 20000) return;   // pas à chaque va-et-vient
+      if (Date.now() - _vaultLastPull < 8000) return;   // pas à chaque va-et-vient
       vaultPull().catch(() => {});
       vaultPullPrices().catch(() => {});
       if (pushPending()) vaultPushSoon('collection');
     });
+    /* SONDAGE PÉRIODIQUE — le filet sous le temps réel.
+       Le temps réel est le bon mécanisme, mais il dépend d'une websocket qui
+       peut tomber sans prévenir (réseau qui change, onglet longtemps en fond,
+       serveur qui recycle). S'en remettre à lui seul, c'est accepter qu'un Mac
+       resté ouvert toute la journée affiche une collection périmée sans que
+       rien ne le signale. La sonde ne coûte que quelques octets (voir
+       vaultPull) : on peut donc se permettre de la poser souvent. */
+    setInterval(() => {
+      if (document.hidden || !vaultOn()) return;
+      if (Date.now() - _vaultLastPull < 30000) return;
+      vaultPull().catch(() => {});
+      if (pushPending()) vaultPushSoon('collection');
+    }, 45000);
     // La migration ne se propose qu'une fois l'app visible : une modale par
     // dessus l'intro, ce serait une porte dans un couloir.
     setTimeout(() => { vaultMaybeMigrate().catch(e => console.warn('migration', e)); }, 2200);

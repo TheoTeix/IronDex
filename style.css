@@ -3319,13 +3319,29 @@ body::before{display:none}
   .brand-chev svg{width:11px;height:11px}
   :root[data-actions="on"] .brand-chev{transform:rotate(180deg);color:var(--acc)}
 
-  /* Nom de la vue à la place des boutons quand ils sont repliés : l'espace
-     sert à situer l'utilisateur au lieu de rester vide. */
-  .tb-title{display:flex;flex:1;min-width:0;justify-content:flex-end;text-align:right}
-  .tb-eyebrow{display:none}
-  .tb-name{font-size:13px;font-weight:600;color:var(--t3);letter-spacing:-.01em;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-    transition:opacity var(--dur-1) var(--ease-out)}
+  /* LE VISAGE PREND LA PLACE DU NOM DE LA VUE.
+     Le nom était là pour ne pas laisser l'espace vide, mais il répétait ce que
+     la barre du bas dit déjà avec son onglet allumé. L'avatar, lui, manquait
+     vraiment : il était pris dans l'arc replié sous le logo, donc invisible
+     tant qu'on n'avait pas tapé la marque — et avec lui la pastille de synchro,
+     c'est-à-dire le seul endroit où un échec d'envoi se voyait. Sur téléphone
+     on ne savait pas qu'on n'était plus à jour.
+     Il est donc SORTI de l'arc et épinglé en haut à droite, toujours visible,
+     toujours cliquable — un tap et on est sur son profil. */
+  .tb-title{display:none}
+
+  :root[data-actions] .header-actions>#account-btn{
+    position:fixed;z-index:61;
+    left:auto;right:var(--gutter);
+    top:calc(env(safe-area-inset-top) + 7px);
+    transform:none !important;   /* l'arc pose des translate en style inline */
+    opacity:1 !important;
+    pointer-events:auto;
+    width:40px;min-height:40px}
+  /* L'arc replié coupe les événements de tout le groupe : on les rend au seul
+     bouton qui, lui, n'est jamais replié. */
+  :root[data-actions="off"] .header-actions>#account-btn{pointer-events:auto}
+  #account-btn .acc-av,#account-btn .acc-ini{width:28px;height:28px}
 
   /* Les actions : un ARC sous le logo, pas une rangée dans la barre.
      Elles sont sorties du flux (position:absolute) — c'est ce qui garantit que
