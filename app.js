@@ -352,7 +352,10 @@ function ensureXlsx() {
 // ne se sauvegarde. IndexedDB gère des centaines de Mo → la collection tient
 // sans souci. On garde localStorage en repli si IDB est
 // indisponible, et on migre automatiquement l'ancienne sauvegarde localStorage.
-const DB_NAME = 'irondex', DB_STORE = 'kv', DB_KEY = 'collection';
+const DB_NAME = 'irondex', DB_STORE = 'kv';
+// La clé de la collection n'est plus une constante : elle porte l'identifiant
+// du compte connecté (voir dbKey(), bloc COFFRE). Deux comptes sur le même
+// navigateur ont donc deux caches, et aucun ne peut apercevoir l'autre.
 let _db = null;
 function idbOpen() {
   return new Promise((resolve, reject) => {
@@ -401,16 +404,20 @@ function idbDel(key) {
 // L'utilisateur ne clique plus aucun bouton : l'app garde donc elle-même des
 // instantanés horodatés (1 par jour + 1 juste avant toute restauration, le
 // moment le plus risqué). On conserve les BACKUP_KEEP plus récents.
+// Le préfixe porte l'identifiant du compte, pour la même raison que dbKey() :
+// la récupération ne doit jamais proposer à quelqu'un l'instantané d'un autre.
 const BACKUP_PREFIX = 'backup:', BACKUP_KEEP = 6;
+function backupPrefix() { return vaultUid() ? BACKUP_PREFIX + vaultUid() + ':' : BACKUP_PREFIX; }
 function autoBackup(tag) {
-  const key = BACKUP_PREFIX + tag;
+  const key = backupPrefix() + tag;
   const snap = collectionSnapshot();
   // Un instantané vide n'a aucune valeur de secours et ne doit pas chasser un bon.
   if (!snap.wishlists.length && !snap.gradedCards.length && !snap.binders.length && !snap.sealed.length && !snap.investCards.length) return Promise.resolve(false);
   return idbSet(key, snap)
     .then(() => idbKeys())
     .then(keys => {
-      const backups = keys.filter(k => typeof k === 'string' && k.startsWith(BACKUP_PREFIX)).sort();
+      const pre = backupPrefix();
+      const backups = keys.filter(k => typeof k === 'string' && k.startsWith(pre)).sort();
       const extra = backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP));
       return Promise.all(extra.map(idbDel));
     })
@@ -433,16 +440,16 @@ function save() {
 function flushSave() { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; } if (_saveDirty) return writeNow(); return Promise.resolve(_lastSaveOk); }
 // Écriture immédiate. Renvoie une promesse booléenne (succès).
 /* ── « ENVOI EN ATTENTE » ─────────────────────────────────────────────────
-   Une modification faite sur l'iPhone alors que le jeton ne marche plus ne
-   doit pas se perdre en silence. Deux choses manquaient :
+   Une modification faite sur l'iPhone hors réseau (métro, avion) ou avec une
+   session expirée ne doit pas se perdre en silence. Deux choses manquaient :
    · `_localUpdated` n'était mis à jour que par la RELECTURE du dépôt, jamais
-     par une écriture locale. Au démarrage suivant, `ghPull` comparait donc les
+     par une écriture locale. Au démarrage suivant, la relecture comparait donc les
      dates, les trouvait égales, et concluait qu'il n'y avait rien à envoyer :
      la modification restait sur l'appareil pour toujours.
    · la liste des envois ratés ne vivait qu'en mémoire — fermer l'app la
      perdait.
    Le drapeau est donc PERSISTÉ. Tant qu'il est là, chaque démarrage retente
-   l'envoi ; le jour où le jeton redevient valide, tout part d'un coup. */
+   l'envoi ; à la première connexion qui aboutit, tout part d'un coup. */
 const PENDING_KEY = 'irondex_push_pending';
 function markPushPending(on) {
   try { on ? localStorage.setItem(PENDING_KEY, '1') : localStorage.removeItem(PENDING_KEY); } catch {}
@@ -451,17 +458,27 @@ function pushPending() { try { return localStorage.getItem(PENDING_KEY) === '1';
 function writeNow() {
   _saveDirty = false;
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  // AUCUNE ÉCRITURE SANS COMPTE, et c'est un garde-fou, pas une politesse.
+  // Déconnecté, `state` est vide par construction (resetCollection) et dbKey()
+  // retombe sur la clé héritée `collection` — celle-là même qui contient la
+  // collection d'avant les comptes et que la migration doit pouvoir proposer.
+  // Écrire ici, c'est écraser cette sauvegarde par du vide.
+  if (!vaultOn()) { _lastSaveOk = true; return Promise.resolve(true); }
   const snap = collectionSnapshot();
-  // Le local vient de prendre de l'avance : c'est ce que `ghPull` doit voir au
+  // Le local vient de prendre de l'avance : c'est ce que `vaultPull` doit voir au
   // prochain démarrage pour décider qu'il faut pousser.
   _localUpdated = Date.parse(snap.lastUpdated) || Date.now();
   markPushPending(true);
-  return idbSet(DB_KEY, snap)
-    .then(() => { _lastSaveOk = true; pulseSaveDot(); autoBackupDaily(); ghPushSoon('collection'); return true; })
+  return idbSet(dbKey(), snap)
+    .then(() => { _lastSaveOk = true; pulseSaveDot(); autoBackupDaily(); vaultPushSoon('collection'); return true; })
     .catch(err => {
-      // Repli localStorage (peut échouer sur quota si grosses photos)
+      // Repli localStorage (peut échouer sur quota si grosses photos).
+      // NOMINATIF, comme dbKey() : `STORAGE_KEY` nu est la sauvegarde de l'app
+      // d'avant les comptes, celle que la migration propose de rapatrier.
+      // Écrire dessus, ce serait remplacer cette archive par la collection du
+      // compte courant — et la proposer ensuite au compte suivant.
       console.warn('IDB save échoué, repli localStorage', err);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snap)); _lastSaveOk = true; return true; }
+      try { localStorage.setItem(lsKey(), JSON.stringify(snap)); _lastSaveOk = true; return true; }
       catch (e) { console.warn('Sauvegarde impossible', e); _lastSaveOk = false; return false; }
     });
 }
@@ -597,20 +614,24 @@ function applyLoaded(d) {
   state.heroRef = (d.heroRef && d.heroRef.type === 'loose') ? d.heroRef : null;
 }
 async function load() {
-  // 1) IndexedDB (copie de travail locale — le dépôt reste l'arbitre, voir ghPull)
+  // 1) IndexedDB (cache hors ligne du compte — le serveur arbitre, voir vaultPull)
   try {
-    const d = await idbGet(DB_KEY);
+    const d = await idbGet(dbKey());
     if (d) { applyLoaded(d); _localUpdated = Date.parse(d.lastUpdated || 0) || 0; return; }
   } catch (e) { console.warn('Lecture IDB échouée', e); }
-  // 2) Migration depuis l'ancienne sauvegarde localStorage
+  // 2) le repli localStorage DE CE COMPTE (écrit par writeNow quand IDB a
+  //    refusé). Jamais la clé nue : voir lsKey().
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      applyLoaded(d);
-      idbSet(DB_KEY, collectionSnapshot()).catch(() => {});   // migre vers IDB
-    }
+    const raw = localStorage.getItem(lsKey());
+    if (raw) { const d = JSON.parse(raw); applyLoaded(d); _localUpdated = Date.parse(d.lastUpdated || 0) || 0; }
   } catch (e) { console.warn('Lecture localStorage échouée', e); }
+  // PAS de repli sur l'ancienne sauvegarde localStorage ici, et c'est un
+  // changement volontaire. Du temps où l'app était mono-utilisateur, l'adopter
+  // en silence était le bon geste. Maintenant qu'il y a des comptes, ce serait
+  // verser les données de l'ancienne app dans le premier compte qui se connecte
+  // sur cette machine — y compris un compte qui n'est pas le sien. Cette
+  // récupération existe toujours, mais elle DEMANDE : voir findLegacyData() et
+  // la modale de rapatriement.
 }
 // Sauvegarde COMPLÈTE : on repart de collectionSnapshot() pour ne jamais
 // oublier un pan de la collection (le scellé et les cartes suivies étaient
@@ -670,164 +691,519 @@ function importData(file) {
 }
 function pickRestoreFile(input) { const f = input.files && input.files[0]; input.value = ''; importData(f); }
 
+
 // ══════════════════════════════════════════════════════════════════
-//  COFFRE EN LIGNE — la collection vit dans le DÉPÔT GitHub
-//  Le navigateur n'est PLUS la source de vérité : il en est une copie de
-//  travail. Chaque enregistrement local est suivi d'un commit dans le dépôt
-//  (data/collection.json), et chaque ouverture commence par relire le dépôt.
-//  Conséquences directes : vider un navigateur ne perd plus rien, le Mac et
-//  l'iPhone voient la MÊME collection, et git garde l'historique de chaque
-//  état — donc une machine à remonter le temps gratuite.
+//  LE COFFRE — la collection appartient à un COMPTE, pas à un appareil
 //
-//  Le jeton d'accès ne vit QUE dans le localStorage de l'appareil : il n'est
-//  jamais écrit dans un fichier du dépôt (qui est public). Voir openCloud().
+//  Avant : la collection était commitée dans le dépôt GitHub, avec un jeton
+//  personnel collé à la main sur chaque appareil. Ça marchait, mais ça faisait
+//  du dépôt à la fois l'hébergeur du code ET la base de données — donc un
+//  jeton à renouveler, une collection lisible par quiconque ouvrait le dépôt,
+//  et un `git push` qui devait cohabiter avec les commits de l'app.
 //
-//  Les cotes suivent le même chemin (data/prices.json) : le pont Cardmarket
-//  tourne sur le Mac, et l'iPhone lit simplement le résultat.
+//  Maintenant : Postgres (Supabase). Le dépôt n'héberge plus QUE le code.
+//   · on se connecte avec Google, sur le Mac comme sur l'iPhone ;
+//   · la collection vit dans `collections.data`, une ligne par compte ;
+//   · l'isolement n'est PAS une politesse du JavaScript : c'est la Row Level
+//     Security de Postgres qui refuse toute ligne dont le `user_id` n'est pas
+//     celui du jeton. Trafiquer le code de la page ne donne rien.
+//   · les cotes vivent dans `prices`, un cache PARTAGÉ entre comptes : tout
+//     compte connecté lit, seuls les curateurs écrivent (le pont Cardmarket ne
+//     tourne que sur le Mac, voir supabase/schema.sql).
+//
+//  IndexedDB reste, mais son rôle a changé : ce n'est plus une sauvegarde,
+//  c'est un CACHE HORS LIGNE, et il est nominatif (`collection:<uid>`) pour
+//  que deux comptes sur le même navigateur ne se voient jamais.
+//
+//  Mise en route : voir SUPABASE.md.
 // ══════════════════════════════════════════════════════════════════
-const GH_KEY = 'irondex-gh-v1';
-const GH_IDB_KEY = 'gh-config';
-const GH_PATHS = { collection: 'data/collection.json', prices: 'data/prices.json' };
 
-/* ══════════════════════════════════════════════════════════════════════
-   POURQUOI LE JETON DISPARAISSAIT DE L'IPHONE — et ce qui le garde
+// La version est volontairement large (`@2`) : le worker met le fichier en
+// cache, et une app installée doit pouvoir démarrer hors ligne des mois plus
+// tard sans qu'une version épinglée disparue du CDN la cloue au sol.
+const SB_CDN = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
 
-   Il ne vivait QUE dans localStorage, écrit par un `setItem` enveloppé dans un
-   `try {} catch {}` muet. Or localStorage plafonne à ~5 Mo par origine, et
-   cette app y écrit beaucoup : l'ancienne sauvegarde de la collection d'avant
-   la migration IndexedDB (jamais supprimée, c'est le filet de récupération),
-   le cache des cotes, celui des séries/sets, celui des visuels de repli, celui
-   des fiches Cardmarket. Sur un iPhone bien rempli, le quota est atteint —
-   et alors `setItem` LÈVE. Le catch avalait l'exception : la fenêtre disait
-   « enregistré », et le jeton n'avait jamais touché le disque.
-   (Sur Mac le même quota est bien plus généreux : d'où un bug qui ne se
-   voyait que sur le téléphone.)
+function sbCfg() { return window.IRONDEX_SUPABASE || {}; }
+function sbConfigured() { const c = sbCfg(); return !!(c.url && c.anonKey); }
 
-   Trois verrous, donc :
-    1. `_ghMem` — la config reste en mémoire vive pour la session, quoi qu'il
-       arrive au disque. Coller le jeton marche IMMÉDIATEMENT.
-    2. IndexedDB — c'est là que vit déjà la collection, sans plafond de 5 Mo.
-       C'est désormais la copie de référence du jeton ; localStorage n'en est
-       qu'un miroir (pratique : il est synchrone, donc disponible avant même
-       que l'app ait fini de démarrer).
-    3. En cas de quota atteint, on FAIT DE LA PLACE (on jette les caches
-       reconstructibles, jamais les sauvegardes) puis on réessaie — et si ça
-       échoue encore, on le DIT au lieu de faire semblant.
-
-   Et `navigator.storage.persist()` demande au navigateur de ne pas évincer ce
-   stockage : c'est le seul mécanisme officiel contre le grand ménage de WebKit
-   après quelques jours sans visite. Voir requestPersistentStorage().
-
-   Le jeton n'est JAMAIS écrit dans le dépôt (qui est public) : ni dans la
-   collection, ni dans les cotes, ni nulle part ailleurs.
-   ══════════════════════════════════════════════════════════════════════ */
-let _ghCfg = null;
-// Dernière config CONNUE, en mémoire. Fait autorité sur ce que raconte le
-// disque : si le disque a refusé l'écriture, la session continue quand même de
-// pouvoir envoyer.
-let _ghMem = null;
-// Ce que le disque a réellement accepté — repris par la fenêtre « Coffre en
-// ligne » pour dire la vérité sur la durabilité du jeton.
-const _ghStore = { ls: null, idb: null };
-function ghCfg() {
-  if (_ghCfg) return _ghCfg;
-  let d = {};
-  try { d = JSON.parse(localStorage.getItem(GH_KEY) || '{}') || {}; } catch {}
-  // La mémoire vive complète le disque champ par champ (jamais avec du vide) :
-  // un localStorage qui a rejeté l'écriture ne doit pas effacer le jeton collé
-  // il y a dix secondes.
-  if (_ghMem) for (const k of ['token', 'owner', 'repo', 'branch']) if (_ghMem[k]) d[k] = _ghMem[k];
-  // Sur GitHub Pages, le dépôt se DEVINE depuis l'URL
-  // (theoteixeira.github.io/IronDex/ → owner « theoteixeira », repo « IronDex »)
-  // : l'utilisateur n'a donc qu'un jeton à coller, pas trois champs à remplir.
-  let owner = d.owner || '', repo = d.repo || '';
-  const host = location.hostname, seg = location.pathname.split('/').filter(Boolean);
-  if (!owner && /\.github\.io$/i.test(host)) owner = host.replace(/\.github\.io$/i, '');
-  if (!repo && /\.github\.io$/i.test(host)) {
-    const first = seg[0] || '';
-    repo = (first && !/\.\w+$/.test(first)) ? first : `${owner}.github.io`;
-  }
-  return (_ghCfg = {
-    token: d.token || '', owner, repo, branch: d.branch || 'main',
-    on: !!(d.token && owner && repo),
-  });
-}
-// Caches PUREMENT reconstructibles de localStorage, du plus gros au plus petit.
-// On y puise de la place quand le quota est atteint. Les sauvegardes de la
-// collection (STORAGE_KEY, backup:*) n'y sont PAS : ce sont les filets de
-// récupération, on n'y touche jamais.
-const GH_EVICTABLE = [
-  'irondex-imgfb-v1',      // visuels de repli retrouvés — se retrouvent
-  'irondex-apicache-v1',   // séries/sets — se relisent
-  'irondex-cmurl-v1',      // fiches Cardmarket — se re-résolvent
-  'irondex-sold-v2',       // ventes récentes — expirent de toute façon
-  'irondex-fx-v1',         // taux de change — 1 requête
-];
-// Écrit la config sur les DEUX supports. Renvoie ce que chacun a accepté.
-function ghWriteCfg(next) {
-  const json = JSON.stringify(next);
-  let ls = false;
-  try { localStorage.setItem(GH_KEY, json); ls = true; } catch {}
-  if (!ls) {
-    // Quota atteint : on libère les caches reconstructibles et on réessaie.
-    // Quelques centaines de kilo-octets suffisent largement pour ~100 octets
-    // de configuration.
-    for (const k of GH_EVICTABLE) {
-      try { localStorage.removeItem(k); } catch {}
-      try { localStorage.setItem(GH_KEY, json); ls = true; break; } catch {}
+let _sb = null, _sbPromise = null;
+// Le client, chargé UNE fois. `detectSessionInUrl` est ce qui ramasse le
+// `?code=…` au retour de Google et le troque contre une session ; `pkce` est
+// le seul flux correct pour une page sans serveur (aucun secret à cacher).
+function sbClient() {
+  if (_sb) return Promise.resolve(_sb);
+  if (_sbPromise) return _sbPromise;
+  return (_sbPromise = (async () => {
+    if (!sbConfigured()) throw new Error('Supabase non configuré (voir cloud-config.js)');
+    if (!window.supabase || !window.supabase.createClient) {
+      const ok = await injectScript(SB_CDN);
+      if (!ok || !window.supabase) throw new Error('client Supabase indisponible (hors ligne ?)');
     }
-  }
-  _ghStore.ls = ls;
-  // IndexedDB : la copie de référence. Asynchrone, donc on ne l'attend pas ici
-  // (ghSave est appelé depuis des chemins synchrones), mais on note le résultat.
-  const idb = idbSet(GH_IDB_KEY, next)
-    .then(() => { _ghStore.idb = true; return true; })
-    .catch(() => { _ghStore.idb = false; return false; });
-  return { ls, idb };
+    const c = sbCfg();
+    _sb = window.supabase.createClient(c.url, c.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce',
+        storageKey: 'irondex-auth',
+      },
+    });
+    return _sb;
+  })());
 }
-let _ghLastWrite = null;   // pour qu'« Enregistrer » puisse ATTENDRE le disque
-function ghSave(patch) {
-  const cur = ghCfg();
-  const next = { token: cur.token, owner: cur.owner, repo: cur.repo, branch: cur.branch };
-  Object.assign(next, patch || {});
-  _ghMem = next;                          // verrou 1 : session opérationnelle tout de suite
-  _ghLastWrite = ghWriteCfg(next);        // verrous 2 et 3 : IndexedDB + localStorage (avec purge)
-  _ghCfg = null;
-  return ghCfg();
+
+// ── SESSION ────────────────────────────────────────────────────────
+let _user = null, _profile = null, _authReady = false;
+function vaultUser() { return _user; }
+function vaultProfile() { return _profile; }
+function vaultOn() { return !!_user; }
+function vaultUid() { return _user ? _user.id : null; }
+// Ce qu'on affiche de quelqu'un : Google fournit le nom et l'avatar dans les
+// métadonnées du jeton, donc on n'attend pas la table `profiles` pour peindre.
+function vaultDisplayName() {
+  const m = (_user && _user.user_metadata) || {};
+  return (_profile && _profile.display_name) || m.full_name || m.name
+    || (_user && _user.email ? _user.email.split('@')[0] : 'Dresseur');
 }
-/* Relit le jeton depuis IndexedDB au démarrage, AVANT tout envoi.
-   C'est ce qui rend le collage « pour de bon » : même si le localStorage de
-   l'iPhone a été vidé (quota, ménage de WebKit, nettoyage du navigateur), la
-   copie IndexedDB — celle qui héberge déjà la collection — le ramène, et on
-   remet au passage le miroir localStorage d'aplomb.
-   Réciproquement : un appareil qui n'avait que localStorage (toutes les
-   versions précédentes) se voit doter de sa copie IndexedDB à sa première
-   ouverture après cette mise à jour, sans rien avoir à retaper. */
-async function ghHydrate() {
-  let d = null;
-  try { d = await idbGet(GH_IDB_KEY); } catch {}
-  const cur = ghCfg();     // ce que localStorage dit aujourd'hui
-  if (d && typeof d === 'object' && d.token && !cur.token) {
-    // Le disque rapide a perdu le jeton, le disque fiable l'avait : on le
-    // reprend et on répare le miroir.
-    _ghMem = { token: d.token, owner: d.owner || cur.owner, repo: d.repo || cur.repo, branch: d.branch || cur.branch || 'main' };
-    _ghCfg = null;
-    let ls = false;
-    try { localStorage.setItem(GH_KEY, JSON.stringify(_ghMem)); ls = true; } catch {}
-    _ghStore.ls = ls; _ghStore.idb = true;
-    console.info('[coffre] jeton récupéré depuis IndexedDB');
-    return ghCfg();
-  }
-  _ghStore.idb = !!(d && d.token);
-  // Jeton connu de localStorage mais pas encore d'IndexedDB (ou périmé là-bas) :
-  // on sème la copie fiable maintenant.
-  if (cur.token && (!d || d.token !== cur.token)) {
-    idbSet(GH_IDB_KEY, { token: cur.token, owner: cur.owner, repo: cur.repo, branch: cur.branch })
-      .then(() => { _ghStore.idb = true; })
-      .catch(() => { _ghStore.idb = false; });
-  }
-  return ghCfg();
+function vaultAvatar() {
+  const m = (_user && _user.user_metadata) || {};
+  return (_profile && _profile.avatar_url) || m.avatar_url || m.picture || '';
 }
+function vaultEmail() { return (_user && _user.email) || ''; }
+
+// La CLÉ LOCALE est nominative. Sans ça, deux comptes sur le même navigateur
+// partageraient le même cache : le second verrait fugitivement la collection
+// du premier avant que le réseau ne réponde. Le nom nu (`collection`) reste
+// celui de l'ancienne app mono-utilisateur — il n'est plus jamais écrit, il
+// est seulement LU une fois, au moment de proposer la migration.
+const DB_LEGACY_KEY = 'collection';
+function dbKey() { return _user ? 'collection:' + _user.id : DB_LEGACY_KEY; }
+// Même raisonnement pour le repli localStorage de writeNow().
+function lsKey() { return _user ? STORAGE_KEY + ':' + _user.id : STORAGE_KEY; }
+
+// Démarrage de l'authentification. Volontairement RAPIDE : `getSession()` lit
+// le localStorage, il ne fait aucun aller-retour réseau. L'app peut donc
+// décider d'afficher le coffre ou l'écran de connexion sans attendre Internet.
+async function vaultBoot() {
+  if (!sbConfigured()) { _authReady = true; return null; }
+  let sb;
+  try { sb = await sbClient(); } catch (e) { console.warn('[coffre]', e); _authReady = true; return null; }
+  try {
+    const { data } = await sb.auth.getSession();
+    _user = (data && data.session && data.session.user) || null;
+  } catch (e) { console.warn('[coffre] session', e); }
+  sb.auth.onAuthStateChange((evt, session) => {
+    const was = _user ? _user.id : null;
+    _user = (session && session.user) || null;
+    const now = _user ? _user.id : null;
+    if (was === now) return;
+    if (now) onSignedIn(); else onSignedOut();
+  });
+  _authReady = true;
+  if (_user) fetchProfile();
+  return _user;
+}
+async function fetchProfile() {
+  try {
+    const sb = await sbClient();
+    const { data } = await sb.from('profiles').select('*').eq('id', _user.id).maybeSingle();
+    if (data) { _profile = data; paintAccountButton(); }
+  } catch (e) { console.warn('[coffre] profil', e); }
+}
+
+// ── CONNEXION / DÉCONNEXION ────────────────────────────────────────
+async function vaultSignInGoogle() {
+  if (!sbConfigured()) { toast('Supabase pas encore configuré — voir SUPABASE.md', 'error'); return; }
+  authGateBusy(true);
+  try {
+    const sb = await sbClient();
+    // On revient sur l'app elle-même, sans le nom de fichier ni les paramètres
+    // (`?v=` du cache-busting) : c'est cette URL exacte qui doit figurer dans
+    // les « Redirect URLs » du projet Supabase.
+    const back = location.origin + location.pathname;
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: back, queryParams: { prompt: 'select_account' } },
+    });
+    if (error) throw error;
+  } catch (e) {
+    authGateBusy(false);
+    authGateError(e && e.message ? e.message : 'Connexion impossible');
+  }
+}
+async function vaultSignOut(wipe) {
+  try { await flushSave(); } catch {}
+  try { await vaultFlush(); } catch {}
+  if (wipe) { try { await idbDel(dbKey()); } catch {} }
+  try { const sb = await sbClient(); await sb.auth.signOut(); } catch (e) { console.warn('[coffre] signOut', e); }
+  _user = null; _profile = null;
+  onSignedOut();
+}
+
+// ── CE QUI SE PASSE QUAND ON ARRIVE / QUAND ON PART ────────────────
+async function onSignedIn() {
+  hideAuthGate();
+  fetchProfile();
+  paintAccountButton();
+  vaultPaintStatus('saving');
+  try {
+    // Le cache nominatif d'abord (affichage immédiat), le serveur ensuite.
+    const cached = await idbGet(dbKey()).catch(() => null);
+    if (cached) { applyLoaded(cached); _localUpdated = Date.parse(cached.lastUpdated || 0) || 0; }
+    else { resetCollection(); _localUpdated = 0; }
+    repaintAll();
+    await vaultPull({ boot: false });
+    await vaultPullPrices().catch(() => 0);
+    vaultWatch();
+    vaultPaintStatus('ok');
+    await vaultMaybeMigrate();
+  } catch (e) {
+    console.warn('[coffre] arrivée', e);
+    vaultPaintStatus('error', e && e.message);
+  }
+}
+function onSignedOut() {
+  vaultUnwatch();
+  resetCollection();
+  _localUpdated = 0;
+  repaintAll();
+  paintAccountButton();
+  vaultPaintStatus('off');
+  showAuthGate();
+}
+// Vide l'état EN MÉMOIRE, sans rien écrire : se déconnecter ne doit pas
+// détruire la copie locale de la personne qui vient de partir.
+function resetCollection() {
+  state.wishlists = []; state.gradedCards = []; state.milobellus = {};
+  state.binders = []; state.sealed = []; state.sealedPeriods = [];
+  state.investCards = []; state.setDates = {}; state.setBlocs = {};
+  state.heroRef = null; state.activeWishlistId = null;
+  state.currentBinder = 'milobellus'; state.investSeriesOpen = null;
+}
+function repaintAll() {
+  window._vaultCounted = false;
+  window._investCountedSealed = false;
+  window._investCountedCards = false;
+  try { markPagerStale(); } catch {}
+  try { renderViewContent(state.view); } catch (e) { console.warn('repaint', e); }
+}
+
+// ── ÉTAT DE LA SYNCHRO ─────────────────────────────────────────────
+let _vaultTimer = null, _vaultBusy = false, _vaultPend = {}, _vaultStatus = 'off', _vaultErr = '';
+let _localUpdated = 0, _vaultLastPull = 0;
+const _priceDirty = new Set();
+
+function vaultStatus() { return { state: _vaultStatus, err: _vaultErr }; }
+function vaultLocalEmpty() {
+  return !(state.wishlists.length || state.binders.length || state.sealed.length
+    || state.investCards.length || Object.keys(state.milobellus || {}).length);
+}
+function vaultPaintStatus(st, err) {
+  _vaultStatus = st; _vaultErr = err || '';
+  const b = document.getElementById('account-btn');
+  if (b) b.dataset.sync = st;
+  const l = document.getElementById('account-sync-line');
+  if (l) l.textContent = vaultStatusLine();
+}
+function vaultStatusLine() {
+  switch (_vaultStatus) {
+    case 'ok': return 'À jour';
+    case 'pending': return 'Envoi imminent…';
+    case 'saving': return 'Envoi en cours…';
+    case 'error': return 'Échec du dernier envoi' + (_vaultErr ? ' — ' + _vaultErr : '');
+    case 'offline': return 'Hors ligne — les modifications partiront au retour du réseau';
+    default: return 'Non connecté';
+  }
+}
+
+// ── ENVOI ──────────────────────────────────────────────────────────
+// Débouncé à 1,5 s : ajouter dix cartes d'affilée fait UN aller-retour, pas
+// dix. Le drapeau `pushPending` (persisté) garantit qu'une modification faite
+// hors ligne repart au prochain démarrage.
+function vaultPushSoon(what) {
+  if (!vaultOn()) return;
+  _vaultPend[what || 'collection'] = true;
+  if (_vaultStatus !== 'saving') vaultPaintStatus('pending');
+  if (_vaultTimer) return;
+  _vaultTimer = setTimeout(() => { _vaultTimer = null; vaultFlush(); }, 1500);
+}
+async function vaultFlush() {
+  if (!vaultOn()) return false;
+  if (_vaultBusy) { _vaultPend.again = true; return false; }
+  const pend = _vaultPend; _vaultPend = {};
+  if (!pend.collection && !pend.prices) return true;
+  _vaultBusy = true;
+  vaultPaintStatus('saving');
+  let ok = true;
+  try {
+    const sb = await sbClient();
+    if (pend.collection) {
+      const snap = collectionSnapshot();
+      const { error } = await sb.from('collections')
+        .upsert({ user_id: _user.id, data: snap }, { onConflict: 'user_id' });
+      if (error) throw error;
+      _localUpdated = Date.parse(snap.lastUpdated) || Date.now();
+      markPushPending(false);
+    }
+    if (pend.prices) await vaultPushPrices();
+  } catch (e) {
+    ok = false;
+    console.warn('[coffre] envoi', e);
+    markPushPending(true);
+    vaultPaintStatus(navigator.onLine === false ? 'offline' : 'error', vaultErrText(e));
+  } finally {
+    _vaultBusy = false;
+  }
+  if (ok) vaultPaintStatus('ok');
+  // Des modifications sont arrivées PENDANT l'envoi : on réarme le minuteur
+  // sans rien ajouter à la file. Relancer par `vaultPushSoon('collection')`
+  // aurait renvoyé la collection entière alors que seule une cote avait bougé.
+  delete _vaultPend.again;
+  if ((_vaultPend.collection || _vaultPend.prices) && !_vaultTimer) {
+    _vaultTimer = setTimeout(() => { _vaultTimer = null; vaultFlush(); }, 1500);
+  }
+  return ok;
+}
+// Les messages de Postgres sont exacts mais illisibles. On traduit les deux
+// seuls qu'on puisse vraiment rencontrer, et on laisse passer le reste.
+function vaultErrText(e) {
+  const m = (e && (e.message || e.error_description)) || String(e || '');
+  if (/row-level security/i.test(m)) return 'refusé par la base (droits du compte)';
+  if (/JWT|expired|invalid token/i.test(m)) return 'session expirée — reconnecte-toi';
+  if (/Failed to fetch|NetworkError/i.test(m)) return 'réseau indisponible';
+  return m.slice(0, 140);
+}
+
+// ── RELECTURE ──────────────────────────────────────────────────────
+// Règle d'arbitrage INCHANGÉE par rapport à la version dépôt : le plus récent
+// gagne, et la comparaison porte sur le `lastUpdated` écrit DANS l'instantané
+// (donc la même grandeur des deux côtés).
+async function vaultPull(opts) {
+  opts = opts || {};
+  if (!vaultOn()) return false;
+  const sb = await sbClient();
+  const { data, error } = await sb.from('collections')
+    .select('data').eq('user_id', _user.id).maybeSingle();
+  if (error) { console.warn('[coffre] relecture', error); vaultPaintStatus('error', vaultErrText(error)); return false; }
+  _vaultLastPull = Date.now();
+  const remote = data && data.data;
+  if (!remote || typeof remote !== 'object') {
+    // Compte neuf : rien à lire. S'il y a quelque chose ici, c'est ce qui fait
+    // foi et il faut l'envoyer.
+    if (!vaultLocalEmpty()) vaultPushSoon('collection');
+    return false;
+  }
+  const rt = Date.parse(remote.lastUpdated || 0) || 0;
+  const empty = vaultLocalEmpty();
+  if (!empty && rt <= _localUpdated) {
+    if (rt < _localUpdated) vaultPushSoon('collection');   // le local est en avance
+    vaultPaintStatus('ok');
+    return false;
+  }
+  if (!empty) await autoBackup('avant-relecture-compte');  // filet avant d'écraser
+  applyLoaded(remote);
+  _localUpdated = rt;
+  await idbSet(dbKey(), collectionSnapshot()).catch(() => {});
+  markPushPending(false);
+  vaultPaintStatus('ok');
+  if (!opts.boot) {
+    repaintAll();
+    if (!opts.quiet) toast('Collection mise à jour depuis ton compte', 'success');
+  }
+  return true;
+}
+
+// ── TEMPS RÉEL ─────────────────────────────────────────────────────
+// Une carte ajoutée sur l'iPhone apparaît sur le Mac sans rien rouvrir. La RLS
+// s'applique au flux : on ne peut s'abonner qu'à sa propre ligne.
+let _vaultChan = null;
+async function vaultWatch() {
+  if (!vaultOn() || _vaultChan) return;
+  try {
+    const sb = await sbClient();
+    _vaultChan = sb.channel('collection-' + _user.id)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'collections', filter: 'user_id=eq.' + _user.id },
+        payload => {
+          const rt = Date.parse(payload?.new?.data?.lastUpdated || 0) || 0;
+          // Notre propre écriture nous revient : ne pas se repeindre dessus.
+          if (!rt || rt <= _localUpdated) return;
+          vaultPull({ quiet: false }).catch(() => {});
+        })
+      .subscribe();
+  } catch (e) { console.warn('[coffre] temps réel', e); }
+}
+function vaultUnwatch() {
+  if (!_vaultChan) return;
+  try { _vaultChan.unsubscribe(); } catch {}
+  _vaultChan = null;
+}
+
+// ── COTES ──────────────────────────────────────────────────────────
+// Lecture INCRÉMENTALE : on ne redemande que ce qui a bougé depuis la dernière
+// fois. Sur 1 400 cartes ça fait la différence entre quelques centaines de Ko
+// à chaque ouverture et quelques lignes.
+const PRICE_PULL_KEY = 'irondex-prices-pulled-at';
+function pricePulledAt() { try { return localStorage.getItem(PRICE_PULL_KEY) || ''; } catch { return ''; } }
+function setPricePulledAt(v) { try { localStorage.setItem(PRICE_PULL_KEY, v); } catch {} }
+
+const PRICE_PAGE = 2000;
+async function vaultPullPrices() {
+  if (!vaultOn()) return 0;
+  const sb = await sbClient();
+  let since = pricePulledAt(), total = 0;
+  // On PAGINE jusqu'à épuisement. Une seule page plafonnée laissait un appareil
+  // neuf rattraper le cache une ouverture à la fois : avec 1 400 cartes déjà en
+  // base, l'iPhone serait resté incomplet plusieurs lancements de suite.
+  for (let page = 0; page < 20; page++) {
+    let q = sb.from('prices').select('card_id,value,updated_at')
+      .order('updated_at', { ascending: true }).limit(PRICE_PAGE);
+    if (since) q = q.gt('updated_at', since);
+    const { data, error } = await q;
+    if (error) { console.warn('[coffre] cotes', error); break; }
+    if (!data || !data.length) break;
+    for (const row of data) {
+      if (!row.value || typeof row.value !== 'object') continue;
+      priceCache[row.card_id] = row.value;
+      total++;
+      if (!since || row.updated_at > since) since = row.updated_at;
+    }
+    if (data.length < PRICE_PAGE) break;   // dernière page
+  }
+  if (total) {
+    _priceSyncedAt = Date.now();
+    flushPriceCache();
+    setPricePulledAt(since);
+  }
+  return total;
+}
+// Écriture réservée aux curateurs (le pont Cardmarket ne tourne que sur le
+// Mac). Pour tout autre compte, l'échec est SILENCIEUX et sans conséquence :
+// la cote reste dans son cache local, elle n'alimente juste pas le cache
+// partagé. C'est voulu — sans ça, n'importe quel compte pourrait fausser les
+// cotes de tout le monde.
+async function vaultPushPrices() {
+  if (!vaultOn() || !_priceDirty.size) return 0;
+  const ids = Array.from(_priceDirty);
+  const rows = [];
+  for (const id of ids) { const v = priceCache[id]; if (v) rows.push({ card_id: id, value: v }); }
+  _priceDirty.clear();
+  if (!rows.length) return 0;
+  try {
+    const sb = await sbClient();
+    for (let i = 0; i < rows.length; i += 400) {
+      const { error } = await sb.from('prices').upsert(rows.slice(i, i + 400), { onConflict: 'card_id' });
+      if (error) throw error;
+    }
+    return rows.length;
+  } catch (e) {
+    // Compte non curateur : c'est le fonctionnement prévu, pas une panne. La
+    // cote reste dans le cache local, elle n'alimente juste pas le partagé — et
+    // il ne faut SURTOUT pas la remettre en file, sinon chaque enregistrement
+    // relancerait un envoi voué à échouer.
+    if (/row-level security/i.test((e && e.message) || '')) return 0;
+    // Panne réseau, en revanche : ces cotes n'ont pas été recalculées pour rien,
+    // et rien ne les recalculera. On les remet en file pour le prochain envoi.
+    for (const id of ids) _priceDirty.add(id);
+    console.warn('[coffre] envoi cotes', e);
+    return 0;
+  }
+}
+function markPriceDirty(cardId) { if (cardId) _priceDirty.add(cardId); }
+
+// ── MIGRATION — une seule fois, à la première connexion ────────────
+// Deux sources possibles pour d'anciennes données : le cache de l'app
+// mono-utilisateur sur CET appareil (IndexedDB, clé nue `collection`), et le
+// fichier que l'ancienne version commitait dans le dépôt.
+// Le drapeau est GLOBAL à l'appareil, pas propre au compte, et c'est voulu :
+// les données d'avant les comptes n'appartiennent qu'à une personne. Une fois
+// qu'un compte les a rapatriées, les reproposer au compte suivant qui se
+// connecte sur cette machine reviendrait à lui offrir la collection d'un autre.
+const MIGRATED_KEY = 'irondex-migrated-v1';
+function migrationDone() { try { return localStorage.getItem(MIGRATED_KEY) === '1'; } catch { return false; } }
+function markMigrated() { try { localStorage.setItem(MIGRATED_KEY, '1'); } catch {} }
+
+function snapWeight(d) {
+  if (!d || typeof d !== 'object') return 0;
+  return (d.wishlists || []).length + (d.binders || []).length + (d.sealed || []).length
+    + (d.investCards || []).length + Object.keys(d.milobellus || {}).length;
+}
+async function findLegacyData() {
+  // 1) le cache de l'ancienne app, sur cet appareil
+  try { const d = await idbGet(DB_LEGACY_KEY); if (snapWeight(d)) return { src: 'cet appareil', data: d }; } catch {}
+  // 2) l'ancienne sauvegarde localStorage (d'avant IndexedDB)
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) { const d = JSON.parse(raw); if (snapWeight(d)) return { src: 'cet appareil', data: d }; }
+  } catch {}
+  // 3) le fichier laissé dans le dépôt par l'ancienne version
+  try {
+    const r = await fetchTimeout('data/collection.json?t=' + Date.now(), 8000);
+    if (r.ok) { const d = await r.json(); if (snapWeight(d)) return { src: 'le dépôt', data: d }; }
+  } catch {}
+  return null;
+}
+async function vaultMaybeMigrate() {
+  if (!vaultOn() || migrationDone()) return;
+  if (!vaultLocalEmpty()) { markMigrated(); return; }   // le compte a déjà des données
+  const found = await findLegacyData();
+  if (!found) { markMigrated(); return; }
+  const n = snapWeight(found.data);
+  openMigrate(found, n);
+}
+function openMigrate(found, n) {
+  let m = document.getElementById('modal-migrate');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'modal-overlay'; m.id = 'modal-migrate';
+    document.body.appendChild(m);
+  }
+  const d = found.data;
+  m.innerHTML = `<div class="modal" style="max-width:520px">
+    <div class="modal-header"><div class="modal-title">Rapatrier ta collection</div></div>
+    <div class="modal-body">
+      <p class="sealed-imp-hint">Une collection d'avant les comptes a été trouvée sur <b>${esc(found.src)}</b> : <b>${n}</b> entrées.
+      Ton compte <b>${esc(vaultEmail() || vaultDisplayName())}</b> est encore vide.</p>
+      <ul class="migrate-list">${migrateLines(d)}</ul>
+      <p class="sealed-imp-note">Rien n'est effacé : l'ancienne copie reste où elle est. On la recopie simplement dans ton compte, et c'est le compte qui fera foi ensuite.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="declineMigrate()">Plus tard</button>
+      <button class="btn btn-primary" onclick="runMigrate()">Rapatrier les ${n} entrées</button>
+    </div>
+  </div>`;
+  window.__migrateData = d;
+  openModal('modal-migrate');
+}
+// On ne liste QUE les sections qui contiennent quelque chose. « 0 classeurs »
+// n'informe de rien : c'est du remplissage qui dilue les lignes qui comptent.
+function migrateLines(d) {
+  const rows = [
+    [(d.wishlists || []).length, 'wishlist', 'wishlists'],
+    [(d.binders || []).length, 'classeur', 'classeurs'],
+    [(d.sealed || []).length, 'produit scellé', 'produits scellés'],
+    [(d.investCards || []).length, 'carte suivie', 'cartes suivies'],
+    [Object.keys(d.milobellus || {}).length, 'case Milobellus', 'cases Milobellus'],
+  ];
+  return rows.filter(r => r[0] > 0)
+    .map(([n, one, many]) => `<li><b>${n.toLocaleString('fr-FR')}</b> ${n > 1 ? many : one}</li>`)
+    .join('');
+}
+function declineMigrate() { closeModal('modal-migrate'); }
+async function runMigrate() {
+  const d = window.__migrateData;
+  closeModal('modal-migrate');
+  if (!d) return;
+  applyLoaded(d);
+  markMigrated();
+  const ok = await writeNow();
+  await vaultFlush();
+  repaintAll();
+  toast(ok ? `Collection rapatriée dans ton compte (${snapWeight(d)} entrées)` : 'Rapatriement : écriture locale impossible', ok ? 'success' : 'error');
+  prefetchCardPrices();
+}
+
 /* Demande au navigateur de ne PAS évincer ce stockage. WebKit fait le ménage
    dans tout ce qu'un script a écrit après quelques jours sans visite du site ;
    un stockage marqué « persistant » y échappe. Accordé sans question pour une
@@ -841,231 +1217,7 @@ async function requestPersistentStorage() {
     return (_persistGranted = await navigator.storage.persist());
   } catch { return (_persistGranted = null); }
 }
-function ghOn() { return ghCfg().on; }
-// Base64 d'un texte UTF-8 (btoa ne prend que du latin-1, et la collection
-// contient des accents : « Poissirène » cassait l'encodage).
-function ghB64(text) {
-  const bytes = new TextEncoder().encode(text);
-  let out = '';
-  const CH = 0x8000;   // par tranches : String.fromCharCode explose au-delà
-  for (let i = 0; i < bytes.length; i += CH) out += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-  return btoa(out);
-}
-function ghApi(path, opts) {
-  const c = ghCfg(), o = opts || {};
-  const h = { 'Accept': o.accept || 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-  if (c.token) h.Authorization = `Bearer ${c.token}`;
-  if (o.body) h['Content-Type'] = 'application/json';
-  return fetchTimeout(`https://api.github.com/repos/${c.owner}/${c.repo}${path}`, o.ms || 25000,
-    { method: o.method || 'GET', headers: h, body: o.body });
-}
-// SHA du fichier à remplacer, SANS télécharger son contenu : on lit le
-// listing du dossier (l'API /contents renvoie le contenu en base64 seulement
-// sous 1 Mo — la collection en fait 5, elle ne passerait pas par là).
-async function ghSha(path) {
-  const c = ghCfg();
-  const dir = path.split('/').slice(0, -1).join('/'), name = path.split('/').pop();
-  const r = await ghApi(`/contents/${encodeURIComponent(dir).replace(/%2F/g, '/')}?ref=${encodeURIComponent(c.branch)}`);
-  if (!r.ok) return null;                    // dossier absent au premier envoi
-  const list = await r.json().catch(() => null);
-  const hit = Array.isArray(list) ? list.find(e => e && e.name === name) : null;
-  return hit ? hit.sha : null;
-}
-// Lecture : raw.githubusercontent d'abord (aucun quota d'API, aucun jeton
-// nécessaire sur un dépôt public), avec anti-cache car le CDN garde ~5 min.
-async function ghRead(path) {
-  const c = ghCfg();
-  if (!c.owner || !c.repo) return null;
-  try {
-    const r = await fetchTimeout(`https://raw.githubusercontent.com/${c.owner}/${c.repo}/${c.branch}/${path}?t=${Date.now()}`, 25000);
-    if (r.ok) return await r.json();
-    if (r.status === 404) return null;
-  } catch {}
-  try {   // dépôt privé, ou CDN en retard : on repasse par l'API avec le jeton
-    const r = await ghApi(`/contents/${path}?ref=${encodeURIComponent(c.branch)}`, { accept: 'application/vnd.github.raw' });
-    if (r.ok) return await r.json();
-  } catch {}
-  return null;
-}
-// `sha` du dernier état ÉCRIT par nous, renvoyé par le PUT. L'utiliser évite
-// à la fois un appel de listing et la course qui provoquait le 409 :
-// « data/collection.json does not match <sha> » — l'API GitHub sert parfois un
-// listing d'il y a quelques secondes, et le sha était déjà périmé au moment du
-// PUT.
-const _ghSha = {};
-async function ghWrite(path, obj, message, attempt = 0) {
-  const c = ghCfg();
-  if (!c.on) return { ok: false, reason: 'coffre en ligne non configuré' };
-  let sha = _ghSha[path];
-  if (!sha) sha = await ghSha(path).catch(() => null);
-  const body = JSON.stringify(Object.assign(
-    { message, content: ghB64(JSON.stringify(obj)), branch: c.branch }, sha ? { sha } : {}));
-  let r;
-  try { r = await ghApi(`/contents/${path}`, { method: 'PUT', body, ms: 90000 }); }
-  catch (e) { return { ok: false, reason: 'réseau injoignable' }; }
-  if (r.ok) {
-    // On garde le sha renvoyé : le prochain envoi part avec la bonne référence.
-    try { const d = await r.json(); if (d?.content?.sha) _ghSha[path] = d.content.sha; } catch {}
-    return { ok: true };
-  }
-  let msg = '';
-  try { msg = (await r.json()).message || ''; } catch {}
-  // 409 (ou « does not match ») = le fichier a bougé depuis notre référence.
-  // Ce n'est pas une erreur à afficher : c'est une référence à rafraîchir. On
-  // relit le sha et on réessaie — jusqu'à 3 fois, avec un court répit.
-  const stale = r.status === 409 || /does not match|sha/i.test(msg);
-  if (stale) {
-    delete _ghSha[path];
-    if (attempt < 2) {
-      await new Promise(res => setTimeout(res, 700 * (attempt + 1)));
-      return ghWrite(path, obj, message, attempt + 1);
-    }
-    // Trois échecs : ce n'est plus une course, c'est un autre appareil qui a
-    // vraiment écrit. On lui laisse la main s'il est plus récent (même règle
-    // que partout : le plus récent gagne) au lieu de l'écraser.
-    return { ok: false, status: r.status, conflict: true,
-             reason: 'un autre appareil a écrit entre-temps' };
-  }
-  return { ok: false, status: r.status, reason: msg || `HTTP ${r.status}` };
-}
-// ── Envoi débouncé ────────────────────────────────────────────────
-// Une modification déclenche un commit 4 s plus tard : assez pour fusionner
-// une rafale de clics, assez court pour qu'un onglet fermé juste après ne
-// perde rien (l'écriture locale, elle, est déjà faite).
-let _ghTimer = null, _ghBusy = false, _ghPend = {}, _ghStatus = 'off', _ghErr = '';
-function ghStatus() { return { state: _ghStatus, err: _ghErr, cfg: ghCfg() }; }
-function ghPushSoon(what) {
-  if (!ghOn()) return;
-  _ghPend[what || 'collection'] = true;
-  ghPaintStatus('pending');
-  if (_ghTimer) return;
-  _ghTimer = setTimeout(ghFlush, 4000);
-}
-async function ghFlush() {
-  _ghTimer = null;
-  if (_ghBusy || !ghOn()) return;
-  const jobs = Object.keys(_ghPend);
-  if (!jobs.length) return;
-  _ghPend = {}; _ghBusy = true;
-  ghPaintStatus('saving');
-  let fail = null;
-  for (const job of jobs) {
-    const obj = job === 'prices'
-      ? { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }
-      : collectionSnapshot();
-    // GARDE-FOU : on n'envoie JAMAIS une collection vide. Sur un appareil qui
-    // vient d'ouvrir le site (l'iPhone la première fois), une écriture locale
-    // peut partir avant que ghPull ait fini de rapatrier le dépôt : sans ce
-    // test, ce néant écraserait la vraie collection. Un instantané vide n'a de
-    // toute façon aucune valeur de sauvegarde.
-    if (job === 'collection' && ghLocalEmpty()) { console.warn('envoi ignoré : collection vide'); continue; }
-    const label = job === 'prices' ? 'cotes' : 'collection';
-    const res = await ghWrite(GH_PATHS[job], obj, `IronDex : ${label} mises à jour`);
-    if (!res.ok) { fail = res; _ghPend[job] = true; }   // on retentera
-  }
-  _ghBusy = false;
-  if (fail && fail.conflict) {
-    // Conflit assumé : on relit le dépôt (le plus récent gagne) et on ne
-    // réécrit pas par-dessus. Silencieux exprès — c'est le fonctionnement
-    // normal de deux appareils, pas une panne à signaler à chaque fois.
-    _ghErr = '';
-    markPushPending(false);          // tout est parti : plus rien en attente
-    await ghPull().catch(() => {});
-    ghPaintStatus('ok');
-  } else if (fail) {
-    _ghErr = fail.reason || '';
-    ghPaintStatus('error');
-    // Un échec d'envoi n'est PAS silencieux : sinon l'utilisateur croit que
-    // tout est en ligne alors que seul son navigateur a la donnée.
-    toast(`Coffre en ligne : ${_ghErr}`, 'error');
-    if (!_ghTimer) _ghTimer = setTimeout(ghFlush, 30000);   // nouvelle tentative
-  } else {
-    _ghErr = '';
-    markPushPending(false);
-    ghPaintStatus('ok');
-  }
-}
-function ghPaintStatus(st) {
-  _ghStatus = st;
-  const el = document.getElementById('cloud-dot');
-  if (el) {
-    el.dataset.state = st;
-    el.title = { off: 'Coffre en ligne non configuré', warn: 'Coffre en ligne NON configuré : rien n\u2019est envoyé depuis cet appareil',
-      pending: 'Envoi au dépôt dans quelques secondes…',
-      saving: 'Envoi au dépôt…', ok: 'Collection sauvegardée dans le dépôt',
-      read: 'Lecture seule : la collection est bien relue du dépôt, mais rien n\u2019est envoyé depuis cet appareil (jeton absent ou expiré)',
-      error: `Échec d'envoi : ${_ghErr}` }[st] || '';
-  }
-}
-// ── Relecture au démarrage ────────────────────────────────────────
-// Règle : le plus RÉCENT gagne, et l'appareil vierge se remplit tout seul
-// (ouvrir le site sur l'iPhone suffit à y retrouver la collection).
-let _localUpdated = 0, _ghLastPull = 0;
-function ghLocalEmpty() {
-  return !state.wishlists.length && !state.binders.length && !state.investCards.length
-    && !state.sealed.length && !Object.keys(state.milobellus || {}).length;
-}
-async function ghPull(opts) {
-  const boot = !!(opts && opts.boot);   // au démarrage : ni repeinture ni annonce
-  const c = ghCfg();
-  if (!c.owner || !c.repo) return;
-  _ghLastPull = Date.now();
-  delete _ghSha[GH_PATHS.collection];   // notre référence n'est plus fiable
-  const remote = await ghRead(GH_PATHS.collection);
-  if (!remote || typeof remote !== 'object') return;
-  const rt = Date.parse(remote.lastUpdated || 0) || 0;
-  const empty = ghLocalEmpty();
-  if (!empty && rt <= _localUpdated) {
-    // Le local est à jour (ou en avance) : on pousse s'il est en avance.
-    if (rt < _localUpdated) ghPushSoon('collection');
-    return;
-  }
-  // On garde l'état d'AVANT avant d'écraser : même ici, rien ne disparaît.
-  if (!empty) await autoBackup('avant-coffre-en-ligne');
-  applyLoaded(remote);
-  _localUpdated = rt;
-  await writeNow();
-  window._vaultCounted = false; window._investCountedCards = false; window._investCountedSealed = false;
-  // Au démarrage, le premier rendu arrive juste après : repeindre ici ferait le
-  // travail deux fois, et le toast annoncerait une « mise à jour » sur un écran
-  // que l'utilisateur n'a pas encore vu.
-  if (!boot) {
-    renderViewContent(state.view);
-    if (!empty) toast('Collection mise à jour depuis le dépôt', 'success');
-  }
-  ghPaintStatus('ok');
-}
-// Les cotes voyagent aussi : le pont Cardmarket ne tourne que sur le Mac,
-// l'iPhone se contente de lire le résultat de la dernière synchro.
-// Renvoie le NOMBRE de cotes reprises (0 si le dépôt n'a rien de plus récent) :
-// le bouton Sync s'en sert pour savoir s'il a pu rendre service.
-async function ghPullPrices() {
-  const c = ghCfg();
-  if (!c.owner || !c.repo) return 0;
-  const remote = await ghRead(GH_PATHS.prices);
-  if (!remote || !remote.prices) return 0;
-  const rt = Number(remote.syncedAt) || 0;
-  if (rt <= priceSyncedAt()) return 0;
-  let n = 0;
-  for (const k in remote.prices) {
-    const v = remote.prices[k];
-    if (v && typeof v === 'object') { priceCache[k] = v; n++; }
-  }
-  _priceSyncedAt = rt;
-  flushPriceCache();
-  if (n) {
-    window._vaultCounted = false; window._investCountedCards = false;
-    renderViewContent(state.view);
-  }
-  return n;
-}
 
-// ── Réglages du coffre en ligne ───────────────────────────────────
-// Un seul champ à remplir dans le cas normal : le jeton. Le dépôt est déduit
-// de l'URL GitHub Pages. Le bouton « Vérifier » fait un VRAI aller-retour
-// (lecture du dépôt + écriture d'un fichier témoin) et dit ce qui bloque —
-// c'est la seule façon de savoir que la sauvegarde marche AVANT d'y confier
-// sa collection.
 // La version RÉELLEMENT chargée, lue sur la balise <script> : c'est la seule
 // façon de savoir si un appareil sert encore du code périmé.
 function appVersion() {
@@ -1074,187 +1226,194 @@ function appVersion() {
     return new URL(src, location.href).searchParams.get('v') || '?';
   } catch { return '?'; }
 }
-function ensureCloudModal() {
-  let m = document.getElementById('modal-cloud');
+
+// ══════════════════════════════════════════════════════════════════
+//  L'ÉCRAN DE CONNEXION — une porte, pas un formulaire
+//
+//  C'est le premier écran d'une app dont la promesse est « un coffre ». Il ne
+//  demande donc rien : pas de champ, pas de mot de passe à inventer, pas de
+//  case à cocher. Une marque, une phrase, un bouton.
+//
+//  Il est posé AU-DESSUS de l'app plutôt qu'à sa place : l'aurore et le verre
+//  continuent de vivre derrière lui, et la transition vers le coffre est un
+//  simple fondu — on entre dans une pièce déjà éclairée, on ne charge pas une
+//  seconde page.
+// ══════════════════════════════════════════════════════════════════
+function ensureAuthGate() {
+  let g = document.getElementById('auth-gate');
+  if (g) return g;
+  g = document.createElement('div');
+  g.id = 'auth-gate';
+  g.className = 'auth-gate';
+  g.setAttribute('role', 'dialog');
+  g.setAttribute('aria-modal', 'true');
+  g.setAttribute('aria-label', 'Connexion');
+  g.innerHTML = `
+    <div class="auth-card plate">
+      <div class="auth-mark"><img src="logo.png?v=milo2" alt=""></div>
+      <h1 class="auth-title">Milo<i>Dex</i></h1>
+      <p class="auth-sub">Ton coffre de collection. Connecte-toi : ta collection, tes wishlists et tes cotes te suivent d'un appareil à l'autre.</p>
+      <button class="auth-google" id="auth-google" onclick="vaultSignInGoogle()">
+        <span class="auth-g" aria-hidden="true">${GOOGLE_G}</span>
+        <span class="auth-google-label">Continuer avec Google</span>
+        <span class="auth-google-spin" aria-hidden="true"><span class="spinner spinner-sm"></span></span>
+      </button>
+      <p class="auth-err" id="auth-err" role="alert" hidden></p>
+      <p class="auth-note">Personne d'autre que toi n'a accès à ta collection : l'isolement est appliqué par la base elle-même, pas par cette page.</p>
+      <p class="auth-setup" id="auth-setup" hidden></p>
+    </div>`;
+  document.body.appendChild(g);
+  return g;
+}
+// Le « G » officiel. En SVG et non en image : il doit rester net sur un écran
+// Retina et ne coûter aucune requête sur le chemin du premier écran.
+const GOOGLE_G = '<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">'
+  + '<path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.2-.4-4.7H24v8.9h11.8c-.5 2.7-2 5.1-4.3 6.6v5.5h7c4.1-3.8 6.6-9.4 6.6-16.3z"/>'
+  + '<path fill="#34A853" d="M24 46c5.8 0 10.7-1.9 14.3-5.2l-7-5.5c-1.9 1.3-4.4 2.1-7.3 2.1-5.6 0-10.4-3.8-12.1-8.9H4.7v5.6C8.3 41.4 15.6 46 24 46z"/>'
+  + '<path fill="#FBBC05" d="M11.9 28.5c-.4-1.3-.7-2.7-.7-4.5s.3-3.2.7-4.5v-5.6H4.7A22 22 0 0 0 2.3 24c0 3.6.9 6.9 2.4 9.9l7.2-5.4z"/>'
+  + '<path fill="#EA4335" d="M24 10.6c3.2 0 6 1.1 8.2 3.2l6.2-6.2C34.7 4.1 29.8 2 24 2 15.6 2 8.3 6.6 4.7 13.4l7.2 5.6c1.7-5.1 6.5-8.4 12.1-8.4z"/>'
+  + '</svg>';
+
+function showAuthGate() {
+  const g = ensureAuthGate();
+  // L'app derrière est inerte pour le clavier et les lecteurs d'écran : sans
+  // ça, la tabulation traverse la porte et va cliquer dans un coffre vide.
+  const shell = document.querySelector('.app');
+  if (shell) shell.setAttribute('inert', '');
+  document.documentElement.setAttribute('data-auth', 'out');
+  authGateBusy(false);
+  // Si les clés manquent, le dire ICI plutôt que de laisser le bouton échouer.
+  const s = document.getElementById('auth-setup');
+  if (s) {
+    if (!sbConfigured()) {
+      s.hidden = false;
+      s.innerHTML = 'Configuration incomplète : renseigne <code>cloud-config.js</code> (voir <b>SUPABASE.md</b>).';
+    } else s.hidden = true;
+  }
+  // Reflow forcé plutôt que requestAnimationFrame, et ce n'est pas un détail :
+  // rAF est SUSPENDU dans un onglet en arrière-plan. Une app rouverte depuis un
+  // onglet resté en fond aurait affiché un coffre vide et inerte, sans jamais
+  // montrer la porte — jusqu'au premier retour au premier plan. Lire
+  // `offsetWidth` force le navigateur à valider la mise en page tout de suite,
+  // ce qui donne à la transition son état de départ sans dépendre d'une frame.
+  void g.offsetWidth;
+  g.classList.add('open');
+  const b = document.getElementById('auth-google');
+  if (b) b.focus({ preventScroll: true });
+}
+function hideAuthGate() {
+  const g = document.getElementById('auth-gate');
+  const shell = document.querySelector('.app');
+  if (shell) shell.removeAttribute('inert');
+  document.documentElement.setAttribute('data-auth', 'in');
+  if (!g) return;
+  g.classList.remove('open');
+  g.classList.add('leaving');
+  setTimeout(() => { g.classList.remove('leaving'); }, 400);
+}
+function authGateBusy(on) {
+  const b = document.getElementById('auth-google');
+  if (!b) return;
+  b.disabled = !!on;
+  b.dataset.busy = on ? '1' : '';
+}
+function authGateError(msg) {
+  const e = document.getElementById('auth-err');
+  if (!e) return;
+  e.hidden = false;
+  e.textContent = msg;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  LE PROFIL — qui je suis, où sont mes données, comment je pars
+//  Une feuille, pas un cinquième onglet : la navigation a QUATRE
+//  destinations et c'est une décision de design, pas une place disponible.
+// ══════════════════════════════════════════════════════════════════
+function paintAccountButton() {
+  const b = document.getElementById('account-btn');
+  if (!b) return;
+  const av = vaultAvatar();
+  const name = vaultDisplayName();
+  // Déconnecté, on montre une SILHOUETTE et non l'initiale d'un nom de repli :
+  // un « D » (pour « Dresseur ») donnerait à croire qu'un compte est ouvert.
+  b.innerHTML = !vaultOn() ? ICO_SILHOUETTE
+    : av ? `<img class="acc-av" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
+         : `<span class="acc-ini" aria-hidden="true">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+  b.title = vaultOn() ? `${name} — ton compte` : 'Se connecter';
+  b.setAttribute('aria-label', b.title);
+  b.dataset.on = vaultOn() ? '1' : '';
+}
+const ICO_SILHOUETTE = '<svg viewBox="0 0 24 24" fill="none" width="17" height="17" aria-hidden="true">'
+  + '<circle cx="12" cy="8.4" r="3.6" stroke="currentColor" stroke-width="1.8"/>'
+  + '<path d="M5 19.4c.6-3.4 3.5-5.4 7-5.4s6.4 2 7 5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+function ensureAccountModal() {
+  let m = document.getElementById('modal-account');
   if (m) return m;
   m = document.createElement('div');
-  m.className = 'modal-overlay'; m.id = 'modal-cloud';
-  m.innerHTML = `<div class="modal" style="max-width:580px">
-      <div class="modal-header"><div class="modal-title">Coffre en ligne</div><button class="modal-close" onclick="closeModal('modal-cloud')" aria-label="Fermer">${ICO.close}</button></div>
-      <div class="modal-body" id="cloud-body" style="min-height:120px"></div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-cloud')">Fermer</button></div>
+  m.className = 'modal-overlay'; m.id = 'modal-account';
+  m.innerHTML = `<div class="modal" style="max-width:520px">
+      <div class="modal-header"><div class="modal-title">Ton compte</div><button class="modal-close" onclick="closeModal('modal-account')" aria-label="Fermer">${ICO.close}</button></div>
+      <div class="modal-body" id="account-body" style="min-height:120px"></div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-account')">Fermer</button></div>
     </div>`;
   document.body.appendChild(m);
   return m;
 }
-function openCloud() {
-  ensureCloudModal();
-  const c = ghCfg();
-  const st = { off: 'non configuré', ok: 'à jour', pending: 'envoi imminent', saving: 'envoi en cours', error: 'échec du dernier envoi' }[_ghStatus] || '';
-  document.getElementById('cloud-body').innerHTML = `
-    <p class="sealed-imp-hint">Ta collection est enregistrée dans le dépôt <b>${esc(c.owner || '?')}/${esc(c.repo || '?')}</b> (branche ${esc(c.branch)}), fichier <code>data/collection.json</code>. Chaque modification fait un commit : l'historique du dépôt est ta machine à remonter le temps.</p>
-    <div class="cloud-field">
-      <label for="cloud-token">Jeton d'accès GitHub <span>(jeton <b>classique</b>, expiration « <b>No expiration</b> », case <b>repo</b> — c'est le seul type qui n'expire jamais, donc à coller une fois pour toutes)</span></label>
-      <input id="cloud-token" type="password" autocomplete="off" spellcheck="false" placeholder="${c.token ? '•••••••• (déjà enregistré)' : 'github_pat_…'}" value="">
+function openAccount() {
+  if (!vaultOn()) { showAuthGate(); return; }
+  ensureAccountModal();
+  const av = vaultAvatar();
+  const n = state.wishlists.length + state.binders.length + state.sealed.length + state.investCards.length;
+  document.getElementById('account-body').innerHTML = `
+    <div class="acc-head">
+      ${av ? `<img class="acc-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
+           : `<span class="acc-face acc-face-ini">${esc(vaultDisplayName().charAt(0).toUpperCase())}</span>`}
+      <div class="acc-id">
+        <div class="acc-name">${esc(vaultDisplayName())}</div>
+        <div class="acc-mail">${esc(vaultEmail())}</div>
+      </div>
     </div>
-    <div class="cloud-row">
-      <div class="cloud-field"><label for="cloud-owner">Compte</label><input id="cloud-owner" value="${esc(c.owner)}" spellcheck="false"></div>
-      <div class="cloud-field"><label for="cloud-repo">Dépôt</label><input id="cloud-repo" value="${esc(c.repo)}" spellcheck="false"></div>
-      <div class="cloud-field"><label for="cloud-branch">Branche</label><input id="cloud-branch" value="${esc(c.branch)}" spellcheck="false"></div>
-    </div>
-    <p class="sealed-imp-note">Le jeton reste dans CE navigateur : il n'est jamais écrit dans le dépôt, qui est public. En cas de doute, révoque-le sur github.com et recolle-en un nouveau.</p>
-    <p class="sealed-imp-note" id="cloud-durable">${cloudDurableLine()}</p>
+    <dl class="acc-facts">
+      <div><dt>Synchronisation</dt><dd id="account-sync-line">${esc(vaultStatusLine())}</dd></div>
+      <div><dt>Dans ton coffre</dt><dd>${n.toLocaleString('fr-FR')} entrées · ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} scellés</dd></div>
+      <div><dt>Cotes</dt><dd>${Object.keys(priceCache).length.toLocaleString('fr-FR')} en cache · ${esc(agoLabel(priceSyncedAt()))}</dd></div>
+      <div><dt>Version</dt><dd>${esc(appVersion())}</dd></div>
+    </dl>
+    <p class="sealed-imp-note">Tes données vivent dans ta ligne à toi, et la base refuse au niveau du moteur de les servir à quelqu'un d'autre. Se connecter sur un autre appareil suffit à les y retrouver.</p>
     <div class="cloud-actions">
-      <button class="btn btn-primary" onclick="cloudCheck()">Vérifier et enregistrer</button>
-      <button class="btn btn-ghost" onclick="cloudPushNow()">Envoyer maintenant</button>
-      <button class="btn btn-ghost" onclick="cloudPullNow()">Relire le dépôt</button>
+      <button class="btn btn-ghost" onclick="accountPull()">Relire mon compte</button>
+      <button class="btn btn-ghost" onclick="accountPush()">Envoyer maintenant</button>
+      <button class="btn btn-ghost" onclick="exportData()">Télécharger une copie</button>
     </div>
-    <div id="cloud-report" class="cloud-report">État : ${esc(st)}${_ghErr ? ` — ${esc(_ghErr)}` : ''} · version ${esc(appVersion())}</div>`;
-  openModal('modal-cloud');
-  cloudShowRemote();
+    <div class="acc-out">
+      <button class="btn btn-ghost" onclick="vaultSignOut(false)">Se déconnecter</button>
+      <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
+    </div>
+    <p class="sealed-imp-note">« Effacer cet appareil » ne touche QUE la copie hors ligne d'ici. Ton compte, lui, garde tout — c'est le geste à faire sur un ordinateur qui n'est pas le tien.</p>
+    <div id="account-report" class="cloud-report"></div>`;
+  openModal('modal-account');
 }
-// Ce que contient le dépôt, LU depuis le dépôt (pas depuis ce que l'app croit
-// avoir envoyé). C'est ce chiffre-là qui prouve que la sauvegarde existe.
-async function cloudShowRemote() {
-  const c = ghCfg();
-  if (!c.owner || !c.repo) return;
-  const el = document.getElementById('cloud-remote');
-  const remote = await ghRead(GH_PATHS.collection);
-  const box = document.getElementById('cloud-report');
-  if (!box) return;
-  const line = document.createElement('div');
-  line.className = 'cloud-remote';
-  if (!remote) {
-    line.innerHTML = ghLocalEmpty()
-      ? 'Dépôt : <b>aucune collection</b> — et cet appareil n’en a pas non plus (restaure d’abord un .json avec ⇧⌘R).'
-      : 'Dépôt : <b>aucune collection pour l’instant</b> — clique « Vérifier et enregistrer » pour y envoyer celle de cet appareil.';
-  } else {
-    const d = String(remote.lastUpdated || '').replace('T', ' à ').slice(0, 16);
-    line.innerHTML = `Dépôt : ${(remote.wishlists || []).length} wishlists · ${(remote.investCards || []).length} cartes · ${(remote.sealed || []).length} produits scellés <span>(${esc(d)})</span>`;
-  }
-  box.after(line);
+function accountReport(html, kind) {
+  const el = document.getElementById('account-report');
+  if (el) { el.innerHTML = html; el.dataset.kind = kind || ''; }
 }
-/* Où le jeton est RÉELLEMENT enregistré, et pour combien de temps.
-   Cette ligne existe parce que le bug était invisible : la fenêtre disait
-   « enregistré » alors que le localStorage de l'iPhone avait rejeté l'écriture
-   (quota atteint). On affiche donc l'état des deux supports plutôt que de
-   supposer. */
-function cloudDurableLine() {
-  const c = ghCfg();
-  if (!c.token) return 'Aucun jeton sur cet appareil : il est en lecture seule (la collection arrive quand même, l\u2019envoi non).';
-  const bits = [];
-  bits.push(_ghStore.idb === false ? 'IndexedDB : <b>échec</b>' : 'IndexedDB : <b>oui</b>');
-  bits.push(_ghStore.ls === false ? 'localStorage : <b>plein</b>' : 'localStorage : <b>oui</b>');
-  const persist = _persistGranted === true ? ' · stockage marqué <b>persistant</b> par le navigateur'
-    : _persistGranted === false ? ' · le navigateur n\u2019a pas accordé la persistance : ajoute l\u2019app à l\u2019écran d\u2019accueil, il l\u2019accorde alors sans rien demander'
-    : '';
-  return `Jeton enregistré — ${bits.join(' · ')}${persist}. Il est relu au démarrage depuis IndexedDB, donc il survit à un localStorage vidé.`;
+async function accountPush() {
+  accountReport('<span class="spinner spinner-sm"></span> Envoi…');
+  vaultPushSoon('collection');
+  const ok = await vaultFlush();
+  accountReport(ok ? 'Envoyé — ton compte est à jour.' : `Échec : ${esc(_vaultErr || 'inconnu')}`, ok ? 'good' : 'bad');
 }
-function cloudRefreshDurable() {
-  const el = document.getElementById('cloud-durable');
-  if (el) el.innerHTML = cloudDurableLine();
+async function accountPull() {
+  accountReport('<span class="spinner spinner-sm"></span> Lecture…');
+  const changed = await vaultPull({ quiet: true }).catch(() => false);
+  accountReport(changed
+    ? `Relu : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} scellés.`
+    : 'Rien de plus récent dans ton compte — cet appareil est déjà à jour.', 'good');
 }
-function cloudReport(html, kind) {
-  const el = document.getElementById('cloud-report');
-  if (el) { el.className = `cloud-report ${kind || ''}`; el.innerHTML = html; }
-}
-function cloudFormSave() {
-  const g = id => (document.getElementById(id)?.value || '').trim();
-  const patch = { owner: g('cloud-owner'), repo: g('cloud-repo'), branch: g('cloud-branch') || 'main' };
-  const tok = g('cloud-token');
-  if (tok) patch.token = tok;          // vide = on garde le jeton déjà enregistré
-  return ghSave(patch);
-}
-async function cloudCheck() {
-  const c = cloudFormSave();
-  if (!c.owner || !c.repo) return cloudReport('Il manque le compte ou le dépôt.', 'bad');
-  if (!c.token) return cloudReport('Il manque le jeton d’accès.', 'bad');
-  cloudReport('<span class="spinner spinner-sm"></span> Vérification…');
-  // On ATTEND l'écriture disque avant d'annoncer quoi que ce soit : c'est
-  // précisément ce qui manquait, et pourquoi l'iPhone repartait sans jeton.
-  await Promise.all([_ghLastWrite ? _ghLastWrite.idb : null, requestPersistentStorage()]).catch(() => {});
-  cloudRefreshDurable();
-  if (_ghStore.idb === false && _ghStore.ls === false)
-    return cloudReport('Le jeton n\u2019a pu être enregistré NI dans IndexedDB NI dans localStorage — le stockage de ce navigateur est bloqué (navigation privée ?). Rien ne sera gardé au prochain lancement.', 'bad');
-  // 1) le dépôt existe et le jeton peut ÉCRIRE (permissions.push)
-  let r;
-  try { r = await ghApi(''); } catch { return cloudReport('Réseau injoignable.', 'bad'); }
-  if (r.status === 401) {
-    // Cas le plus fréquent, et de loin : les jetons « fine-grained » de GitHub
-    // ont une DATE D'EXPIRATION (90 jours par défaut). Le message doit dire ça,
-    // et rappeler que la lecture, elle, continue de marcher : le dépôt est
-    // public, la collection est relue sans aucun jeton.
-    ghPaintStatus('read');
-    return cloudReport('Jeton refusé (401) — il a expiré ou été révoqué.<br><br>'
-      + '<b>Pour ne plus jamais avoir à le refaire</b>, prends un jeton <b>classique</b> et non « fine-grained » : '
-      + '<a href="https://github.com/settings/tokens/new?scopes=repo&description=IronDex" target="_blank" rel="noopener">ouvre cette page</a>, '
-      + 'choisis <b>Expiration : No expiration</b>, vérifie que la case <b>repo</b> est cochée, puis colle le jeton ici. '
-      + 'Les jetons fine-grained, eux, expirent au bout d\u2019un an au maximum — c\u2019est pour ça qu\u2019on retombe là-dessus.<br><br>'
-      + 'En attendant, rien n\u2019est perdu : la lecture continue (ta collection est relue du dépôt à chaque ouverture), et les modifications faites ici '
-      + 'sont GARDÉES puis envoyées automatiquement dès que le jeton remarche.', 'bad');
-  }
-  if (r.status === 404) return cloudReport(`Dépôt <b>${esc(c.owner)}/${esc(c.repo)}</b> introuvable — vérifie le nom, ou que le jeton donne accès à CE dépôt.`, 'bad');
-  if (!r.ok) return cloudReport(`GitHub répond HTTP ${r.status}.`, 'bad');
-  const repo = await r.json().catch(() => ({}));
-  if (repo.permissions && !repo.permissions.push)
-    return cloudReport('Le jeton lit le dépôt mais ne peut pas y écrire : il lui manque « Contents : Read and write ».', 'bad');
-  // 2) écriture RÉELLE d'un fichier témoin : seul test qui prouve la chaîne complète
-  const w = await ghWrite('data/.irondex-ping.json', { at: new Date().toISOString(), from: navigator.platform || 'appareil' }, 'IronDex : test de connexion');
-  if (!w.ok) return cloudReport(`Lecture OK, mais l’écriture échoue : ${esc(w.reason)}`, 'bad');
-  ghPaintStatus('ok');
-  // 3) et on ENVOIE tout de suite si c'est ce qu'il faut faire. Sans ça,
-  //    quelqu'un qui restaure sa collection PUIS colle son jeton se retrouve
-  //    avec un dépôt vide et un écran tout vert : l'envoi automatique ne se
-  //    déclenche qu'à la modification SUIVANTE. « Enregistrer » doit vouloir
-  //    dire « ma collection est en ligne », pas « le jeton est valide ».
-  if (!ghLocalEmpty()) {
-    const remote = await ghRead(GH_PATHS.collection);
-    const rt = remote ? (Date.parse(remote.lastUpdated || 0) || 0) : 0;
-    const lt = Date.parse(collectionSnapshot().lastUpdated) || Date.now();
-    // Garde-fou du moment le plus risqué : brancher un appareil dont la copie
-    // locale est plus PAUVRE que le dépôt (une vieille session, un import
-    // partiel) écraserait la bonne collection. On demande alors confirmation.
-    const nLocal = state.investCards.length + state.wishlists.length + state.sealed.length;
-    const nRemote = remote ? ((remote.investCards || []).length + (remote.wishlists || []).length + (remote.sealed || []).length) : 0;
-    if (remote && nRemote > nLocal * 1.1 + 5 && !window._cloudForcePush) {
-      window._cloudForcePush = true;
-      return cloudReport(`Attention : le dépôt contient <b>${nRemote}</b> entrées, cet appareil seulement <b>${nLocal}</b>. Envoyer écraserait la version en ligne. Clique « Relire le dépôt » pour récupérer la bonne, ou « Vérifier » à nouveau pour envoyer quand même.`, 'bad');
-    }
-    if (!remote || rt < lt) {
-      cloudReport('<span class="spinner spinner-sm"></span> Jeton validé — envoi de la collection…');
-      const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
-      if (!a.ok) return cloudReport(`Jeton valide, mais l’envoi de la collection échoue : ${esc(a.reason)}`, 'bad');
-      await ghWrite(GH_PATHS.prices, { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }, 'IronDex : cotes mises à jour');
-      return cloudReport(`Tout est en place, et ta collection est <b>en ligne</b> : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} produits scellés. Les prochaines modifications partiront toutes seules.`, 'good');
-    }
-  }
-  cloudReport(`Tout est en place. Branche <b>${esc(repo.default_branch || c.branch)}</b>${repo.private ? ' · dépôt privé' : ' · dépôt public'}. Tes prochaines modifications partiront automatiquement.`, 'good');
-}
-async function cloudPushNow() {
-  if (!ghOn()) return cloudReport('Configure d’abord le jeton et le dépôt.', 'bad');
-  if (ghLocalEmpty()) return cloudReport('Cet appareil n’a aucune collection à envoyer : il écraserait celle du dépôt. Utilise « Relire le dépôt » pour la récupérer ici.', 'bad');
-  cloudReport('<span class="spinner spinner-sm"></span> Envoi de la collection…');
-  const a = await ghWrite(GH_PATHS.collection, collectionSnapshot(), 'IronDex : collection mise à jour');
-  if (!a.ok) { ghPaintStatus('error'); return cloudReport(`Échec : ${esc(a.reason)}`, 'bad'); }
-  const b = await ghWrite(GH_PATHS.prices, { syncedAt: priceSyncedAt(), prices: priceDiskSnapshot() }, 'IronDex : cotes mises à jour');
-  ghPaintStatus('ok');
-  const n = state.wishlists.length + state.investCards.length + state.sealed.length;
-  cloudReport(`Envoyé : ${n} entrées${b.ok ? ' + les cotes' : ' (cotes : ' + esc(b.reason) + ')'}.`, 'good');
-}
-async function cloudPullNow() {
-  const c = ghCfg();
-  if (!c.owner || !c.repo) return cloudReport('Configure d’abord le dépôt.', 'bad');
-  cloudReport('<span class="spinner spinner-sm"></span> Lecture du dépôt…');
-  const remote = await ghRead(GH_PATHS.collection);
-  if (!remote) return cloudReport('Aucun <code>data/collection.json</code> dans le dépôt pour l’instant — envoie d’abord ta collection.', 'bad');
-  await autoBackup('avant-relecture-depot');
-  applyLoaded(remote);
-  _localUpdated = Date.parse(remote.lastUpdated || 0) || 0;
-  await writeNow();
-  await ghPullPrices();
-  window._vaultCounted = false; window._investCountedCards = false; window._investCountedSealed = false;
-  renderViewContent(state.view);
-  cloudReport(`Relu : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} produits scellés (état du ${esc(String(remote.lastUpdated || '').slice(0, 10))}).`, 'good');
+async function accountSignOutWipe() {
+  if (!confirm('Effacer la copie hors ligne sur CET appareil et se déconnecter ?\n\nTon compte garde tout : tu retrouveras ta collection en te reconnectant.')) return;
+  closeModal('modal-account');
+  await vaultSignOut(true);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1277,7 +1436,12 @@ function scanRecovery() {
   const out = [];
   let keys = [];
   try { keys = Object.keys(localStorage); } catch { return out; }
+  const mine = lsKey();
   for (const k of keys) {
+    // Le repli localStorage est nominatif depuis les comptes (voir lsKey) :
+    // on écarte ceux des AUTRES comptes de cet appareil. La clé nue, elle,
+    // reste proposée : c'est la sauvegarde d'avant les comptes.
+    if (k.startsWith(STORAGE_KEY + ':') && k !== mine) continue;
     let d;
     try { d = JSON.parse(localStorage.getItem(k)); } catch { continue; }
     const e = _recoveryEntry(k, d);
@@ -1291,10 +1455,13 @@ async function scanRecoveryAll() {
   const out = scanRecovery();
   try {
     const keys = await idbKeys();
-    const backups = keys.filter(k => typeof k === 'string' && k.startsWith(BACKUP_PREFIX)).sort().reverse();
+    // Uniquement les instantanés DE CE COMPTE : la récupération est une porte
+    // dérobée sur des données, elle ne doit pas s'ouvrir sur celles d'un autre.
+    const pre = backupPrefix();
+    const backups = keys.filter(k => typeof k === 'string' && k.startsWith(pre)).sort().reverse();
     for (const k of backups) {
       const d = await idbGet(k).catch(() => null);
-      const e = _recoveryEntry(k.slice(BACKUP_PREFIX.length), d);
+      const e = _recoveryEntry(k.slice(pre.length), d);
       if (e) { e.auto = true; out.unshift(e); }
     }
   } catch {}
@@ -2573,6 +2740,12 @@ function getRawPrice(cardId) {
       if (!r) _priceNullAt[cardId] = Date.now();
       delete pricePromises[cardId];
       savePriceCache();
+      // TOUTE cote calculée ici part vers le cache partagé, pas seulement les
+      // recotes explicites : sinon les cotes obtenues en arrière-plan sur le
+      // Mac (ensurePrices) n'atteindraient jamais l'iPhone, qui les
+      // recalculerait une à une. Les envois sont débouncés puis groupés par
+      // 400, donc coter 1 400 cartes reste une poignée de requêtes.
+      if (r) { markPriceDirty(cardId); vaultPushSoon('prices'); }
       return r;
     };
     // 0) PREMIER PRIX CARDMARKET, en français et en Near Mint — la cote de
@@ -2822,19 +2995,19 @@ async function repairInvestCardIds() {
 //  seconde, et on VOIT d'où vient le montant obtenu.
 //
 //  Ce qui reste global — et qui n'est pas un recalcul mais un TRANSFERT :
-//  récupérer les cotes que le dépôt contient déjà. C'est le geste utile sur
-//  l'iPhone, qui n'a pas de pont Cardmarket : les cotes sont calculées sur la
-//  machine qui l'a, et voyagent par le dépôt.
+//  récupérer les cotes que le cache partagé contient déjà. C'est le geste utile
+//  sur l'iPhone, qui n'a pas de pont Cardmarket : les cotes sont calculées sur
+//  la machine qui l'a, et voyagent par la base.
 // ══════════════════════════════════════════════════════════════════
-async function pullPricesFromRepo() {
-  if (!ghCfg().owner) { toast('Coffre en ligne non configuré sur cet appareil', 'error'); return; }
-  const got = await ghPullPrices().catch(() => 0);
-  if (!got) { toast('Le dépôt n’a pas de cotes plus récentes', 'error'); return; }
+async function pullSharedPrices() {
+  if (!vaultOn()) { toast('Connecte-toi pour récupérer les cotes', 'error'); return; }
+  const got = await vaultPullPrices().catch(() => 0);
+  if (!got) { toast('Aucune cote plus récente à récupérer', 'error'); return; }
   refreshSyncMeta();
   window._vaultCounted = false;
   window._investCountedCards = false;
   renderViewContent(state.view);
-  toast(`${got.toLocaleString('fr-FR')} cotes récupérées depuis le dépôt`, 'success');
+  toast(`${got.toLocaleString('fr-FR')} cotes récupérées`, 'success');
 }
 
 // Recote UNE carte. Tout ce qui la concerne est purgé — la cote, l'échec
@@ -2858,8 +3031,8 @@ async function recoteCard(cardId) {
   try { r = await getRawPrice(cardId); } catch (e) { console.warn('recote', cardId, e); }
   if (r && r.raw != null) {
     _priceSyncedAt = Date.now();
-    flushPriceCache();      // écriture immédiate : la cote survit à un refresh
-    ghPushSoon('prices');   // …et les autres appareils la verront
+    flushPriceCache();        // écriture immédiate : la cote survit à un refresh
+    vaultPushSoon('prices');  // …et les autres appareils la verront (marquée par finish)
     return r;
   }
   if (before) priceCache[cardId] = before;
@@ -3128,7 +3301,8 @@ function palCommands() {
     { kind: 'nav', name: 'Portefeuille', sub: `${state.sealed.length} scellés · ${state.investCards.length} cartes`, ico: ICO.chart, run: () => navigate('invest') },
     // Les classeurs ne sont pas atteignables sur téléphone : la commande non plus.
     ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
-    { kind: 'act', name: 'Récupérer les cotes du dépôt', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullPricesFromRepo() },
+    { kind: 'act', name: 'Récupérer les cotes partagées', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullSharedPrices() },
+    { kind: 'act', name: 'Mon compte', sub: vaultOn() ? `${vaultDisplayName()} · synchro et déconnexion` : 'Se connecter', ico: ICO.info, run: () => openAccount() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
@@ -9032,71 +9206,61 @@ document.addEventListener('DOMContentLoaded', async () => {
   const three = ensureThree();
   loadApiCache();   // réinjecte les séries/sets déjà connus (navigation instantanée)
   loadPriceCache(); // cotes de la dernière session → valeur du coffre instantanée
-  try { await load(); } catch (e) { console.warn('load', e); }  // copie locale prête avant le rendu
-  // LE JETON, AVANT TOUT ÉCHANGE AVEC LE DÉPÔT. Sa copie de référence vit dans
-  // IndexedDB (voir la note au-dessus de ghCfg) : on la relit ici, donc avant
-  // ghPull / ghPushSoon, sinon un appareil dont le localStorage a été vidé se
-  // croirait en lecture seule alors que son jeton est intact.
-  try { await ghHydrate(); } catch (e) { console.warn('ghHydrate', e); }
+  // ── L'AUTHENTIFICATION D'ABORD, LES DONNÉES ENSUITE ──────────────
+  // L'ordre n'est pas cosmétique. `load()` remplit `state` depuis le cache
+  // local, et ce cache est NOMINATIF (`collection:<uid>`) : tant qu'on ne sait
+  // pas qui est là, on ne sait pas quel cache lire — et lire le mauvais, c'est
+  // afficher la collection de quelqu'un d'autre le temps d'une frame.
+  // `vaultBoot()` ne va pas sur le réseau : il lit la session dans le
+  // localStorage. Coût réel : une poignée de millisecondes.
+  try { await vaultBoot(); } catch (e) { console.warn('vaultBoot', e); }
+  if (vaultOn()) { try { await load(); } catch (e) { console.warn('load', e); } }
   // …et on demande au navigateur de ne pas évincer ce stockage (non bloquant).
   requestPersistentStorage();
-  // Le DÉPÔT est l'arbitre : on le relit tout de suite. Sur un appareil vierge
-  // (l'iPhone à sa première ouverture) c'est LUI qui remplit la collection ;
-  // ailleurs, le plus récent gagne. Non bloquant : l'app s'affiche déjà avec
-  // la copie locale, la mise à jour arrive quand le réseau répond.
-  // ARRIVER CONNECTÉ, PAS « PRESQUE ». La relecture du dépôt faisait partie du
-  // décor : elle partait sans être attendue, l'app s'affichait avec la copie
-  // locale, et les données du dépôt tombaient dedans une seconde plus tard (avec
-  // un toast et un re-rendu au milieu de l'écran d'accueil). Elle est maintenant
-  // dans la promesse « prêt à peindre » : l'intro l'attend, et quand l'app
-  // apparaît, elle est à jour ET prête à envoyer.
-  // `boot: true` dit à ghPull de ne PAS repeindre ni annoncer : le premier
-  // rendu, qui suit immédiatement, s'en charge.
+
+  // Le SERVEUR arbitre : on le relit tout de suite. Sur un appareil vierge
+  // (l'iPhone à sa première connexion) c'est LUI qui remplit la collection ;
+  // ailleurs, le plus récent gagne. `boot: true` dit à vaultPull de ne PAS
+  // repeindre ni annoncer : le premier rendu, qui suit immédiatement, s'en
+  // charge. La promesse est attendue par la barre de l'intro — quand l'app
+  // apparaît, elle est à jour, pas « à jour une seconde plus tard ».
   let cloudReady = Promise.resolve();
-  if (ghCfg().owner) {
+  if (vaultOn()) {
     cloudReady = Promise.allSettled([
-      ghPull({ boot: true }).catch(e => console.warn('ghPull', e)),
-      ghPullPrices().catch(e => console.warn('ghPullPrices', e)),
+      vaultPull({ boot: true }).catch(e => console.warn('vaultPull', e)),
+      vaultPullPrices().catch(e => console.warn('vaultPullPrices', e)),
     ]);
-    // Des modifications d'une session précédente n'ont jamais pu partir (jeton
-    // expiré, hors ligne, app fermée trop vite) ? On retente maintenant. Le
-    // garde-fou anti-écrasement de ghFlush protège le cas où le dépôt serait
-    // plus récent — et ghPull, qui tourne juste au-dessus, a déjà tranché.
-    if (pushPending() && ghOn()) setTimeout(() => ghPushSoon('collection'), 3000);
+    vaultPaintStatus('ok');
+    vaultWatch();       // une modif faite sur l'autre appareil arrive toute seule
+    // Des modifications d'une session précédente n'ont jamais pu partir (hors
+    // ligne, session expirée, app fermée trop vite) ? On retente maintenant.
+    // L'arbitrage de vaultPull, qui tourne juste au-dessus, a déjà tranché qui
+    // du local ou du serveur est le plus récent.
+    if (pushPending()) setTimeout(() => vaultPushSoon('collection'), 3000);
     // …et à CHAQUE retour au premier plan. Sur iPhone une app installée n'est
     // jamais « rechargée » : sans ça, les cartes ajoutées depuis un autre
     // appareil n'arrivaient qu'après une fermeture complète.
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) return;
-      if (Date.now() - _ghLastPull < 20000) return;   // pas à chaque va-et-vient
-      ghPull().catch(() => {});
-      ghPullPrices().catch(() => {});
-      if (pushPending() && ghOn()) ghPushSoon('collection');
+      if (document.hidden || !vaultOn()) return;
+      if (Date.now() - _vaultLastPull < 20000) return;   // pas à chaque va-et-vient
+      vaultPull().catch(() => {});
+      vaultPullPrices().catch(() => {});
+      if (pushPending()) vaultPushSoon('collection');
     });
+    // La migration ne se propose qu'une fois l'app visible : une modale par
+    // dessus l'intro, ce serait une porte dans un couloir.
+    setTimeout(() => { vaultMaybeMigrate().catch(e => console.warn('migration', e)); }, 2200);
+  } else {
+    // Personne : l'app reste vide et la porte s'affiche. Rien de la collection
+    // précédente ne doit rester à l'écran — d'où le reset explicite.
+    resetCollection();
+    vaultPaintStatus('off');
   }
-  // LIRE NE DEMANDE AUCUN JETON : le dépôt est public, `ghRead` passe par
-  // raw.githubusercontent (voir ghRead) et ne retombe sur l'API authentifiée que
-  // pour un dépôt privé. Un jeton absent ou expiré n'empêche donc pas la
-  // collection d'arriver — il n'empêche que l'ENVOI. La pastille doit dire cette
-  // nuance au lieu d'afficher une erreur rouge qui laisse croire à une panne.
-  ghPaintStatus(ghOn() ? 'ok' : (ghCfg().owner ? 'read' : 'off'));
-  // Signal pour la barre de l'intro : elle attend que le dépôt ait répondu (avec
-  // son propre plafond de 4 s dans runIntro, pour ne jamais retenir personne).
+  paintAccountButton();
+  // Signal pour la barre de l'intro : elle attend que le serveur ait répondu
+  // (avec son propre plafond de 4 s dans runIntro, pour ne jamais retenir
+  // personne).
   try { window._introReadyResolve && window._introReadyResolve(cloudReady); } catch {}
-  // AVERTISSEMENT FRANC : une machine qui a des données mais pas de jeton
-  // travaille dans le vide — c'est exactement ce qui est arrivé (des cartes
-  // ajoutées sur un poste, jamais envoyées, invisibles ailleurs). La pastille
-  // grise ne suffisait pas.
-  setTimeout(() => {
-    if (!ghOn() && !ghLocalEmpty()) {
-      ghPaintStatus(ghCfg().owner ? 'read' : 'warn');
-      // Le ton compte : sans jeton, l'appareil n'est pas « en panne », il est en
-      // LECTURE SEULE. Il reçoit tout, il n'envoie rien.
-      toast(ghCfg().owner
-        ? 'Lecture seule sur cet appareil : la collection est bien relue du dépôt, mais tes modifications d\u2019ici ne sont pas envoyées.'
-        : 'Coffre en ligne non configuré ici : tes modifications restent sur cet appareil.', 'error');
-    }
-  }, 2600);
   // Service worker : rend l'app installable sur l'iPhone et lisible hors ligne.
   // Inutile (et interdit) en file://.
   //
@@ -9141,14 +9305,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   warmupModels();  // parse les GLB au plus tôt → cache chaud avant la fin de l'intro
   runIntro(() => {
     render();
+    // LA PORTE ARRIVE AVEC L'APP, pas avant. L'afficher pendant l'intro
+    // reviendrait à interrompre une animation par une modale ; l'afficher trop
+    // tard laisserait entrevoir un coffre vide. Elle entre donc au moment
+    // exact où l'app devient visible.
+    if (!vaultOn()) showAuthGate();
     // Positionne la pastille une fois la mise en page prête, puis une fois les
     // polices chargées (leurs largeurs changent) — évite les recalages/sautillements.
     repositionNavSoon(true);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { positionNavIndicator(true); syncTopbarHeight(); });
     setTimeout(() => positionNavIndicator(true), 450);
-    setTimeout(checkForNewSeries, 1400);
-    setTimeout(refreshSyncMeta, 600);         // « cotes il y a … » une fois l'accueil peint
-    setTimeout(offerRecoveryIfNeeded, 900);   // propose la récupération si des sections sont vides
+    if (vaultOn()) {
+      setTimeout(checkForNewSeries, 1400);
+      setTimeout(refreshSyncMeta, 600);       // « cotes il y a … » une fois l'accueil peint
+      setTimeout(offerRecoveryIfNeeded, 900); // propose la récupération si des sections sont vides
+    }
     bindBackupShortcuts();
     bindBrandReveal();                        // en-tête téléphone : actions au tap sur la marque
     bindPalette();                            // ⌘K / « / » — accélérateur global

@@ -1,41 +1,30 @@
-# Mettre IronDex en ligne (GitHub Pages) et le garder à jour
+# Mettre IronDex en ligne et le garder à jour
 
-Trois choses à comprendre avant de commencer :
+Deux choses vivent séparément, et c'est tout le changement depuis la version
+« tout dans le dépôt » :
 
-1. **Pages héberge le CODE.** Le site est une page statique : GitHub ne fait
-   tourner aucun serveur pour toi.
-2. **Le dépôt stocke aussi tes DONNÉES.** L'app écrit ta collection dans
-   `data/collection.json` et tes cotes dans `data/prices.json`, via l'API
-   GitHub. C'est ça qui remplace les sauvegardes fragiles du navigateur : le
-   Mac et l'iPhone lisent le même fichier, et chaque enregistrement est un
-   commit qu'on peut rouvrir.
+1. **Le CODE est sur GitHub Pages.** Le site est une page statique : GitHub ne
+   fait tourner aucun serveur. Pousser du code, c'est `git push`, point.
+2. **Les DONNÉES sont dans Postgres (Supabase), liées à un compte.** La
+   collection, les wishlists et les cotes n'existent plus dans le dépôt. Elles
+   appartiennent au compte connecté, et Postgres refuse de les servir à
+   quelqu'un d'autre (Row Level Security).
 3. **Le pont Cardmarket reste sur le Mac.** Cloudflare exige un vrai
-   navigateur, donc les cotes se calculent sur le Mac (bouton Sync), puis
-   partent dans le dépôt. L'iPhone les lit, il n'a rien à calculer.
+   navigateur : les cotes se calculent ici, puis rejoignent le cache partagé.
+   L'iPhone les lit, il n'a rien à calculer.
+
+La mise en route de la base (projet Supabase, Google, clés) est décrite dans
+**[SUPABASE.md](SUPABASE.md)** — c'est à faire une fois.
 
 ---
 
-## 1. Créer le dépôt et pousser (une seule fois)
-
-Le dossier est déjà un dépôt git avec un premier commit. Il reste à créer le
-dépôt distant et à l'y envoyer.
-
-Sur github.com : **New repository** → nom `IronDex` → **Public** → *ne coche
-rien* (pas de README, pas de .gitignore) → **Create**.
-
-Puis, dans le dossier du projet :
+## 1. Le dépôt et Pages (une seule fois)
 
 ```bash
-git remote add origin https://github.com/<TON-COMPTE>/IronDex.git
+git remote add origin https://github.com/TheoTeix/IronDex.git
 git branch -M main
 git push -u origin main
 ```
-
-GitHub demandera un mot de passe : ce n'est pas celui du compte, c'est un
-**jeton**. Celui de l'étape 3 fait l'affaire (ou laisse macOS retenir le
-premier que tu colles).
-
-## 2. Activer Pages
 
 Dans le dépôt : **Settings › Pages** → *Source* : **Deploy from a branch** →
 branche `main`, dossier `/ (root)` → **Save**.
@@ -43,77 +32,37 @@ branche `main`, dossier `/ (root)` → **Save**.
 Une minute plus tard, le site est sur :
 
 ```
-https://<TON-COMPTE>.github.io/IronDex/
+https://theoteix.github.io/IronDex/
 ```
 
-C'est l'URL à ouvrir sur le Mac **et** sur l'iPhone. Le `file://` d'avant peut
-être oublié.
+C'est l'URL à ouvrir sur le Mac **et** sur l'iPhone.
 
-## 3. Créer le jeton d'accès
-
-C'est lui qui autorise l'app à écrire ta collection dans le dépôt.
-
-github.com › **Settings › Developer settings › Personal access tokens ›
-Fine-grained tokens › Generate new token** :
-
-| Champ | Valeur |
-|---|---|
-| Token name | `irondex` |
-| Expiration | 1 an (à renouveler ; l'app te dira « 401 » le jour où il expire) |
-| Repository access | **Only select repositories** → `IronDex` |
-| Permissions › Repository › **Contents** | **Read and write** |
-
-Génère, **copie le jeton** (il ne s'affiche qu'une fois).
-
-## 4. Brancher l'app sur le dépôt
-
-Sur le site, en haut à droite : l'icône **nuage** → « Coffre en ligne ».
-
-1. Colle le jeton. Le compte, le dépôt et la branche sont déjà devinés depuis
-   l'URL — corrige-les seulement s'ils sont faux.
-2. **Vérifier et enregistrer** : l'app lit le dépôt, contrôle que le jeton a le
-   droit d'écrire, puis écrit vraiment un fichier témoin. Elle dit exactement
-   ce qui bloque s'il y a un problème.
-3. **Envoyer maintenant** : ta collection et tes cotes partent dans le dépôt.
-
-À partir de là, chaque modification déclenche un commit ~4 s plus tard. La
-pastille du nuage dit où on en est : vert = en ligne, jaune = envoi en cours,
-rouge = échec (avec un toast qui explique).
-
-Le jeton reste dans le `localStorage` de l'appareil. Il n'est **jamais** écrit
-dans le dépôt, qui est public. S'il fuite, révoque-le sur GitHub et recolle-en
-un nouveau : le pire qu'on puisse en faire est d'écrire dans ce seul dépôt.
-
-## 5. Installer sur l'iPhone
+## 2. Installer sur l'iPhone
 
 1. Ouvre l'URL dans **Safari** (pas Chrome : lui ne sait pas installer).
 2. **Partager › Sur l'écran d'accueil**.
 3. Ouvre l'app depuis l'icône : plein écran, sans barre Safari.
-4. Icône nuage → colle le **même jeton** → « Vérifier et enregistrer ».
+4. **Continuer avec Google**.
 
-La collection arrive toute seule : un appareil vide se remplit depuis le dépôt.
-Ensuite, le plus récent gagne — modifie sur l'iPhone, le Mac le verra à sa
-prochaine ouverture, et inversement.
-
-Deux réflexes utiles : si tu modifies au même moment sur les deux appareils, le
-dernier envoi écrase le précédent (l'ancien reste dans l'historique git) ; et
-un appareil hors ligne garde ses modifications en local, il les enverra au
-retour du réseau.
+Rien à coller, rien à configurer : la collection arrive. Une modification faite
+sur l'iPhone apparaît sur le Mac sans rien rouvrir (le temps réel de Supabase),
+et un appareil hors ligne garde ses modifications en local jusqu'au retour du
+réseau.
 
 ---
 
 ## Le cycle quotidien : j'ai changé quelque chose, et maintenant ?
 
-**Tes données** : rien à faire. Elles partent automatiquement.
+**Tes données** : rien à faire. Elles partent toutes seules, ~1,5 s après la
+modification.
 
-**Le code** (quand on modifie `app.js`, `style.css`, `index.html`) :
+**Le code** (`app.js`, `style.css`, `index.html`) :
 
 ```bash
-git pull --rebase        # l'app commite elle aussi (dans data/) : on récupère d'abord
-git add -A
-git commit -m "ce que j'ai changé"
-git push
+git add -A && git commit -m "ce que j'ai changé" && git push
 ```
+
+Plus besoin de `git pull --rebase` d'abord : l'app ne commite plus rien.
 
 Compte 30 à 60 secondes avant que Pages serve la nouvelle version.
 
@@ -121,14 +70,16 @@ Une seule règle à ne pas oublier : quand `app.js` ou `style.css` change, il
 faut **monter le numéro de version** dans `index.html` —
 
 ```html
-<link rel="stylesheet" href="style.css?v=ui9">
-<script src="app.js?v=ui9"></script>
+<link rel="stylesheet" href="style.css?v=ui48">
+<script src="cloud-config.js?v=ui48"></script>
+<script src="app.js?v=ui48"></script>
 ```
 
 Sans ça, les navigateurs (et surtout l'app installée sur l'iPhone) continuent
 de servir l'ancien fichier depuis leur cache : on croit que le changement n'a
-pas marché alors qu'il n'est jamais arrivé. Le `sw.js` liste aussi ces deux
-URL — même version.
+pas marché alors qu'il n'est jamais arrivé. **`sw.js`** liste aussi ces URL
+(même version, et monte son `V`), et **`version.json`** porte le même numéro —
+c'est lui qui permet à une app installée de détecter qu'elle est périmée.
 
 ## Mettre les cotes à jour
 
@@ -139,42 +90,45 @@ python3 scripts/cm_price_bridge.py
 ```
 
 Aucune fenêtre ne s'ouvre : le pont fait des requêtes HTTP, avec l'accès
-Cardmarket enregistré dans `~/.irondex/cm-cookies.json`. Clique **Sync** dans
-l'app ; la ligne sous « Synchronisation des cotes » doit dire « premier prix
-FR · Near Mint ». Compte ~20 min pour 1 300 cartes. À la fin, les cotes partent
-dans le dépôt : l'iPhone les aura sans rien faire.
+Cardmarket enregistré dans `~/.irondex/cm-cookies.json`. Ensuite, une carte se
+recote **depuis sa propre tuile** — une seconde, et c'est celle qu'on regarde.
+Il n'y a plus de « Sync » global : recoter 1 400 cartes prenait 20 minutes pour
+refaire ce qui était déjà juste.
 
-Quand l'accès Cardmarket expire, le pont le **renouvelle tout seul**, sans
-fenêtre (~1,5 s) : tu cliques Sync, ça marche. Il entretient aussi sa session
-toutes les 8 minutes pour que ça n'arrive presque jamais en pleine synchro.
+Chaque cote obtenue rejoint le **cache partagé** (table `prices`) — à condition
+que ton compte soit curateur (voir SUPABASE.md). L'iPhone la récupère ensuite
+sans rien calculer : ⌘K → « Récupérer les cotes partagées ».
 
-La commande manuelle ne sert plus que si Cloudflare exige une vérification
-humaine — l'app te le dira explicitement dans ce cas :
+Quand l'accès Cardmarket expire, le pont le **renouvelle tout seul** (~1,5 s).
+La commande manuelle ne sert que si Cloudflare exige une vérification humaine —
+l'app te le dira explicitement :
 
 ```bash
 python3 scripts/cm_price_bridge.py --login
 ```
 
-Si tu cliques Sync sans le pont, l'app refuse et te le dit — elle ne remplacera
-pas tes vrais prix français par des moyennes toutes langues sans te demander.
-
 ## Ce qui ne monte pas en ligne (et pourquoi)
 
-`.gitignore` écarte : les `*.bak`, `.DS_Store`, les dossiers de travail
-(`.redesign-backup`, `.impeccable`, `sauvegardes-recuperees`), les exports
-locaux (`milodex-sauvegarde.json`, `irondex-restauration-*.json`) et
-`cm-slugs.json` — ce dernier est un doublon de `cm-slugs.js` (2 Mo pour rien,
-l'app charge le `.js`).
+`.gitignore` écarte : les `*.bak` et `app.js.pre-supabase`, `.DS_Store`, les
+dossiers de travail (`.redesign-backup`, `.impeccable`,
+`sauvegardes-recuperees`), les exports locaux (`milodex-sauvegarde.json`,
+`irondex-restauration-*.json`), `logo-source.png` et `cm-slugs.json` — ce
+dernier est un doublon de `cm-slugs.js` (2 Mo pour rien).
 
-Ce qui monte : l'app (≈ 26 Mo, surtout les modèles 3D), et `data/` que l'app
-gère elle-même.
+`data/collection.json` et `data/prices.json` sont encore là, mais **plus rien
+ne les écrit** : ce sont les archives de l'ancienne version, et l'app ne les lit
+qu'une fois, pour proposer le rapatriement au premier login. Une fois ta
+collection vérifiée dans ton compte, tu peux les supprimer.
 
 ## Si quelque chose cloche
 
 | Symptôme | Cause la plus probable |
 |---|---|
 | Le site affiche une vieille version | version `?v=` pas montée, ou cache de l'app installée : ferme-la et réouvre-la |
-| Pastille nuage rouge | jeton expiré (401), permission Contents manquante, ou hors ligne — le message du toast le dit |
-| L'iPhone n'a pas les dernières cotes | la synchro n'a pas été relancée sur le Mac depuis |
+| L'écran de connexion s'affiche alors que j'étais connecté | session expirée, ou horloge de l'appareil fausse |
+| « Configuration incomplète » sur l'écran de connexion | `cloud-config.js` pas rempli — voir SUPABASE.md étape 4 |
+| Pastille du compte rouge | échec d'envoi : le libellé exact est dans la feuille de profil (icône du compte) |
+| Pastille du compte bleue | hors ligne — rien n'est perdu, tout part au retour du réseau |
+| Une cote ne part pas vers les autres appareils | ton compte n'est pas curateur (SUPABASE.md, dernière étape) |
 | « pont Cardmarket éteint » | le script `cm_price_bridge.py` ne tourne pas sur ce Mac |
-| Collection vide sur un appareil | jeton pas encore collé sur cet appareil, ou dépôt sans `data/collection.json` |
+| Collection vide après connexion | c'est normal sur un compte neuf ; si ce n'est pas le tien, vérifie l'adresse dans la feuille de profil |

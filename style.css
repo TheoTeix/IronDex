@@ -3193,32 +3193,41 @@ body::before{display:none}
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   COFFRE EN LIGNE — réglages du dépôt GitHub + pastille d'état
-   La pastille doit répondre à une seule question : « est-ce que c'est
-   parti ? ». Trois états lisibles sans lire (couleur + libellé au survol).
-   ═══════════════════════════════════════════════════════════════════ */
-.btn-cloud{position:relative}
-.btn-cloud::after{content:"";position:absolute;right:3px;bottom:3px;width:7px;height:7px;border-radius:50%;
-  background:var(--t3);border:1.5px solid var(--bg-1,#0b0d12);transition:background var(--flow)}
-.btn-cloud[data-state="ok"]::after{background:#3ddc97}
-.btn-cloud[data-state="pending"]::after,.btn-cloud[data-state="saving"]::after{background:#f5c344;animation:cloudPulse 1.1s ease-in-out infinite}
-.btn-cloud[data-state="error"]::after{background:#ff5c5c}
-/* « read » : la collection ARRIVE bien, seul l'envoi est en pause (jeton absent
-   ou expiré). Ce n'est pas une panne — donc pas de rouge : un bleu calme. */
-.btn-cloud[data-state="read"]::after{background:#5aa9e6}
-/* « warn » : des données locales, aucun jeton — l'appareil travaille dans le
-   vide. Ça doit se voir sans lire l'infobulle. */
-.btn-cloud[data-state="warn"]::after{background:#f5c344;animation:cloudPulse 1.8s ease-in-out infinite}
-@keyframes cloudPulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){.btn-cloud[data-state]::after{animation:none}}
+   LE COMPTE — un visage dans l'en-tête, et l'état de la synchro autour
 
-.cloud-field{display:flex;flex-direction:column;gap:6px;margin:14px 0}
-.cloud-field label{font-size:12px;font-weight:700;color:var(--t2)}
-.cloud-field label span{font-weight:500;color:var(--t3)}
-.cloud-field input{width:100%;padding:11px 13px;border-radius:12px;border:1px solid var(--line);
-  background:rgba(255,255,255,.04);color:var(--t1);font-size:14px;font-family:inherit;min-height:44px}
-.cloud-field input:focus{outline:2px solid var(--acc);outline-offset:1px}
-.cloud-row{display:grid;grid-template-columns:1fr 1fr .8fr;gap:10px}
+   Le bouton porte DEUX informations sans devenir deux boutons : au centre
+   l'avatar (à qui appartient ce coffre), autour une pastille (est-ce que
+   c'est parti ?). La couleur ne parle jamais seule — l'infobulle et la
+   feuille de profil disent la même chose en toutes lettres.
+   ═══════════════════════════════════════════════════════════════════ */
+.btn-account{position:relative;overflow:visible;padding:0}
+.acc-av{width:26px;height:26px;border-radius:50%;object-fit:cover;display:block;
+  border:1px solid var(--line-2)}
+.btn-sm .acc-av{width:22px;height:22px}
+/* Pas d'avatar (compte sans photo, ou déconnecté) : l'initiale, dans un jeton
+   de verre. Jamais une silhouette générique — elle ne dit rien de plus qu'un
+   vide et fait « gabarit ». */
+.acc-ini{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;
+  font-size:12px;font-weight:700;letter-spacing:.01em;color:var(--t2);
+  background:rgba(255,255,255,.07);border:1px solid var(--line-2)}
+.btn-sm .acc-ini{width:22px;height:22px;font-size:11px}
+.btn-account[data-on="1"] .acc-ini{color:var(--acc)}
+
+.btn-account::after{content:"";position:absolute;right:1px;bottom:1px;width:8px;height:8px;border-radius:50%;
+  background:var(--t3);border:1.5px solid var(--bg-1,#0b0d12);transition:background var(--flow)}
+.btn-account[data-sync="ok"]::after{background:#3ddc97}
+.btn-account[data-sync="pending"]::after,
+.btn-account[data-sync="saving"]::after{background:#f5c344;animation:cloudPulse 1.1s ease-in-out infinite}
+.btn-account[data-sync="error"]::after{background:#ff5c5c}
+/* « offline » : rien n'est perdu, tout part au retour du réseau. Ce n'est pas
+   une panne — donc pas de rouge : un bleu calme. */
+.btn-account[data-sync="offline"]::after{background:#5aa9e6}
+/* Déconnecté : pas de pastille du tout. Un point gris laisserait croire à un
+   état dégradé alors qu'il n'y a simplement personne. */
+.btn-account[data-sync="off"]::after{display:none}
+@keyframes cloudPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.btn-account[data-sync]::after{animation:none}}
+
 .cloud-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
 .cloud-report{margin-top:14px;padding:12px 14px;border-radius:12px;font-size:12.5px;line-height:1.5;
   background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--t2)}
@@ -3226,7 +3235,6 @@ body::before{display:none}
 .cloud-report.bad{border-color:rgba(255,92,92,.45);color:var(--t1)}
 .cloud-report code{font-size:11.5px;padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.07)}
 .spinner-sm{width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:-2px}
-@media (max-width:560px){.cloud-row{grid-template-columns:1fr}}
 
 /* ═══════════════════════════════════════════════════════════════════
    TÉLÉPHONE (≤767 px) — une app iOS, pas un site rétréci
@@ -3577,12 +3585,6 @@ body::before{display:none}
   .main{padding-bottom:calc(58px + env(safe-area-inset-bottom))}
 }
 
-/* Ce que contient VRAIMENT le dépôt : la ligne qui répond à « est-ce que c'est
-   sauvegardé ? » sans avoir à ouvrir GitHub. */
-.cloud-remote{margin-top:8px;padding:10px 14px;border-radius:12px;font-size:12.5px;line-height:1.5;
-  background:rgba(255,255,255,.03);border:1px dashed var(--line);color:var(--t2)}
-.cloud-remote span{color:var(--t3)}
-
 /* Les flèches de page du classeur sont RETIRÉES de l'écran (le classeur se
    feuillette au doigt : on glisse sur le livre, comme un vrai). Les boutons
    restent dans le DOM — `miloTurn`, les flèches du clavier et l'état
@@ -3655,3 +3657,125 @@ body::before{display:none}
 }
 
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   LA PORTE — l'écran de connexion
+
+   C'est le premier écran, et il ne demande rien : pas de champ, pas de mot de
+   passe à inventer, pas de case à cocher. Une marque, une phrase, un bouton.
+   Il est POSÉ SUR l'app plutôt qu'à sa place : l'aurore et le verre continuent
+   de vivre derrière, et entrer dans le coffre est un fondu — on ouvre une
+   porte sur une pièce déjà éclairée, on ne charge pas une seconde page.
+   ═══════════════════════════════════════════════════════════════════ */
+.auth-gate{
+  position:fixed;inset:0;z-index:var(--z-intro);
+  display:grid;place-items:center;padding:var(--s5);
+  /* Le fond est SOMBRE et flouté, pas opaque : ce qu'on devine derrière est la
+     promesse de ce qui vient. Le verre clair de .plate serait illisible ici. */
+  background:rgba(4,5,8,.72);
+  backdrop-filter:blur(22px) saturate(120%);
+  -webkit-backdrop-filter:blur(22px) saturate(120%);
+  opacity:0;visibility:hidden;
+  transition:opacity var(--dur-3) var(--ease-out),visibility 0s linear var(--dur-3);
+}
+.auth-gate.open{opacity:1;visibility:visible;transition-delay:0s}
+.auth-gate.leaving{opacity:0;visibility:visible;transition:opacity var(--dur-exit) var(--ease-in)}
+
+.auth-card{
+  width:min(420px,100%);padding:clamp(28px,4vw,40px);
+  border-radius:var(--r-xl);text-align:center;box-shadow:var(--e4);
+  /* La carte MONTE en entrant (12px, une seule fois) : assez pour qu'on sente
+     qu'elle arrive, trop peu pour qu'on la regarde arriver. */
+  transform:translateY(12px) scale(.985);
+  transition:transform var(--dur-3) var(--ease-out);
+}
+.auth-gate.open .auth-card{transform:none}
+
+.auth-mark{width:64px;height:64px;margin:0 auto var(--s4)}
+.auth-mark img{width:100%;height:100%;object-fit:contain;
+  filter:drop-shadow(0 8px 26px rgba(232,178,75,.28))}
+
+.auth-title{font-size:27px;font-weight:800;letter-spacing:-.02em;color:var(--t1);margin:0 0 10px}
+.auth-title i{font-style:normal;color:var(--acc)}
+.auth-sub{font-size:14px;line-height:1.6;color:var(--t2);margin:0 0 var(--s5);
+  max-width:32ch;margin-inline:auto}
+
+/* Le bouton Google garde ses codes (le G en couleurs, le fond clair) : c'est un
+   repère que tout le monde reconnaît, et le travestir en bouton maison ferait
+   hésiter au moment précis où il ne faut pas hésiter. */
+.auth-google{
+  position:relative;display:flex;align-items:center;justify-content:center;gap:11px;
+  width:100%;min-height:48px;padding:0 18px;border-radius:var(--pill);
+  background:#fff;color:#1f1f1f;border:1px solid rgba(0,0,0,.12);
+  font-family:inherit;font-size:14.5px;font-weight:600;letter-spacing:-.005em;cursor:pointer;
+  box-shadow:var(--e2);
+  transition:transform var(--dur-0) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),
+             filter var(--dur-1) var(--ease-out);
+}
+.auth-google:hover:not(:disabled){filter:brightness(.97);box-shadow:var(--e3)}
+.auth-google:active:not(:disabled){transform:scale(.985)}
+.auth-google:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.auth-google:disabled{cursor:default;filter:saturate(.4) brightness(.9)}
+.auth-g{display:flex;flex:none}
+/* Pendant la redirection, le libellé cède la place au rouet SANS que le bouton
+   change de taille : un bouton qui rétrécit sous le doigt se lit comme une
+   erreur. */
+.auth-google-spin{display:none;position:absolute;inset:0;place-items:center}
+.auth-google[data-busy="1"] .auth-google-label,
+.auth-google[data-busy="1"] .auth-g{opacity:0}
+.auth-google[data-busy="1"] .auth-google-spin{display:grid}
+.auth-google-spin .spinner{border-color:rgba(0,0,0,.2);border-top-color:#1f1f1f}
+
+.auth-err{margin:var(--s4) 0 0;padding:10px 13px;border-radius:12px;font-size:12.5px;line-height:1.5;
+  color:var(--t1);background:rgba(255,84,112,.12);border:1px solid rgba(255,84,112,.34);text-align:left}
+.auth-note{margin:var(--s5) 0 0;font-size:11.5px;line-height:1.55;color:var(--t3);max-width:34ch;margin-inline:auto}
+.auth-setup{margin:var(--s4) 0 0;padding:10px 13px;border-radius:12px;font-size:12px;line-height:1.5;
+  color:var(--t2);background:rgba(255,184,77,.1);border:1px solid rgba(255,184,77,.32);text-align:left}
+.auth-setup code{font-size:11px;padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.09)}
+
+/* Réduction de mouvement : les fondus restent (ils portent l'information
+   « ça a changé »), les déplacements disparaissent. */
+@media (prefers-reduced-motion:reduce){
+  .auth-card{transform:none;transition:none}
+}
+/* Téléphone : la carte prend la largeur, et respire moins haut pour rester
+   entièrement au-dessus du clavier logiciel s'il s'ouvre un jour ici. */
+@media (max-width:560px){
+  .auth-card{padding:26px 22px}
+  .auth-title{font-size:24px}
+  .auth-mark{width:56px;height:56px}
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   LA FEUILLE DE PROFIL — qui je suis, où sont mes données, comment je pars
+   ═══════════════════════════════════════════════════════════════════ */
+.acc-head{display:flex;align-items:center;gap:14px;margin-bottom:var(--s5)}
+.acc-face{width:52px;height:52px;border-radius:50%;object-fit:cover;flex:none;
+  border:1px solid var(--line-2);box-shadow:var(--e1)}
+.acc-face-ini{display:grid;place-items:center;font-size:21px;font-weight:800;color:var(--acc);
+  background:rgba(232,178,75,.12)}
+.acc-id{min-width:0}
+.acc-name{font-size:17px;font-weight:700;letter-spacing:-.01em;color:var(--t1);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-mail{font-size:12.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Une liste de définitions, pas un tableau : ce sont des faits sur un compte,
+   pas des données à comparer entre elles. */
+.acc-facts{margin:0 0 var(--s5);display:grid;gap:1px;border-radius:var(--r);overflow:hidden;
+  background:var(--line)}
+.acc-facts>div{display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+  padding:11px 14px;background:var(--v-2)}
+.acc-facts dt{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--t3);flex:none}
+.acc-facts dd{margin:0;font-size:13px;color:var(--t2);text-align:right;line-height:1.5}
+
+/* La déconnexion est SÉPARÉE du reste par un filet : c'est le seul geste de
+   cette feuille qui fait sortir, il ne doit pas se confondre avec les trois
+   boutons de synchro juste au-dessus. */
+.acc-out{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  margin-top:var(--s5);padding-top:var(--s4);border-top:1px solid var(--line)}
+
+.migrate-list{list-style:none;margin:var(--s4) 0;padding:0;display:grid;gap:1px;
+  border-radius:var(--r);overflow:hidden;background:var(--line)}
+.migrate-list li{padding:9px 14px;background:var(--v-2);font-size:13px;color:var(--t2)}
+.migrate-list b{color:var(--t1);font-weight:700}

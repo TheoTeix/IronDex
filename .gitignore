@@ -3,6 +3,7 @@
 
 # ── Sauvegardes de travail (restent en local, inutiles en ligne)
 *.bak
+app.js.pre-supabase
 .redesign-backup/
 .impeccable/
 sauvegardes-recuperees/

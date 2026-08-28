@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui46">
+  <link rel="stylesheet" href="style.css?v=ui47">
 </head>
 <body>
 
@@ -206,11 +206,15 @@
           title="Chercher les nouvelles séries" aria-label="Chercher les nouvelles séries">
           <svg class="refresh-ico" viewBox="0 0 24 24" fill="none" width="15" height="15" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <!-- Coffre en ligne : la collection est commitée dans le dépôt GitHub.
-             La pastille dit l'état de l'envoi ; le clic ouvre les réglages. -->
-        <button class="btn btn-ghost btn-sm btn-icon btn-cloud" id="cloud-dot" data-state="off"
-          onclick="openCloud()" title="Coffre en ligne" aria-label="Coffre en ligne">
-          <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M7 18h9.5a3.5 3.5 0 0 0 .4-6.98A5 5 0 0 0 7.6 9.2 3.9 3.9 0 0 0 7 18Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 15.5v-5m0 0-1.8 1.9M12 10.5l1.8 1.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <!-- LE COMPTE. Un seul bouton pour deux informations, et c'est
+             délibéré : le visage dit À QUI appartient ce qu'on regarde, et
+             l'anneau qui l'entoure dit où en est la synchronisation. Deux
+             icônes séparées auraient fait de l'en-tête une barre d'outils —
+             ce que le repli téléphone cherche justement à éviter.
+             Peint par paintAccountButton(), coloré par vaultPaintStatus(). -->
+        <button class="btn btn-ghost btn-sm btn-icon btn-account" id="account-btn" data-sync="off"
+          onclick="openAccount()" title="Ton compte" aria-label="Ton compte">
+          <span class="acc-ini" aria-hidden="true">?</span>
         </button>
         <!-- Enregistrement AUTOMATIQUE : aucun bouton de sauvegarde. La pastille
              pulse à chaque écriture ; seul un ÉCHEC parle (toast).
@@ -437,6 +441,10 @@
      qu'à l'app ouverte en file://, et app.js l'injecte alors lui-même
      (voir ensureModelData). En https, les .glb sont chargés directement ;
      sur téléphone, aucune 3D d'ambiance donc aucun des deux. -->
-<script src="app.js?v=ui46"></script>
+<!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
+     du démarrage est de relire la session, et il lui faut ces deux clés.
+     La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
+<script src="cloud-config.js?v=ui47"></script>
+<script src="app.js?v=ui47"></script>
 </body>
 </html>
