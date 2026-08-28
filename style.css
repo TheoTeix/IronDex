@@ -730,7 +730,12 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 :root[data-mobile="on"] #view-home,
 :root[data-mobile="on"] #view-wishlists,
 :root[data-mobile="on"] #view-wishlist-detail,
-:root[data-mobile="on"] #view-invest{
+:root[data-mobile="on"] #view-invest,
+/* Le profil est une colonne comme les autres : sans cette règle il n'avait ni
+   hauteur, ni défilement, ni marges sous les barres flottantes — son contenu
+   s'étalait librement et son bas disparaissait sous la tab bar, sans aucun
+   moyen d'aller le chercher. */
+:root[data-mobile="on"] #view-profile{
   height:100%;overflow-y:auto;overflow-x:hidden;
   /* `none` : la page ne rebondit pas en bout de course et n'entraîne pas la
      bande — c'est aussi ce qui empêche un geste vertical de faire partir le
@@ -745,7 +750,8 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    push/pop (il n'est pas dans cette liste). */
 :root[data-mobile="on"] #view-home,
 :root[data-mobile="on"] #view-wishlists,
-:root[data-mobile="on"] #view-invest{animation:none}
+:root[data-mobile="on"] #view-invest,
+:root[data-mobile="on"] #view-profile{animation:none}
 /* L'accueil est une colonne flex, et il l'est en permanence maintenant.
    `flex:none` sur ses enfants est INDISPENSABLE depuis qu'il défile lui-même :
    dans une colonne flex de hauteur fixe, un enfant se laisse COMPRIMER pour
