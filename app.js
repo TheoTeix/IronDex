@@ -1083,39 +1083,62 @@ async function vaultPullPrices() {
 // la cote reste dans son cache local, elle n'alimente juste pas le cache
 // partagé. C'est voulu — sans ça, n'importe quel compte pourrait fausser les
 // cotes de tout le monde.
+// Renvoie { sent, reason } plutôt qu'un nombre : « 0 » ne disait pas s'il n'y
+// avait rien à envoyer, si le compte n'est pas curateur, ou si le réseau est
+// tombé — trois situations qui appellent trois messages différents.
 async function vaultPushPrices() {
-  if (!vaultOn() || !_priceDirty.size) return 0;
+  if (!vaultOn()) return { sent: 0, reason: 'hors-compte' };
+  if (!_priceDirty.size) return { sent: 0, reason: 'rien' };
   const ids = Array.from(_priceDirty);
   const rows = [];
   for (const id of ids) { const v = priceCache[id]; if (v) rows.push({ card_id: id, value: v }); }
   _priceDirty.clear();
-  if (!rows.length) return 0;
+  if (!rows.length) return { sent: 0, reason: 'rien' };
   try {
     const sb = await sbClient();
     for (let i = 0; i < rows.length; i += 400) {
       const { error } = await sb.from('prices').upsert(rows.slice(i, i + 400), { onConflict: 'card_id' });
       if (error) throw error;
     }
-    return rows.length;
+    return { sent: rows.length, reason: 'ok' };
   } catch (e) {
     // Compte non curateur : c'est le fonctionnement prévu, pas une panne. La
     // cote reste dans le cache local, elle n'alimente juste pas le partagé — et
     // il ne faut SURTOUT pas la remettre en file, sinon chaque enregistrement
     // relancerait un envoi voué à échouer.
-    if (/row-level security/i.test((e && e.message) || '')) return 0;
+    if (/row-level security/i.test((e && e.message) || '')) return { sent: 0, reason: 'pas-curateur' };
     // Panne réseau, en revanche : ces cotes n'ont pas été recalculées pour rien,
     // et rien ne les recalculera. On les remet en file pour le prochain envoi.
     for (const id of ids) _priceDirty.add(id);
     console.warn('[coffre] envoi cotes', e);
-    return 0;
+    return { sent: 0, reason: vaultErrText(e) };
   }
 }
 function markPriceDirty(cardId) { if (cardId) _priceDirty.add(cardId); }
+// Les cotes déjà en cache AVANT les comptes n'ont jamais transité par le cache
+// partagé : elles n'ont pas été « recotées », donc rien ne les a marquées. Sans
+// ce geste, l'iPhone ne recevrait que les cotes refaites depuis la bascule, et
+// les 1 500 déjà calculées resteraient prisonnières du Mac qui les a produites.
+// Une fois publiées, la table partagée les garde : ce bouton ne sert qu'une fois.
+async function vaultPublishAllPrices() {
+  let n = 0;
+  for (const k in priceCache) if (priceCache[k]) { _priceDirty.add(k); n++; }
+  if (!n) return { sent: 0, reason: 'rien' };
+  return vaultPushPrices();
+}
 
 // ── MIGRATION — une seule fois, à la première connexion ────────────
-// Deux sources possibles pour d'anciennes données : le cache de l'app
-// mono-utilisateur sur CET appareil (IndexedDB, clé nue `collection`), et le
-// fichier que l'ancienne version commitait dans le dépôt.
+// UNE SEULE SOURCE, ET C'EST L'APPAREIL. Le cache de l'app mono-utilisateur,
+// laissé sur cette machine par la version d'avant les comptes.
+//
+// Il y en avait une deuxième, et elle était fausse : `data/collection.json`,
+// le fichier que l'ancienne version commitait dans le dépôt. Elle a servi à
+// rapatrier la première collection, puis elle est devenue une FUITE — le dépôt
+// est public, donc n'importe qui créant un compte se voyait proposer la
+// collection de quelqu'un d'autre. Une donnée trouvée sur l'appareil de
+// quelqu'un lui appartient ; une donnée trouvée sur un serveur public
+// n'appartient à personne en particulier, et ne doit être offerte à personne.
+//
 // Le drapeau est GLOBAL à l'appareil, pas propre au compte, et c'est voulu :
 // les données d'avant les comptes n'appartiennent qu'à une personne. Une fois
 // qu'un compte les a rapatriées, les reproposer au compte suivant qui se
@@ -1137,11 +1160,7 @@ async function findLegacyData() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) { const d = JSON.parse(raw); if (snapWeight(d)) return { src: 'cet appareil', data: d }; }
   } catch {}
-  // 3) le fichier laissé dans le dépôt par l'ancienne version
-  try {
-    const r = await fetchTimeout('data/collection.json?t=' + Date.now(), 8000);
-    if (r.ok) { const d = await r.json(); if (snapWeight(d)) return { src: 'le dépôt', data: d }; }
-  } catch {}
+  // Et rien d'autre : surtout pas le dépôt. Voir la note ci-dessus.
   return null;
 }
 async function vaultMaybeMigrate() {
@@ -1384,6 +1403,7 @@ function openAccount() {
       <button class="btn btn-ghost" onclick="accountPull()">Relire mon compte</button>
       <button class="btn btn-ghost" onclick="accountPush()">Envoyer maintenant</button>
       <button class="btn btn-ghost" onclick="exportData()">Télécharger une copie</button>
+      <button class="btn btn-ghost" onclick="accountPublishPrices()">Publier mes cotes</button>
     </div>
     <div class="acc-out">
       <button class="btn btn-ghost" onclick="vaultSignOut(false)">Se déconnecter</button>
@@ -1409,6 +1429,17 @@ async function accountPull() {
   accountReport(changed
     ? `Relu : ${state.wishlists.length} wishlists · ${state.investCards.length} cartes · ${state.sealed.length} scellés.`
     : 'Rien de plus récent dans ton compte — cet appareil est déjà à jour.', 'good');
+}
+// « Publier mes cotes » : verse le cache local dans la table partagée, pour que
+// les autres appareils du compte n'aient rien à recalculer.
+async function accountPublishPrices() {
+  const n = Object.keys(priceCache).filter(k => priceCache[k]).length;
+  if (!n) return accountReport('Aucune cote en cache sur cet appareil.', 'bad');
+  accountReport(`<span class="spinner spinner-sm"></span> Publication de ${n.toLocaleString('fr-FR')} cotes…`);
+  const r = await vaultPublishAllPrices();
+  if (r.sent) return accountReport(`${r.sent.toLocaleString('fr-FR')} cotes publiées. Tes autres appareils les recevront à leur prochaine ouverture.`, 'good');
+  if (r.reason === 'pas-curateur') return accountReport('Ce compte n\'est pas curateur : il ne peut pas écrire dans le cache de cotes partagé. Voir la dernière étape de SUPABASE.md.', 'bad');
+  accountReport(`Échec : ${esc(r.reason)}`, 'bad');
 }
 async function accountSignOutWipe() {
   if (!confirm('Effacer la copie hors ligne sur CET appareil et se déconnecter ?\n\nTon compte garde tout : tu retrouveras ta collection en te reconnectant.')) return;
