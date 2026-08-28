@@ -1313,7 +1313,11 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    bandes noires (les scans n'ont pas tous exactement le ratio 2,5/3,5). */
 .card-thumb-imgwrap img{width:100%;height:100%;object-fit:cover;background:none;cursor:pointer;
   transition:opacity var(--dur-2) var(--ease-out),filter var(--dur-2) var(--ease-out)}
-.card-thumb:hover .card-thumb-imgwrap{transform:translateY(-5px);
+/* PAS DE DÉPLACEMENT au survol. Une grille de cartes qui se soulèvent une à
+   une sous le curseur, c'est un tapis qui ondule : le regard suit le mouvement
+   au lieu de suivre les cartes. Le survol se dit maintenant par l'arête —
+   l'accent prend le liseré et l'ombre s'approfondit. Rien ne bouge. */
+.card-thumb:hover .card-thumb-imgwrap{
   border-color:color-mix(in srgb,var(--tc) 46%,transparent);
   box-shadow:var(--e3),0 0 0 1px color-mix(in srgb,var(--tc) 34%,transparent)}
 /* DÉMARCATION obtenue / non obtenue : la carte qu'on possède est en COULEUR,
@@ -1322,6 +1326,13 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    éteignait légèrement les cartes obtenues. La couleur n'informe jamais seule :
    la coche verte et la pastille « Obtenue » restent là. */
 .card-thumb .card-thumb-imgwrap img{filter:grayscale(.95) brightness(.78) contrast(.95)}
+/* …SAUF dans la Collection. Le gris répond à la question « est-ce que je l'ai
+   déjà ? », qui n'a de sens que dans une wishlist. Dans la Collection la
+   réponse est oui pour tout : les désaturer revenait à afficher un coffre
+   éteint. `.mine` les rend à leur couleur, et leur donne le liseré d'accent au
+   repos plutôt qu'au seul survol. */
+.card-thumb.mine .card-thumb-imgwrap img{filter:none;opacity:1}
+.card-thumb.mine .card-thumb-imgwrap{border-color:color-mix(in srgb,var(--tc) 26%,transparent)}
 .card-thumb.owned .card-thumb-imgwrap{border-color:color-mix(in srgb,var(--ok) 50%,transparent)}
 .card-thumb.owned .card-thumb-imgwrap img{filter:none;opacity:1}
 .owned-toggle{
@@ -3814,27 +3825,46 @@ body::before{display:none}
 /* ═══════════════════════════════════════════════════════════════════
    LA PAGE DE PROFIL
 
-   Une page, pas un panneau de réglages. Elle répond à quatre questions dans
-   cet ordre — qui je suis, ce que contient mon coffre, où en est la
-   synchronisation, comment je pars — et à rien d'autre.
+   Une carte de visite, pas un tableau de bord. Elle dit qui tu es, ce que
+   vaut ton coffre, et montre tes plus belles pièces. Tout l'outillage —
+   synchro, sauvegarde, effacement — est REPLIÉ : ce sont des outils, on les
+   sort quand on en a besoin.
 
-   Le portrait est la seule image de la page, donc c'est lui le sujet : il est
-   grand, centré, et l'anneau qui l'entoure porte l'état de la synchro. La
-   couleur ne parle jamais seule : la même information est écrite en toutes
-   lettres dans la carte « Synchronisation » plus bas.
+   La bannière est une CARTE, pas un fichier téléversé. Héberger des images
+   demanderait un bucket, des règles d'accès et de la modération, pour un
+   décor. La plus belle pièce du coffre fait un meilleur fond, et c'est déjà
+   une notion du produit.
    ═══════════════════════════════════════════════════════════════════ */
 .pf-head{display:flex;align-items:center;min-height:44px;margin-bottom:var(--s3)}
 
-.pf-identity{display:grid;justify-items:center;text-align:center;
-  padding:var(--s5) 0 var(--s6);position:relative}
-.pf-portrait{position:relative;width:112px;height:112px;margin-bottom:var(--s4)}
-.pf-face{width:112px;height:112px;border-radius:50%;object-fit:cover;display:block;
-  border:1px solid var(--line-2);box-shadow:var(--e3)}
-.pf-face-ini{display:grid;place-items:center;font-size:44px;font-weight:800;color:var(--acc);
-  background:rgba(232,178,75,.12)}
-/* L'anneau est POSÉ AUTOUR du portrait, pas dessus : un liseré sur une photo
-   se lit comme un cadre, un anneau détaché se lit comme un état. */
-.pf-ring{position:absolute;inset:-7px;border-radius:50%;border:2px solid transparent;
+.pf-id{margin-bottom:var(--s5)}
+.pf-banner{
+  position:relative;height:clamp(120px,18vw,180px);border-radius:var(--r-xl) var(--r-xl) 0 0;
+  overflow:hidden;background:var(--v-2);border:1px solid var(--line);border-bottom:0}
+.pf-banner-img{
+  width:100%;height:100%;object-fit:cover;object-position:center 32%;
+  /* Fortement flouté et agrandi : c'est une TEXTURE, pas une illustration. Nette,
+     elle entrerait en concurrence avec le portrait et le filmstrip plus bas. */
+  filter:blur(26px) saturate(150%) brightness(.62);transform:scale(1.35)}
+.pf-banner-veil{position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(6,7,10,.15),rgba(6,7,10,.86))}
+
+/* Le portrait CHEVAUCHE la bannière : c'est ce qui lie les deux en un seul
+   objet au lieu d'empiler deux blocs. */
+.pf-idbar{
+  display:flex;align-items:flex-end;gap:16px;
+  padding:0 clamp(16px,2.2vw,24px) clamp(16px,2.2vw,22px);
+  border-radius:0 0 var(--r-xl) var(--r-xl);
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.018));
+  border:1px solid var(--line);border-top:0}
+.pf-portrait{position:relative;width:96px;height:96px;margin-top:-40px;flex:none}
+.pf-face{width:96px;height:96px;border-radius:50%;object-fit:cover;display:block;
+  border:3px solid var(--v-0);box-shadow:var(--e3)}
+.pf-face-ini{display:grid;place-items:center;font-size:38px;font-weight:800;color:var(--acc);
+  background:#12151d}
+/* L'anneau est POSÉ AUTOUR du portrait : un liseré sur la photo se lirait
+   comme un cadre, un anneau détaché se lit comme un état. */
+.pf-ring{position:absolute;inset:-6px;border-radius:50%;border:2px solid transparent;
   transition:border-color var(--flow)}
 .pf-ring[data-sync="ok"]{border-color:rgba(61,220,151,.55)}
 .pf-ring[data-sync="pending"],
@@ -3843,37 +3873,44 @@ body::before{display:none}
 .pf-ring[data-sync="offline"]{border-color:rgba(90,169,230,.55)}
 @media (prefers-reduced-motion:reduce){.pf-ring[data-sync]{animation:none}}
 
-.pf-name{font-size:clamp(24px,3vw,31px);font-weight:800;letter-spacing:-.02em;color:var(--t1);
-  margin:0;line-height:1.2;max-width:20ch;overflow-wrap:anywhere}
-/* Le crayon suit le pseudo au lieu d'être ancré dans un coin : on modifie ce
-   qu'on regarde, la cible est à côté du mot. */
-/* TOUJOURS visible ici, contrairement aux crayons de liste qui n'apparaissent
-   qu'au survol de leur ligne. Deux raisons : c'est la seule chose modifiable de
-   la page, donc l'affordance principale ; et sur téléphone il n'y a pas de
-   survol — un bouton qui n'apparaît qu'au hover n'y existe tout simplement pas.
-   La cible fait 44 px, comme toute cible tactile du projet. */
-.pf-rename{position:static;opacity:1;margin-top:var(--s2);
-  width:44px;height:44px;color:var(--t2);
+.pf-idtext{min-width:0;flex:1;padding-bottom:2px}
+.pf-name{font-size:clamp(21px,2.6vw,27px);font-weight:800;letter-spacing:-.02em;color:var(--t1);
+  margin:0;line-height:1.15;overflow-wrap:anywhere}
+.pf-since{margin:4px 0 0;font-size:12.5px;color:var(--t3)}
+/* Toujours visible : c'est la seule chose modifiable de la page, et sur
+   téléphone il n'y a pas de survol — un bouton qui n'apparaît qu'au hover n'y
+   existe pas. Cible de 44 px. */
+.pf-rename{position:static;opacity:1;flex:none;width:44px;height:44px;color:var(--t2);
   background:rgba(255,255,255,.05);border:1px solid var(--line)}
 .pf-rename:hover{background:rgba(255,255,255,.1);color:var(--t1)}
-.pf-mail{margin:var(--s3) 0 0;font-size:13.5px;color:var(--t2)}
-.pf-since{margin:5px 0 0;font-size:12px;color:var(--t3)}
 
-/* Quatre mesures, jamais une de plus. Même matériau que la bande de l'accueil
-   pour qu'on reconnaisse « des chiffres du coffre » d'un écran à l'autre. */
-.pf-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+/* Deux chiffres, deux cellules. */
+.pf-duo{display:grid;grid-template-columns:1fr 1fr;
   border-radius:var(--r-lg);background:rgba(255,255,255,.035);
-  border:1px solid var(--line);overflow:hidden;margin-bottom:var(--s5)}
-.pf-stat{display:grid;gap:3px;padding:clamp(16px,2vw,22px);
-  border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
-.pf-stat-v{font-size:clamp(19px,2.2vw,24px);font-weight:700;letter-spacing:-.02em;color:var(--t1);
+  border:1px solid var(--line);overflow:hidden;margin-bottom:var(--s6)}
+.pf-duo-cell{display:grid;gap:4px;padding:clamp(16px,2.2vw,24px);
+  border-right:1px solid var(--line)}
+.pf-duo-cell:last-child{border-right:0}
+.pf-duo-v{font-size:clamp(21px,2.8vw,29px);font-weight:700;letter-spacing:-.02em;color:var(--t1);
   font-variant-numeric:tabular-nums}
-.pf-stat-k{font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--t3)}
-.pf-stat-sub{font-size:12px;color:var(--t2)}
+.pf-duo-k{font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--t3)}
 
-.pf-card{padding:clamp(18px,2.2vw,26px);margin-bottom:var(--s4);border-radius:var(--r-lg)}
-.pf-card-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.pf-card-title{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--t1);margin:0}
+/* L'atelier, replié. */
+.pf-tools{margin-top:var(--s6)}
+.pf-fold{border-radius:var(--r-lg);background:rgba(255,255,255,.035);
+  border:1px solid var(--line);overflow:hidden}
+.pf-fold-sum{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:16px 18px;cursor:pointer;list-style:none;min-height:44px}
+.pf-fold-sum::-webkit-details-marker{display:none}
+.pf-fold-sum:hover{background:rgba(255,255,255,.03)}
+.pf-fold-title{font-size:14.5px;font-weight:700;letter-spacing:-.01em;color:var(--t1)}
+.pf-fold-state{display:flex;align-items:center;gap:8px;margin-left:auto;
+  font-size:12.5px;color:var(--t3)}
+.pf-fold-chev{display:flex;color:var(--t3);transform:rotate(-90deg);
+  transition:transform var(--dur-1) var(--ease-out)}
+.pf-fold-chev svg{width:16px;height:16px}
+.pf-fold[open] .pf-fold-chev{transform:rotate(90deg)}
+.pf-fold-body{padding:0 18px 18px;border-top:1px solid var(--line);padding-top:16px}
 .pf-sync-dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--t3);
   transition:background var(--flow)}
 .pf-sync-dot[data-sync="ok"]{background:#3ddc97}
@@ -3882,22 +3919,22 @@ body::before{display:none}
 .pf-sync-dot[data-sync="error"]{background:#ff5c5c}
 .pf-sync-dot[data-sync="offline"]{background:#5aa9e6}
 @media (prefers-reduced-motion:reduce){.pf-sync-dot[data-sync]{animation:none}}
+.pf-note{margin:0 0 10px;font-size:12.5px;line-height:1.6;color:var(--t3)}
+.pf-actions{display:flex;flex-wrap:wrap;gap:9px;margin:var(--s4) 0}
 
-.pf-line{margin:var(--s3) 0 0;font-size:14px;color:var(--t1)}
-.pf-note{margin:var(--s3) 0 0;font-size:12.5px;line-height:1.6;color:var(--t3)}
-.pf-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:var(--s4)}
-.pf-exit{border-color:rgba(255,84,112,.16)}
-.pf-version{margin:var(--s4) 0 0;font-size:11.5px;color:var(--t3);
-  font-variant-numeric:tabular-nums}
+/* Seule sur sa ligne, tout en bas : on ne se déconnecte pas par mégarde en
+   visant le bouton d'à côté. */
+.pf-signout{display:flex;justify-content:center;
+  margin:var(--s6) 0 var(--s5);padding-top:var(--s5);border-top:1px solid var(--line)}
+.pf-signout .btn{min-width:220px;justify-content:center}
 
-/* Téléphone : le portrait perd un peu de sa taille pour que le pseudo et les
-   premiers chiffres tiennent dans le même écran, sans défilement. */
 @media (max-width:767px){
-  .pf-identity{padding:var(--s4) 0 var(--s5)}
-  .pf-portrait,.pf-face{width:92px;height:92px}
-  .pf-face-ini{font-size:36px}
-  .pf-stats{grid-template-columns:repeat(2,1fr)}
+  .pf-idbar{gap:12px;padding:0 16px 16px}
+  .pf-portrait,.pf-face{width:78px;height:78px}
+  .pf-portrait{margin-top:-32px}
+  .pf-face-ini{font-size:30px}
   .pf-actions .btn{flex:1 1 auto}
+  .pf-signout .btn{width:100%}
 }
 
 /* ── Pastille « ×N » d'une vignette de collection ───────────────────

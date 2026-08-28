@@ -1582,92 +1582,115 @@ function renderProfile() {
 
   const av = vaultAvatar();
   const name = vaultDisplayName();
-  const cards = state.investCards.reduce((a, p) => a + Math.max(1, Number(p.qty) || 1), 0);
-  const value = (typeof cardsTotalValue === 'function') ? cardsTotalValue() : 0;
-  const wishLeft = (state.wishlists || []).reduce((a, w) => a + wishlistRemainingValue(w), 0);
+  const entries = ownedCardEntries();
+  const strip = entries.filter(e => e.value > 0).slice(0, 10);
+  const copies = entries.reduce((a, e) => a + e.qty, 0);
+  const value = entries.reduce((a, e) => a + e.value, 0);
   const since = (_profile && _profile.created_at) ? new Date(_profile.created_at) : null;
+  // LA BANNIÈRE EST UNE CARTE, pas un fichier à téléverser. Héberger des images
+  // demanderait un bucket, des règles d'accès et de la modération, pour un
+  // décor. La plus belle pièce du coffre fait un bien meilleur fond — et c'est
+  // déjà une notion du produit : la pièce maîtresse choisie sur l'accueil,
+  // sinon la carte la mieux cotée.
+  const heroF = resolveHero();
+  const banner = (heroF && heroF.obj && heroF.obj.image) || (strip[0] && strip[0].image) || '';
 
   el.innerHTML = `
     <div class="pf-head">
       <button class="cardser-back" onclick="navigate('home')" title="Retour au coffre" aria-label="Retour au coffre">${ICO.left}</button>
     </div>
 
-    <!-- ── L'IDENTITÉ ────────────────────────────────────────────────
-         Le portrait est grand et rond, le pseudo est le seul titre de la
-         page. L'adresse e-mail passe en dessous, en gris : elle identifie
-         le compte, elle ne le nomme pas. -->
-    <section class="pf-identity reveal" style="--i:0">
-      <div class="pf-portrait">
-        ${av
-          ? `<img class="pf-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
-          : `<span class="pf-face pf-face-ini">${esc(name.charAt(0).toUpperCase())}</span>`}
-        <span class="pf-ring" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
+    <!-- ── IDENTITÉ ─────────────────────────────────────────────────
+         Bannière, portrait posé dessus, pseudo, date d'ouverture. Rien
+         d'autre : c'est une carte de visite, pas un tableau de bord. -->
+    <section class="pf-id reveal" style="--i:0">
+      <div class="pf-banner">
+        ${banner ? `<img class="pf-banner-img" src="${IMG(banner)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
+        <span class="pf-banner-veil" aria-hidden="true"></span>
       </div>
-      <h1 class="pf-name" id="pf-name">${esc(name)}</h1>
-      <button class="title-edit-btn pf-rename" onclick="openRenamePseudo()"
-        title="Changer de pseudo" aria-label="Changer de pseudo">${ICO.edit}</button>
-      <p class="pf-mail">${esc(vaultEmail())}</p>
-      <p class="pf-since">${since ? 'Coffre ouvert le ' + since.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</p>
-    </section>
-
-    <!-- ── CE QUE CONTIENT LE COFFRE ─────────────────────────────────
-         Quatre mesures, jamais une de plus : ce qu'il vaut, ce qu'il
-         contient, ce qu'il reste à trouver, et combien de cotes le
-         soutiennent. -->
-    <section class="pf-stats reveal" style="--i:1">
-      <div class="pf-stat">
-        <span class="pf-stat-v">${fmt(value)}</span>
-        <span class="pf-stat-k">Valeur du coffre</span>
-      </div>
-      <div class="pf-stat">
-        <span class="pf-stat-v">${cards.toLocaleString('fr-FR')}</span>
-        <span class="pf-stat-k">Cartes</span>
-        <span class="pf-stat-sub">${state.investCards.length.toLocaleString('fr-FR')} références</span>
-      </div>
-      <div class="pf-stat">
-        <span class="pf-stat-v">${state.wishlists.length}</span>
-        <span class="pf-stat-k">Wishlists</span>
-        <span class="pf-stat-sub">${wishLeft > 0 ? fmt(wishLeft) + ' à trouver' : (state.wishlists.length ? 'tout est trouvé' : 'aucune liste')}</span>
+      <div class="pf-idbar">
+        <div class="pf-portrait">
+          ${av
+            ? `<img class="pf-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
+            : `<span class="pf-face pf-face-ini">${esc(name.charAt(0).toUpperCase())}</span>`}
+          <span class="pf-ring" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
+        </div>
+        <div class="pf-idtext">
+          <h1 class="pf-name" id="pf-name">${esc(name)}</h1>
+          <p class="pf-since">${since
+            ? 'Coffre ouvert le ' + since.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+            : esc(vaultEmail())}</p>
+        </div>
+        <button class="title-edit-btn pf-rename" onclick="openRenamePseudo()"
+          title="Changer de pseudo" aria-label="Changer de pseudo">${ICO.edit}</button>
       </div>
     </section>
 
-    <!-- ── LA SYNCHRONISATION ────────────────────────────────────────
-         Une phrase en toutes lettres, parce que la pastille de la barre
-         haute dit la couleur mais jamais la raison. -->
-    <section class="pf-card plate reveal" style="--i:2">
-      <div class="pf-card-top">
-        <h2 class="pf-card-title">Synchronisation</h2>
-        <span class="pf-sync-dot" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span>
+    <!-- ── DEUX CHIFFRES ────────────────────────────────────────────
+         Ce que vaut le coffre, ce qu'il contient. Pas un de plus. -->
+    <section class="pf-duo reveal" style="--i:1">
+      <div class="pf-duo-cell">
+        <span class="pf-duo-v">${fmt(value)}</span>
+        <span class="pf-duo-k">Valeur de la collection</span>
       </div>
-      <p class="pf-line" id="account-sync-line">${esc(vaultStatusLine())}</p>
-      <p class="pf-note">Temps réel : <span id="pf-rt">${esc(rtLabel())}</span></p>
-      <p class="pf-note">Tes données vivent dans ta ligne à toi. La base refuse au niveau du moteur de les servir à quelqu'un d'autre : te connecter sur un autre appareil suffit à les y retrouver, et personne d'autre ne peut les lire.</p>
-      <div class="pf-actions">
-        <button class="btn btn-ghost btn-sm" onclick="accountPull()">Relire mon compte</button>
-        <button class="btn btn-ghost btn-sm" onclick="accountPush()">Envoyer maintenant</button>
-        <button class="btn btn-ghost btn-sm" onclick="accountPublishPrices()">Publier mes cotes</button>
+      <div class="pf-duo-cell">
+        <span class="pf-duo-v">${copies.toLocaleString('fr-FR')}</span>
+        <span class="pf-duo-k">Cartes</span>
       </div>
-      <div id="account-report" class="cloud-report" hidden></div>
     </section>
 
-    <!-- ── LA SORTIE ─────────────────────────────────────────────────
-         Séparée du reste : c'est le seul geste de la page qui fait
-         quitter, il ne doit pas voisiner avec les boutons de synchro. -->
-    <section class="pf-card plate pf-exit reveal" style="--i:3">
-      <h2 class="pf-card-title">Cet appareil</h2>
-      <p class="pf-note">« Effacer cet appareil » ne touche que la copie hors ligne d'ici — ton compte garde tout. C'est le geste à faire sur un ordinateur qui n'est pas le tien.</p>
-      <div class="pf-actions">
-        <button class="btn btn-ghost btn-sm" onclick="exportData()">Télécharger une copie</button>
-        <button class="btn btn-ghost btn-sm" onclick="vaultSignOut(false)">Se déconnecter</button>
-        <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
+    ${strip.length ? `
+    <section class="reveal" style="--i:2">
+      <div class="ed-head">
+        <div>
+          <h2 class="ed-title">Tes plus belles pièces</h2>
+          <div class="ed-sub">${strip.length} carte${strip.length > 1 ? 's' : ''} · la plus chère en premier</div>
+        </div>
+        <div class="strip-nav">
+          <button class="strip-btn" aria-label="Cartes précédentes" onclick="railScroll('profile-rail',-1)">${ICO.left}</button>
+          <button class="strip-btn" aria-label="Cartes suivantes" onclick="railScroll('profile-rail',1)">${ICO.right}</button>
+        </div>
       </div>
-      <p class="pf-version">Version ${esc(appVersion())}</p>
-    </section>`;
+      <div class="strip"><div class="strip-track" id="profile-rail">${strip.map((e, i) => renderTopCardTile(e, i)).join('')}</div></div>
+    </section>` : ''}
+
+    <!-- ── L'ATELIER ────────────────────────────────────────────────
+         Tout ce qui touche au compte et à la synchronisation, replié.
+         Ce sont des outils : on les ouvre quand on en a besoin, ils n'ont
+         pas à occuper la page le reste du temps. -->
+    <section class="pf-tools reveal" style="--i:3">
+      <details class="pf-fold">
+        <summary class="pf-fold-sum">
+          <span class="pf-fold-title">Compte et synchronisation</span>
+          <span class="pf-fold-state"><span class="pf-sync-dot" data-sync="${esc(_vaultStatus)}" aria-hidden="true"></span><span id="account-sync-line">${esc(vaultStatusLine())}</span></span>
+          <span class="pf-fold-chev" aria-hidden="true">${ICO.left}</span>
+        </summary>
+        <div class="pf-fold-body">
+          <p class="pf-note">Temps réel : <span id="pf-rt">${esc(rtLabel())}</span></p>
+          <p class="pf-note">${esc(vaultEmail())} · version ${esc(appVersion())}</p>
+          <div class="pf-actions">
+            <button class="btn btn-ghost btn-sm" onclick="accountPull()">Relire mon compte</button>
+            <button class="btn btn-ghost btn-sm" onclick="accountPush()">Envoyer maintenant</button>
+            <button class="btn btn-ghost btn-sm" onclick="accountPublishPrices()">Publier mes cotes</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportData()">Télécharger une copie</button>
+            <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
+          </div>
+          <p class="pf-note">« Effacer cet appareil » ne touche que la copie hors ligne d'ici — ton compte garde tout.</p>
+          <div id="account-report" class="cloud-report" hidden></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ── LA SORTIE ────────────────────────────────────────────────
+         Tout en bas, seule sur sa ligne : on ne se déconnecte pas par
+         mégarde en visant le bouton d'à côté. -->
+    <div class="pf-signout">
+      <button class="btn btn-ghost" onclick="vaultSignOut(false)">Se déconnecter</button>
+    </div>`;
 
   // Une vue rendue à la volée doit RÉARMER les deux moteurs d'ambiance : les
   // sections `.reveal` naissent à opacité 0 et attendent l'observateur, et le
   // spotlight ne suit le curseur que sur les surfaces qu'on lui a présentées.
-  // Sans ça la page est bien dans le DOM, mais invisible.
   setTimeout(() => { attachSpotlights(el); attachReveals(el); }, 0);
 }
 
@@ -8982,7 +9005,7 @@ function investCardThumbHTML(p, i) {
   // n'existe pas : on retombe sur l'agrandissement du visuel.
   const open = cid ? `openCardDetail('${esc(cid)}')` : `openInvestCardPreview('${p.id}')`;
   return `
-    <div class="card-thumb" data-card="${p.id}"
+    <div class="card-thumb mine" data-card="${p.id}"
       style="animation-delay:${Math.min(i * 26, 340)}ms${tc ? `;--tc:${tc}` : ''}"${tc ? '' : ` data-cc="${esc(cid)}"`}>
       <div class="card-thumb-imgwrap">
         <span class="thumb-qty" id="mult-${p.id}"${qty > 1 ? '' : ' hidden'}>×${qty}</span>
