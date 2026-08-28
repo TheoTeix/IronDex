@@ -24,5 +24,5 @@ window.IRONDEX_SUPABASE = {
   //  · la nouvelle « Publishable key », qui commence par 'sb_publishable_'
   //  · l'ancienne « anon public », un long jeton qui commence par 'eyJ'
   //    (onglet « Legacy API keys » de la même page)
-  anonKey: '',
+  anonKey: 'sb_publishable_gTpOTB98NFX60j0DT2FKXg_sZsjK_TW',
 };

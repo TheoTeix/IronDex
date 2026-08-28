@@ -75,7 +75,7 @@ Laisse l'onglet ouvert, on y revient dans 30 secondes.
    - **Origines JavaScript autorisées** :
      ```
      https://theoteix.github.io
-     http://localhost:8000
+     http://localhost:4599
      ```
    - **URI de redirection autorisés** — colle l'URL de callback de l'étape 3a :
      ```
@@ -94,12 +94,17 @@ Toujours dans **Authentication** › **URL Configuration** :
 - **Redirect URLs** — ajoute les deux lignes :
   ```
   https://theoteix.github.io/IronDex/**
-  http://localhost:8000/**
+  http://localhost:4599/**
   ```
 
 > Sans ces deux lignes, Google te renverra bien à Supabase, mais Supabase
-> refusera de te renvoyer à l'app : tu resterais bloqué sur une page blanche
-> avec `redirect_to is not allowed`.
+> refusera de te renvoyer à l'app : tu atterrirais sur la **Site URL** au lieu
+> de l'endroit d'où tu es parti.
+>
+> N'ajoute JAMAIS un `**` seul, ni un motif sans domaine. Ce serait autoriser
+> Supabase à renvoyer ton jeton de session vers n'importe quel site : il
+> suffirait qu'on te fasse cliquer un lien fabriqué pour te le voler. Le
+> caractère générique ne doit porter que sur le CHEMIN, jamais sur le domaine.
 
 ## 4. Donner les clés à l'app
 
