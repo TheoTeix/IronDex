@@ -5141,6 +5141,14 @@ async function openCardDetail(cardId) {
       }).catch(() => {});
     }, 4000);
   }
+  /* La carte est-elle dans la collection ? Si oui, sa fiche devient aussi
+     l'endroit où l'on règle le nombre d'exemplaires. C'est le bon endroit :
+     c'est là qu'on regarde la carte, et la vignette n'a plus à porter de
+     commande — elle ne fait plus que montrer.
+     Les identifiants repris de la tuile d'origine (`qty-`, `mult-`) ne sont pas
+     un hasard : refreshCardTile() les met à jour sans rien savoir de qui les
+     affiche, donc la pastille de la vignette suit toute seule. */
+  const inv = (state.investCards || []).find(x => x.cardId === cardId) || null;
   const rows = [
     ['Rareté', card.rarity], ['PV', card.hp], ['Type', (card.types||[]).join(', ')],
     ['Catégorie', card.category], ['Stade', card.stage], ['Illustrateur', card.illustrator],
@@ -5171,6 +5179,16 @@ async function openCardDetail(cardId) {
           <div class="detail-price-val" id="cd-raw"><span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span></div>
           <div class="detail-price-note" id="cd-note">Cote Cardmarket…</div>
         </div>
+        ${inv ? `
+        <div class="detail-qty">
+          <span class="detail-qty-k">Exemplaires</span>
+          <div class="qty" role="group" aria-label="Nombre d'exemplaires de ${esc(card.name)}">
+            <button class="qty-btn cd-qty-minus" onclick="bumpCardQty('${inv.id}',-1)" aria-label="Retirer un exemplaire" ${cardQty(inv) <= 1 ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+            <span class="qty-val" id="qty-${inv.id}">${cardQty(inv)}</span>
+            <button class="qty-btn" onclick="bumpCardQty('${inv.id}',1)" aria-label="Ajouter un exemplaire">${ICO.plus}</button>
+          </div>
+          <span class="detail-qty-sum" id="cd-qty-sum">${cardQtySumText(inv)}</span>
+        </div>` : ''}
         <div class="detail-rows">${rows.map((r, i) => `<div class="detail-row stagger" style="--i:${i}"><span class="detail-row-key">${esc(r[0])}</span><span class="detail-row-val">${esc(String(r[1]))}</span></div>`).join('')}</div>
         <div class="detail-actions">
           <a class="btn btn-cm" href="${ebaySoldLink((card.name + ' ' + cardNumStr(card.localId, card.set?.cardCount?.official)).trim())}" target="_blank" rel="noopener">Voir les ventes eBay</a>
@@ -8539,6 +8557,14 @@ function renderInvestBody() {
   setTimeout(() => { attachSpotlights(body); attachReveals(body); }, 0);
   {
     body.innerHTML = investCardsBodyHTML();
+    // Les vignettes portent `data-value`, comme celles des wishlists : c'est
+    // paintCardValues qui y écrit la cote enregistrée tout de suite, puis
+    // complète en arrière-plan celles qui n'en ont jamais eu.
+    if (state.investSeriesOpen) {
+      paintCardValues((state.investCards || [])
+        .filter(p => String(p.setId) === String(state.investSeriesOpen))
+        .map(p => p.cardId).filter(Boolean));
+    }
     // Visuels manquants (promos surtout : absents du catalogue FR mais présents
     // en anglais) → retrouvés puis ENREGISTRÉS pour ne plus jamais les chercher.
     hydrateFallbackImages(body, (setId, localId, found) => {
@@ -8925,7 +8951,52 @@ function cardsSeriesDetailHTML(setId, groups) {
       <button class="cardser-add" onclick="addInvestCard('${esc(String(g.setId))}')" title="Ajouter une carte à ${esc(g.setName)}" aria-label="Ajouter une carte à cette série">${ICO.plus || PLUS}</button>
       <span class="cardser-bar-meta">${g.count} · ${fmt(g.value)}</span>
     </div>
-    <div class="cardlist">${cards.map(cardTileHTML).join('')}</div>`;
+    <div class="cards-grid">${cards.map(investCardThumbHTML).join('')}</div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LA VIGNETTE D'UNE CARTE DE LA COLLECTION
+
+   Exactement celle des wishlists (`renderWishCardThumb`) : même balisage, même
+   classe `.card-thumb`, même grille `.cards-grid`. Deux écrans qui montrent des
+   cartes n'ont aucune raison de les montrer différemment — c'était le cas, et
+   ça se voyait.
+
+   Deux différences, et seulement deux :
+    · pas de bouton « obtenue » : une carte de la collection est possédée par
+      définition, la coche n'aurait rien à dire ;
+    · une pastille « ×N » quand il y a plusieurs exemplaires — une information
+      de lecture, pas un réglage. Le réglage vit dans la fiche (voir
+      openCardDetail).
+   La croix de retrait reste, au même endroit.
+
+   `--tc` est écrit EN DUR quand le type est connu, et `data-cc` n'est laissé
+   que sinon : c'est un correctif de performance mesuré (paintCards demandait la
+   fiche de CHAQUE carte à l'API — 48 requêtes pour ouvrir une seule série).
+   ══════════════════════════════════════════════════════════════════════ */
+function investCardThumbHTML(p, i) {
+  const cid = p.cardId || '';
+  const qty = cardQty(p);
+  const tc = p.type ? TYPE_COLOR[p.type] : null;
+  // Sans identifiant de catalogue (carte ajoutée à la main), la fiche complète
+  // n'existe pas : on retombe sur l'agrandissement du visuel.
+  const open = cid ? `openCardDetail('${esc(cid)}')` : `openInvestCardPreview('${p.id}')`;
+  return `
+    <div class="card-thumb" data-card="${p.id}"
+      style="animation-delay:${Math.min(i * 26, 340)}ms${tc ? `;--tc:${tc}` : ''}"${tc ? '' : ` data-cc="${esc(cid)}"`}>
+      <div class="card-thumb-imgwrap">
+        <span class="thumb-qty" id="mult-${p.id}"${qty > 1 ? '' : ' hidden'}>×${qty}</span>
+        ${p.image
+          ? `<img src="${IMG(p.image)}" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')" alt="${esc(p.name)}" loading="lazy" style="cursor:pointer" onclick="${open}">`
+          : `<div style="cursor:pointer" onclick="${open}">${noImgHTML(p.localId, p.name, p.setId)}</div>`}
+        <button class="remove-btn" onclick="event.stopPropagation();deleteInvestCard('${p.id}')" title="Retirer de la collection" aria-label="Retirer ${esc(p.name)}">${ICO.close}</button>
+      </div>
+      <div class="card-thumb-info" style="cursor:pointer" onclick="${open}">
+        <div class="card-thumb-name">${esc(p.name)}</div>
+        <div class="card-thumb-sub">#${p.localId || '—'}</div>
+        <div class="cv-skeleton" data-value="${esc(cid)}"></div>
+      </div>
+    </div>`;
 }
 // Puce de rareté : couleur portée par la rareté elle-même (lecture immédiate).
 function rarityClass(r) {
@@ -9118,8 +9189,17 @@ function bumpCardQty(id, delta) {
   refreshCardTile(p);
   refreshInvestTotals();
 }
+// « ×3 = 240 € » — vide à un seul exemplaire, où le total répéterait la cote.
+function cardQtySumText(p) {
+  const qty = cardQty(p), cote = cardCote(p);
+  return (qty > 1 && cote != null) ? `×${qty} = ${fmt(cote * qty)}` : '';
+}
 function refreshCardTile(p) {
   const qty = cardQty(p), cote = cardCote(p);
+  // La fiche ouverte, si elle montre cette carte : le « — » se grise à un seul
+  // exemplaire, et le total suit.
+  const minus = document.querySelector('.cd-qty-minus'); if (minus) minus.disabled = qty <= 1;
+  const qs = document.getElementById('cd-qty-sum'); if (qs) qs.textContent = cardQtySumText(p);
   const q = document.getElementById('qty-' + p.id); if (q) q.textContent = qty;
   // Pastille « ×N » du titre : masquée à un seul exemplaire (elle n'apprendrait
   // rien), affichée dès le deuxième.
