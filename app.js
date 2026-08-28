@@ -428,6 +428,43 @@ function collectionSnapshot() {
   return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, investMode: state.investMode, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   CE QU'ON ENVOIE N'EST PAS CE QU'ON GARDE
+
+   L'instantané complet pesait 4,9 Mo, et Postgres refusait purement et
+   simplement de l'écrire : « canceling statement due to statement timeout »
+   (8 s pour un rôle authentifié). Plus rien ne se sauvegardait, ni sur Mac ni
+   sur iPhone.
+
+   La mesure a désigné le coupable sans ambiguïté : `gradedCards` faisait
+   4,58 Mo des 4,9 — soit 93 % de chaque envoi. Deux enregistrements, dont un
+   portant une photo de 4 692 499 caractères en base64. Le tout dans une section
+   RETIRÉE de l'app, qu'aucun écran n'affiche depuis 2026-08-21. On payait un
+   aller-retour de 4,6 Mo, à chaque case cochée, pour des données que personne
+   ne regarde.
+
+   Elles ne sont pas détruites pour autant : elles restent dans l'instantané
+   LOCAL (IndexedDB) et dans « Télécharger une copie ». Seul le trajet réseau
+   les ignore. Et `applyLoaded` ne les efface plus quand le serveur n'en parle
+   pas — sans quoi la première relecture les aurait emportées.
+
+   Règle générale, pas un rustine : ce qui part sur le réseau ne contient que
+   ce qui sert. Toute section devenue morte se retire d'abord de la synchro. */
+const SYNC_OMIT = ['gradedCards'];
+function syncSnapshot() {
+  const snap = collectionSnapshot();
+  for (const k of SYNC_OMIT) delete snap[k];
+  return snap;
+}
+// Garde-fou : si un jour un envoi regrossit, on le SAIT au lieu de découvrir
+// des délais d'attente. 2 Mo est déjà très au-dessus du besoin réel (~430 ko).
+function warnIfHeavy(snap) {
+  let n = 0;
+  try { n = JSON.stringify(snap).length; } catch { return 0; }
+  if (n > 2_000_000) console.warn('[coffre] envoi anormalement lourd :', Math.round(n / 1024) + ' ko');
+  return n;
+}
+
 // Sauvegarde DÉBOUNCÉE (fusionne les écritures rapprochées) — écrit dans IDB.
 let _saveTimer = null, _saveDirty = false, _lastSaveOk = true;
 function save() {
@@ -632,7 +669,11 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) flush
 function applyLoaded(d) {
   if (!d) return;
   state.wishlists = d.wishlists || [];
-  state.gradedCards = d.gradedCards || [];
+  // Absentes du document reçu ? On GARDE celles d'ici. Le serveur ne les
+  // transporte plus (voir SYNC_OMIT) : les écraser par un tableau vide à
+  // chaque relecture reviendrait à les supprimer pour de bon.
+  if (Array.isArray(d.gradedCards) && d.gradedCards.length) state.gradedCards = d.gradedCards;
+  else if (!Array.isArray(state.gradedCards)) state.gradedCards = [];
   state.milobellus = d.milobellus || {};
   state.binders = d.binders || [];
   state.sealedPeriods = (d.sealedPeriods && d.sealedPeriods.length) ? d.sealedPeriods : DEFAULT_SEALED_PERIODS.slice();
@@ -990,7 +1031,8 @@ async function vaultFlush() {
   try {
     const sb = await sbClient();
     if (pend.collection) {
-      const snap = collectionSnapshot();
+      const snap = syncSnapshot();
+      warnIfHeavy(snap);
       // On demande à l'écriture de RENVOYER son `updated_at`. Sans ça la sonde
       // de vaultPull verrait un horodatage qu'elle ne connaît pas et
       // retéléchargerait aussitôt les 5 Mo qu'on vient d'envoyer — un

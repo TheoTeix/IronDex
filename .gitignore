@@ -26,3 +26,4 @@ venv/
 # ── Outillage Claude Code local (ne concerne pas le site)
 .claude/skills/
 .claude/settings.local.json
+gradee-*.jpeg
