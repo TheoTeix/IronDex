@@ -39,7 +39,9 @@ function imgFail(img, localId, setId = '', name = '') {
   ph.dataset.fbLocal = String(localId == null ? '' : localId);
   ph.dataset.fbName = name || '';
   ph.innerHTML = `<span class="card-noimg-n">N°${localId || '?'}</span><span class="card-noimg-tag">Visuel indisponible</span>`;
+  const wrap = img.parentElement;
   img.replaceWith(ph);
+  if (wrap) wrap.classList.add('art-in');   // plus rien à attendre : le cadre se calme
   if (setId && localId) {
     resolveMissingImage(setId, localId).then(found => {
       if (found && ph.isConnected) swapPlaceholder(ph, found, localId);
@@ -61,6 +63,86 @@ function swapPlaceholder(ph, found, localId) {
   ph.replaceWith(img);
   return img;
 }
+/* ══════════════════════════════════════════════════════════════════════
+   LE VISUEL D'UNE CARTE ARRIVE TOUT DE SUITE — puis se précise
+
+   CE QU'ON VOYAIT : une grille de rectangles NOIRS, puis les cartes qui
+   tombaient une à une. Trois causes, toutes mesurées :
+    · les vignettes demandaient le fichier `high` (600×825, 120–200 ko) pour
+      l'afficher dans 158 px de large. Une série de 48 cartes, c'est ~7 Mo à
+      télécharger AVANT de voir quoi que ce soit ;
+    · toutes les images étaient `loading="lazy"`, y compris les douze qui sont
+      déjà à l'écran : le navigateur attend la mise en page pour les demander,
+      alors que ce sont précisément celles qu'on regarde ;
+    · le cadre était une plaque sombre unie — donc un trou noir, pas une carte
+      en train d'arriver.
+
+   CE QU'ON FAIT :
+    · `artAttrs` sert `low` (245×337, ~25 ko) — dix fois plus léger, et c'est
+      la taille qu'on affiche. Les ART_EAGER premières vignettes partent en
+      `eager` + `fetchpriority=high` : elles ne dépendent plus de la mise en
+      page ;
+    · dès qu'une vignette approche de l'écran, `high` est téléchargé en fond et
+      substitué UNE FOIS DÉCODÉ (jamais de retour au vide) — attachArtUpgrade ;
+    · tant que rien n'est arrivé, le cadre respire (`::before` en opacité,
+      donc composité) ; `artOk` l'éteint au chargement.
+   ══════════════════════════════════════════════════════════════════════ */
+const ART_EAGER = 14;
+// Attributs d'une vignette de carte. `i` = position dans la grille (facultatif).
+function artAttrs(image, i) {
+  const low = IMG(image, 'low'), hi = IMG(image, 'high');
+  const prio = (i != null && i < ART_EAGER) ? 'eager" fetchpriority="high' : 'lazy" fetchpriority="low';
+  return `src="${low}"${hi && hi !== low ? ` data-hi="${hi}"` : ''} decoding="async" loading="${prio}"`;
+}
+// Le visuel est là : on arrête la respiration du cadre.
+function artOk(img) {
+  const w = img && img.parentElement;
+  if (w) w.classList.add('art-in');
+}
+// Substitution low → high à l'approche de l'écran. `rootMargin` généreux : la
+// version nette est prête AVANT qu'on arrive dessus.
+let _artIO = null;
+function artObserver() {
+  if (_artIO) return _artIO;
+  if (typeof IntersectionObserver !== 'function') return null;
+  _artIO = new IntersectionObserver(ents => {
+    for (const e of ents) {
+      if (!e.isIntersecting) continue;
+      const img = e.target;
+      _artIO.unobserve(img);
+      const hi = img.dataset.hi;
+      if (!hi) continue;
+      delete img.dataset.hi;
+      if (_imgFailedSrc.has(hi)) continue;
+      const probe = new Image();
+      probe.decoding = 'async';
+      probe.onload = () => { if (img.isConnected) img.src = hi; };
+      probe.onerror = () => _imgFailedSrc.add(hi);
+      probe.src = hi;
+    }
+    // Une marge d'un tiers d'écran, pas plus : on veut la version nette de ce
+    // qu'on va REGARDER, pas des 417 cases d'un masterset qu'on traverse en
+    // défilant (ce serait ~50 Mo de `high` pour rien, sur un réseau mobile).
+  }, { rootMargin: '250px 0px' });
+  return _artIO;
+}
+function attachArtUpgrade(root = document) {
+  const io = artObserver();
+  (root || document).querySelectorAll('img[data-hi]').forEach(img => {
+    if (io) io.observe(img); else { const hi = img.dataset.hi; delete img.dataset.hi; img.src = hi; }
+  });
+}
+// Préchauffage : on met des visuels dans le cache navigateur avant qu'on en ait
+// besoin (survol d'une bulle de série, page suivante d'une liste…).
+const _artWarmed = new Set();
+function warmArt(urls) {
+  for (const u of urls || []) {
+    if (!u || _artWarmed.has(u)) continue;
+    _artWarmed.add(u);
+    try { const im = new Image(); im.decoding = 'async'; im.src = u; } catch {}
+  }
+}
+
 const STORAGE_KEY = 'pkm_collection_v2';
 
 /* ════════════════════════════════════════════════════════════════
@@ -108,8 +190,10 @@ const state = {
   sealed: [],                 // produits scellés : { id, cat, name, buyPrice, values:{ 'AAAA-MM': valeur } }
   sealedPeriods: [],          // colonnes de valeur (semestres) : ['2026-07','2026-12', …]
   investCards: [],            // cartes suivies : { id, cardId, name, setId, setName, logo, number, localId, rarity, type, qty, image, buyPrice }
-  investMode: 'sealed',       // volet actif de la section Investissement : 'sealed' | 'cards'
+  investMode: 'cards',        // volet actif de la Collection : 'cards' | 'masterset'
   investSeriesOpen: null,     // set ouvert dans le volet Cartes (détail) — runtime
+  mastersets: [],             // mastersets suivis : { setId, setName, logo, serieId, serieName, date, slots, owned:{ cardId: 1|2|3 } }
+  mastersetOpen: null,        // masterset ouvert (setId) — runtime
   setDates: {},               // { setId: 'AAAA-MM-JJ' } — dates de sortie, pour le tri chronologique
   currentBinder: 'milobellus',// classeur ouvert dans la vue détail ('milobellus' ou id custom)
   activeWishlistId: null,
@@ -425,7 +509,7 @@ function autoBackup(tag) {
     .catch(() => false);
 }
 function collectionSnapshot() {
-  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, investMode: state.investMode, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
+  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, mastersets: state.mastersets, investMode: state.investMode, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -686,7 +770,20 @@ function applyLoaded(d) {
     return { id: (p && p.id) || sealedUid(), cat, name: (p && p.name) || '', buyPrice: (p && p.buyPrice != null) ? p.buyPrice : null, values };
   });
   state.investCards = (d.investCards || []).map(p => ({ id: p.id || sealedUid(), cardId: p.cardId || null, name: p.name || '', setId: p.setId || '', setName: p.setName || 'Série inconnue', logo: p.logo || null, number: p.number || '', localId: p.localId || '', rarity: p.rarity || '', type: p.type || '', qty: Math.max(1, Number(p.qty) || 1), image: p.image || '', buyPrice: p.buyPrice != null ? p.buyPrice : null }));
-  state.investMode = d.investMode === 'cards' ? 'cards' : 'sealed';
+  /* MASTERSET — les cases cochées, et rien de plus.
+     On ne persiste PAS la liste des cartes du set ni celle des reverses :
+     elles viennent de l'API (et de son cache), ne changent jamais, et
+     alourdiraient chaque synchro de plusieurs dizaines de ko pour rien.
+     `slots` (le nombre de cases du masterset) est gardé parce que la LISTE
+     doit pouvoir afficher une progression sans ouvrir le set. */
+  state.mastersets = (d.mastersets || []).filter(m => m && m.setId).map(m => ({
+    setId: String(m.setId), setName: m.setName || 'Série inconnue', logo: m.logo || null,
+    serieId: m.serieId || '', serieName: m.serieName || '', date: m.date || '',
+    slots: Math.max(0, Number(m.slots) || 0),
+    owned: (m.owned && typeof m.owned === 'object') ? m.owned : {},
+  }));
+  state.mastersetOpen = null;
+  state.investMode = d.investMode === 'masterset' ? 'masterset' : 'cards';
   state.setDates = d.setDates || {};
   state.setBlocs = d.setBlocs || {};
   state.investSeriesOpen = null;
@@ -749,6 +846,7 @@ function importData(file) {
     if (Array.isArray(d.gradedCards) && d.gradedCards.length) merged.gradedCards = d.gradedCards;
     takeList('sealed', 'scellé');
     takeList('investCards', 'cartes');
+    takeList('mastersets', 'mastersets');
     if (d.milobellus && Object.keys(d.milobellus).length) merged.milobellus = d.milobellus;
     else if (Object.keys(merged.milobellus || {}).length) preserved.push('Milobellus');
     if (Array.isArray(d.sealedPeriods) && d.sealedPeriods.length) merged.sealedPeriods = d.sealedPeriods;
@@ -964,6 +1062,7 @@ function resetCollection() {
   state.wishlists = []; state.gradedCards = []; state.milobellus = {};
   state.binders = []; state.sealed = []; state.sealedPeriods = [];
   state.investCards = []; state.setDates = {}; state.setBlocs = {};
+  state.mastersets = []; state.mastersetOpen = null;
   state.heroRef = null; state.activeWishlistId = null;
   state.currentBinder = 'milobellus'; state.investSeriesOpen = null;
 }
@@ -986,7 +1085,8 @@ let _remoteStamp = '';
 function vaultStatus() { return { state: _vaultStatus, err: _vaultErr }; }
 function vaultLocalEmpty() {
   return !(state.wishlists.length || state.binders.length || state.sealed.length
-    || state.investCards.length || Object.keys(state.milobellus || {}).length);
+    || state.investCards.length || (state.mastersets || []).length
+    || Object.keys(state.milobellus || {}).length);
 }
 function vaultPaintStatus(st, err) {
   _vaultStatus = st; _vaultErr = err || '';
@@ -3671,6 +3771,7 @@ function palCommands() {
     { kind: 'nav', name: 'Le Coffre', sub: 'Valeur, pièce maîtresse', ico: ICO.vault, run: () => navigate('home') },
     { kind: 'nav', name: 'Wishlists', sub: `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''}`, ico: ICO.heart, run: () => navigate('wishlists') },
     { kind: 'nav', name: 'Collection', sub: `${state.investCards.length} cartes suivies`, ico: ICO.chart, run: () => navigate('invest') },
+    { kind: 'nav', name: 'Masterset', sub: (state.mastersets || []).length ? `${state.mastersets.length} série${state.mastersets.length > 1 ? 's' : ''} suivie${state.mastersets.length > 1 ? 's' : ''}` : 'Cocher un set en entier, reverses comprises', ico: ICO.layers, run: () => { state.investMode = 'masterset'; state.mastersetOpen = null; navigate('invest'); } },
     // Les classeurs ne sont pas atteignables sur téléphone : la commande non plus.
     ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
     { kind: 'act', name: 'Récupérer les cotes partagées', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullSharedPrices() },
@@ -5058,6 +5159,7 @@ function renderWishlistDetail() {
   // pré-résolution dégradait les liens de TOUTE la wishlist en recherches.
   runPool(w.cards.filter(c => !_cmUrlStore[c.id]).map(c => c.id), id => resolveCmUrl(id).catch(() => {}), 1);
   fillWishlistRemaining([w]);
+  attachArtUpgrade(el);
   hydrateFallbackImages(el);
   paintCards(el);
   if (w.cards[0]) cardColor({ id: w.cards[0].id }).then(setRootAccent);
@@ -5071,7 +5173,7 @@ function renderWishCardThumb(c, wid, i) {
       <div class="card-thumb-imgwrap">
         <button class="owned-toggle" onclick="event.stopPropagation();toggleOwned('${wid}','${c.id}')" title="${c.owned ? 'Marquer comme non obtenue' : 'Marquer comme obtenue'}" aria-pressed="${!!c.owned}" aria-label="Obtenue">${ICO.check}</button>
         <span class="owned-pill">Obtenue</span>
-        ${c.image ? `<img src="${IMG(c.image)}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.setId||'')}','${jss(c.name)}')" alt="${esc(c.name)}" loading="lazy" style="cursor:pointer" onclick="openCardDetail('${c.id}')">` : `<div style="cursor:pointer" onclick="openCardDetail('${c.id}')">${noImgHTML(c.localId, c.name, c.setId)}</div>`}
+        ${c.image ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.setId||'')}','${jss(c.name)}')" alt="${esc(c.name)}" style="cursor:pointer" onclick="openCardDetail('${c.id}')">` : `<div style="cursor:pointer" onclick="openCardDetail('${c.id}')">${noImgHTML(c.localId, c.name, c.setId)}</div>`}
         <button class="remove-btn" onclick="event.stopPropagation();removeFromWishlist('${wid}','${c.id}')" title="Retirer de la wishlist" aria-label="Retirer">${ICO.close}</button>
       </div>
       <div class="card-thumb-info" style="cursor:pointer" onclick="openCardDetail('${c.id}')">
@@ -5278,7 +5380,9 @@ function confirmRenameWishlist() {
 
 async function openCardPicker(mode, slot) {
   Object.assign(state, { pickerMode: mode, pickerSeries: null, pickerSet: null, pickerCards: [], pickerSearch: '', pickerSetIds: null, pickerSubsets: [], sessionAdded: 0, pickerBinderSlot: (slot == null ? null : slot) });
-  const title = mode === 'wish' || mode === 'binder' ? 'Ajouter des cartes' : mode === 'hero' ? 'Choisir la pièce maîtresse' : 'Choisir une carte';
+  const title = mode === 'wish' || mode === 'binder' ? 'Ajouter des cartes'
+    : mode === 'hero' ? 'Choisir la pièce maîtresse'
+    : mode === 'masterset' ? 'Choisir une série à masteriser' : 'Choisir une carte';
   document.getElementById('picker-title').textContent = title;
   document.getElementById('picker-footer').style.display = (mode === 'wish' || mode === 'binder') ? 'flex' : 'none';
   updatePickerFooter();
@@ -5301,7 +5405,13 @@ function bindPickerDelegation() {
     const serie = e.target.closest('[data-serie]');
     if (serie) { pickSeries(serie.getAttribute('data-serie'), serie.getAttribute('data-serie-name') || ''); return; }
     const set = e.target.closest('[data-set]');
-    if (set) { pickSet(set.getAttribute('data-set')); return; }
+    if (set) {
+      const id = set.getAttribute('data-set');
+      // En mode masterset, le parcours s'arrête au BLOC : on ne choisit pas une
+      // carte, on prend le set entier.
+      if (state.pickerMode === 'masterset') addMasterset(id); else pickSet(id);
+      return;
+    }
     const pick = e.target.closest('[data-pick]');
     if (pick) { pickCardFromCatalog(pick.getAttribute('data-pick')); return; }
   });
@@ -5321,7 +5431,7 @@ function updatePickerFooter() {
 }
 // Indicateur d'étape du parcours d'ajout : Série › Bloc › Carte.
 function pickerSteps(active) {
-  const s = ['Série', 'Bloc', 'Carte'];
+  const s = state.pickerMode === 'masterset' ? ['Série', 'Bloc'] : ['Série', 'Bloc', 'Carte'];
   return `<div class="picker-steps">${s.map((l, i) =>
     `<span class="pstep ${i < active ? 'done' : ''} ${i === active ? 'on' : ''}"><b>${i < active ? ICO.check : i + 1}</b><span>${l}</span></span>`
   ).join('<span class="pstep-sep"></span>')}</div>`;
@@ -5351,8 +5461,12 @@ async function renderPickerSeries() {
       </div>`;
   } catch (e) { console.error('[picker] séries', e); body.innerHTML = errBox('retryPicker()', e); }
 }
+// Filtrage SANS ACCENTS, comme dans un set : « ecarlate » trouve « Écarlate ».
 function filterSeries(q) {
-  document.querySelectorAll('#series-grid .series-item').forEach(el => { el.style.display = el.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none'; });
+  const n = _cardNorm(q);
+  document.querySelectorAll('#series-grid .series-item').forEach(el => {
+    el.hidden = !!n && !_cardNorm(el.textContent).includes(n);
+  });
 }
 async function pickSeries(serieId, serieName) {
   state.pickerSeries = serieId; state.pickerSeriesName = serieName;
@@ -5382,13 +5496,21 @@ async function pickSeries(serieId, serieName) {
         <span class="picker-crumb"><b>${esc(serie.name)}</b> · ${sets.length} bloc${sets.length>1?'s':''}</span>
       </div>
       <div class="series-grid">
-        ${sets.map((s, i) => `<div class="series-item stagger" style="--i:${Math.min(i,14)}" onmouseenter="prefetchSet('${s.id}')" data-set="${esc(s.id)}">
+        ${sets.map((s, i) => {
+          // En mode masterset, un bloc déjà suivi se signale : on ne le
+          // rajoute pas, on y retourne (voir addMasterset).
+          const ms = state.pickerMode === 'masterset' ? msEntry(s.id) : null;
+          return `<div class="series-item stagger ${ms ? 'is-added' : ''}" style="--i:${Math.min(i,14)}" onmouseenter="prefetchSet('${s.id}')" data-set="${esc(s.id)}"${ms ? ' title="Déjà dans ton masterset"' : ''}>
+          ${ms ? `<span class="series-added" aria-hidden="true">${ICO.check}</span>` : ''}
           <div class="series-logo-wrap">
             ${s.logo
               ? `<img class="series-logo" src="${s.logo}.png" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
-          <div class="series-name">${esc(s.name)}</div><div class="series-count">${s.cardCount?.official ? s.cardCount.official + (subCount[s.id] || 0) : '?'} cartes</div></div>`).join('')}
+          <div class="series-name">${esc(s.name)}</div><div class="series-count">${ms
+            ? `${msOwnedCount(ms)} / ${ms.slots || '—'} cases`
+            : `${s.cardCount?.official ? s.cardCount.official + (subCount[s.id] || 0) : '?'} cartes`}</div></div>`;
+        }).join('')}
       </div>`;
   } catch (e) { console.error('[picker] sets', e); body.innerHTML = errBox('retryPicker()', e); }
 }
@@ -5441,15 +5563,39 @@ async function pickSet(setId) {
     const gaps = [...new Set(cards.filter(c => !c.image).map(c => c.__set).filter(Boolean))];
     for (const g of gaps) {
       fillSetImages(cards.filter(c => c.__set === g), g)
-        .then(ok => { if (ok && state.pickerSet === setId) renderPickerCards(); })
+        .then(ok => { if (ok && state.pickerSet === setId) repaintPickerGrid(); })
         .catch(() => {});
     }
   } catch (e) { console.error('[picker] cartes', e); body.innerHTML = errBox('retryPicker()', e); }
 }
-function renderPickerCards() {
-  const body = document.getElementById('picker-body');
-  const q = state.pickerSearch.toLowerCase();
-  const filtered = state.pickerCards.filter(c => c.name?.toLowerCase().includes(q) || String(c.localId).includes(q));
+/* ══════════════════════════════════════════════════════════════════════
+   LA RECHERCHE DANS UN SET FILTRE, ELLE NE RECONSTRUIT PLUS
+
+   Il fallait taper une lettre, recliquer, taper la suivante. La cause : chaque
+   frappe appelait `renderPickerCards`, qui réécrivait `innerHTML` du corps du
+   sélecteur — CHAMP DE RECHERCHE COMPRIS. L'`<input>` sur lequel on tapait
+   était donc détruit et remplacé par un neuf : le navigateur n'a plus rien à
+   qui envoyer la touche suivante, et le focus part.
+
+   Le sélecteur est maintenant en deux morceaux :
+    · `renderPickerCards()` peint la coquille (fil d'Ariane, champ, grille) UNE
+      fois par set, et toutes les cartes du set d'un coup ;
+    · `filterPickerCards()` ne fait que masquer celles qui ne correspondent pas
+      et remettre le compteur à jour. Aucun nœud recréé, donc aucun focus
+      perdu, aucune image redemandée, et le filtrage est instantané.
+   La comparaison est faite SANS ACCENTS (`_cardNorm`) : « leviator » trouve
+   « Léviator », et un numéro (« 12 », « TG04 ») trouve la carte.
+   ══════════════════════════════════════════════════════════════════════ */
+function pickerOwnedIndex() {
+  const invQty = {};
+  if (state.pickerMode === 'investCard') {
+    for (const p of state.investCards) {
+      if (p && p.cardId) invQty[p.cardId] = (invQty[p.cardId] || 0) + (Number(p.qty) || 1);
+    }
+  }
+  return invQty;
+}
+function pickerGridHTML() {
   const w = state.wishlists.find(x => x.id === state.activeWishlistId);
   const bndr = state.pickerMode === 'binder' ? binderById(state.currentBinder) : null;
   // NB : les cartes d'un binder peuvent être null (pochettes vides) → on GARDE
@@ -5459,15 +5605,28 @@ function renderPickerCards() {
   // n'existait qu'APRÈS le clic (un toast, et le sélecteur se fermait). On la
   // montre maintenant sur la vignette, avec la quantité quand il y en a
   // plusieurs — c'est ce qu'on veut savoir en parcourant un set de 200 cartes.
-  const invQty = {};
-  if (state.pickerMode === 'investCard') {
-    for (const p of state.investCards) {
-      if (p && p.cardId) invQty[p.cardId] = (invQty[p.cardId] || 0) + (Number(p.qty) || 1);
-    }
-  }
+  const invQty = pickerOwnedIndex();
   const inList = id => (state.pickerMode === 'wish' && w?.cards.some(c => c && c.id === id))
     || (state.pickerMode === 'binder' && bndr?.cards.some(c => c && c.id === id))
     || (state.pickerMode === 'investCard' && !!invQty[id]);
+  return state.pickerCards.map((c, i) => {
+    const have = inList(c.id), q = invQty[c.id] || 0;
+    // PLUS D'ÉTIQUETTE « Déjà à toi » : c'est la COULEUR qui porte
+    // l'information maintenant (voir style.css). Une carte possédée est en
+    // pleine couleur avec sa coche ; une carte manquante est grisée. Rien
+    // d'autre à lire, et ça se voit d'un coup d'œil sur un set de 200.
+    return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}"
+      data-pick="${esc(String(c.id))}" data-q="${esc(_cardNorm(c.name) + ' ' + _cardNorm(c.localId))}"${have?' title="Déjà à toi"':''}>
+      <span class="card-picker-check" aria-hidden="true">${q > 1 ? '×' + q : ICO.check}</span>
+      ${c.image
+        ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.__set||state.pickerSet||'')}','${jss(c.name)}')" alt="">`
+        : noImgHTML(c.localId, c.name, c.__set || state.pickerSet)}
+      <div class="card-picker-name">${esc(c.name)}</div></div>`;
+  }).join('');
+}
+function renderPickerCards() {
+  const body = document.getElementById('picker-body');
+  if (!body) return;
   body.innerHTML = `
     ${pickerSteps(2)}
     <div class="picker-nav">
@@ -5475,22 +5634,25 @@ function renderPickerCards() {
       <span class="picker-crumb"><b>${esc(state.pickerSetName)}</b></span>
     </div>
     <div class="search-bar"><div class="search-input-wrap"><span class="search-icon">🔍</span>
-      <input class="input" placeholder="Rechercher dans ce set…" value="${esc(state.pickerSearch)}" oninput="searchPicker(this.value)"></div></div>
-    <div class="picker-toolbar"><span class="picker-count">${filtered.length} carte${filtered.length>1?'s':''}${state.pickerMode==='investCard' ? ` · ${filtered.filter(x=>invQty[x.id]).length} déjà à toi` : ''}${(state.pickerMode==='wish'||state.pickerMode==='binder')?' · clique pour ajouter':''}</span></div>
-    <div class="card-picker-grid">
-      ${filtered.map((c, i) => {
-        const u = IMG(c.image, 'low');
-        const have = inList(c.id), q = invQty[c.id] || 0;
-        // PLUS D'ÉTIQUETTE « Déjà à toi » : c'est la COULEUR qui porte
-        // l'information maintenant (voir style.css). Une carte possédée est en
-        // pleine couleur avec sa coche ; une carte manquante est grisée. Rien
-        // d'autre à lire, et ça se voit d'un coup d'œil sur un set de 200.
-        return `<div class="card-picker-item ${have?'added':''} stagger" style="--i:${Math.min(i,18)}" data-pick="${esc(String(c.id))}"${have?' title="Déjà à toi"':''}>
-          <span class="card-picker-check" aria-hidden="true">${q > 1 ? '×' + q : ICO.check}</span>
-          ${u ? `<img src="${u}" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.__set||state.pickerSet||'')}','${jss(c.name)}')" alt="" loading="lazy">` : noImgHTML(c.localId, c.name, c.__set || state.pickerSet)}
-          <div class="card-picker-name">${esc(c.name)}</div></div>`;
-      }).join('')}
-    </div>`;
+      <input class="input" id="picker-search" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search"
+             placeholder="Rechercher dans ce set…" value="${esc(state.pickerSearch)}" oninput="searchPicker(this.value)"
+             aria-label="Rechercher dans ${esc(state.pickerSetName)}"></div></div>
+    <div class="picker-toolbar"><span class="picker-count" id="picker-count"></span></div>
+    <div class="card-picker-grid" id="picker-grid">${pickerGridHTML()}</div>`;
+  afterPickerGrid();
+}
+// Reconstruit la GRILLE seule (visuels retrouvés après coup) : le champ de
+// recherche, son contenu et son curseur ne sont pas touchés.
+function repaintPickerGrid() {
+  const grid = document.getElementById('picker-grid');
+  if (!grid) { renderPickerCards(); return; }
+  grid.innerHTML = pickerGridHTML();
+  afterPickerGrid();
+}
+function afterPickerGrid() {
+  const body = document.getElementById('picker-body');
+  if (!body) return;
+  attachArtUpgrade(body);
   // Répare la DONNÉE une fois un visuel de repli trouvé : le clic (délégué,
   // lookup dans pickerCards) prendra automatiquement le bon visuel — plus
   // besoin de réécrire un onclick.
@@ -5501,8 +5663,26 @@ function renderPickerCards() {
       && String(x.__set || state.pickerSet) === String(setId));
     if (c) c.image = found;
   });
+  filterPickerCards();
 }
-function searchPicker(q) { state.pickerSearch = q; renderPickerCards(); }
+function filterPickerCards() {
+  const grid = document.getElementById('picker-grid');
+  if (!grid) return;
+  const q = _cardNorm(state.pickerSearch);
+  const items = grid.children;
+  let shown = 0, owned = 0;
+  const invQty = pickerOwnedIndex();
+  for (const el of items) {
+    const ok = !q || (el.dataset.q || '').includes(q);
+    el.hidden = !ok;
+    if (ok) { shown++; if (invQty[el.dataset.pick]) owned++; }
+  }
+  const c = document.getElementById('picker-count');
+  if (c) c.textContent = `${shown} carte${shown > 1 ? 's' : ''}`
+    + (state.pickerMode === 'investCard' ? ` · ${owned} déjà à toi` : '')
+    + ((state.pickerMode === 'wish' || state.pickerMode === 'binder') ? ' · clique pour ajouter' : '');
+}
+function searchPicker(q) { state.pickerSearch = q; filterPickerCards(); }
 function pickCard(id, name, image, setName, setId, localId) {
   if (state.pickerMode === 'hero') {
     state.heroRef = { type: 'loose', id, cardId: id, name, image, setName, setId, localId };
@@ -8563,23 +8743,65 @@ function investBadge() {}
    interface ne les touche plus, mais rien n'est détruit et les 37 produits
    restent dans le compte, récupérables par « Télécharger une copie ». */
 function renderInvest() {
-  state.investMode = 'cards';
+  if (state.investMode !== 'masterset') state.investMode = 'cards';
   state.investSeriesOpen = null;   // entrer dans la section ramène toujours à la grille des séries
-  document.getElementById('view-invest').innerHTML = '<div id="inv-mode-body"></div>';
+  state.mastersetOpen = null;
+  document.getElementById('view-invest').innerHTML = investSwitchHTML() + '<div id="inv-mode-body"></div>';
   renderInvestBody();
   investBadge();
 }
+/* ── DEUX VOLETS : les cartes suivies, et les mastersets ──────────────
+   Même sélecteur glissant que l'ancien Scellé/Cartes (la pastille se DÉPLACE,
+   elle ne clignote pas), et il disparaît dès qu'on entre dans une série ou
+   dans un masterset : là on est DANS quelque chose, la sortie est la flèche
+   de retour. Voir `#view-invest[data-series-open]` dans style.css. */
+function investSwitchHTML() {
+  const m = state.investMode === 'masterset' ? 'masterset' : 'cards';
+  const tab = (id, label) => `<button class="inv-switch-btn ${m === id ? 'active' : ''}" role="tab"
+      aria-selected="${m === id}" onclick="setInvestMode('${id}')">${label}</button>`;
+  return `<div class="inv-switch-wrap">
+    <div class="inv-switch" id="inv-switch" data-mode="${m}" role="tablist" aria-label="Volet de la Collection">
+      <span class="inv-switch-pill" aria-hidden="true"></span>
+      ${tab('cards', 'Cartes')}${tab('masterset', 'Masterset')}
+    </div></div>`;
+}
+// La bascule est ANIMÉE : on déplace la pastille et on repeint le volet, on ne
+// reconstruit pas la barre (sans quoi la pastille sauterait au lieu de glisser).
+function paintInvestSwitch() {
+  const sw = document.getElementById('inv-switch'); if (!sw) return;
+  const m = state.investMode === 'masterset' ? 'masterset' : 'cards';
+  sw.dataset.mode = m;
+  sw.querySelectorAll('.inv-switch-btn').forEach((b, i) => {
+    const on = (i === 0) === (m === 'cards');
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+}
+function setInvestMode(mode) {
+  mode = mode === 'masterset' ? 'masterset' : 'cards';
+  if (state.investMode === mode) return;
+  state.investMode = mode;
+  state.investSeriesOpen = null; state.mastersetOpen = null;
+  save();
+  renderInvestBody();
+  scrollViewToTop('invest');
+}
 function renderInvestBody() {
   const body = document.getElementById('inv-mode-body'); if (!body) return;
-  // Dans une série ouverte, le sélecteur Scellé/Cartes fait partie du « haut de
-  // section » qui n'a plus lieu d'être : la flèche de retour ramène à la grille,
-  // et il réapparaît là. Un attribut, pas un re-render (la bascule est animée).
-  document.getElementById('view-invest')?.toggleAttribute('data-series-open', !!state.investSeriesOpen);
+  paintInvestSwitch();
+  // Dans une série (ou un masterset) ouvert, le sélecteur de volet fait partie
+  // du « haut de section » qui n'a plus lieu d'être : la flèche de retour
+  // ramène à la grille, et il réapparaît là. Un attribut, pas un re-render
+  // (la bascule est animée).
+  const inDetail = state.investMode === 'masterset' ? !!state.mastersetOpen : !!state.investSeriesOpen;
+  document.getElementById('view-invest')?.toggleAttribute('data-series-open', inDetail);
   // La lumière au curseur et les révélations sont (ré)attachées après chaque
   // rendu du volet : les deux moteurs ignorent les nœuds déjà équipés.
   setTimeout(() => { attachSpotlights(body); attachReveals(body); }, 0);
+  if (state.investMode === 'masterset') { renderMastersetBody(body); return; }
   {
     body.innerHTML = investCardsBodyHTML();
+    attachArtUpgrade(body);
     // Les vignettes portent `data-value`, comme celles des wishlists : c'est
     // paintCardValues qui y écrit la cote enregistrée tout de suite, puis
     // complète en arrière-plan celles qui n'en ont jamais eu.
@@ -8949,9 +9171,16 @@ function toggleBloc(id) {
     }, 420);
   }
 }
+// Survoler une bulle télécharge les visuels qu'on verra en cliquant : le temps
+// d'amener le curseur, la série s'ouvre déjà peinte.
+function prefetchSeriesArt(setId) {
+  const cards = investCardsOfSeries(setId)
+    .slice().sort((a, b) => (cardCote(b) ?? -1) - (cardCote(a) ?? -1)).slice(0, ART_EAGER);
+  warmArt(cards.map(p => p.image && IMG(p.image, 'low')).filter(Boolean));
+}
 function cardsSeriesGridHTML(groups) {
   return `<div class="cardser-grid">${groups.map(g => `
-    <button class="cardser-bubble" onclick="openInvestSeries('${esc(g.setId)}')">
+    <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
       <div class="cardser-logo">${g.logo ? `<img src="${g.logo}.png" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
       <div class="cardser-name">${esc(g.setName)}</div>
       <div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}${g.date ? ` · ${esc(g.date.slice(0, 4))}` : ''}</div>
@@ -9010,7 +9239,7 @@ function investCardThumbHTML(p, i) {
       <div class="card-thumb-imgwrap">
         <span class="thumb-qty" id="mult-${p.id}"${qty > 1 ? '' : ' hidden'}>×${qty}</span>
         ${p.image
-          ? `<img src="${IMG(p.image)}" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')" alt="${esc(p.name)}" loading="lazy" style="cursor:pointer" onclick="${open}">`
+          ? `<img ${artAttrs(p.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')" alt="${esc(p.name)}" style="cursor:pointer" onclick="${open}">`
           : `<div style="cursor:pointer" onclick="${open}">${noImgHTML(p.localId, p.name, p.setId)}</div>`}
         <button class="remove-btn" onclick="event.stopPropagation();deleteInvestCard('${p.id}')" title="Retirer de la collection" aria-label="Retirer ${esc(p.name)}">${ICO.close}</button>
       </div>
@@ -9073,7 +9302,7 @@ function cardTileHTML(p) {
      ══════════════════════════════════════════════════════════════════════ */
   return `<article class="cardtile" data-id="${p.id}"${tc ? ` style="--tc:${tc}"` : ` data-cc="${esc(p.cardId || '')}"`}>
     <button class="cardtile-art" onclick="openInvestCardPreview('${p.id}')" title="Agrandir ${esc(p.name)}" aria-label="Agrandir ${esc(p.name)}">
-      ${img ? `<img src="${img}" alt="" loading="lazy" decoding="async" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
+      ${p.image ? `<img ${artAttrs(p.image)} alt="" onload="artOk(this)" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
       <span class="cardtile-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
     </button>
     <div class="cardtile-body">
@@ -9143,6 +9372,362 @@ function refreshSeriesCotes(setId) {
     const el = document.getElementById('cote-' + p.id); if (el) { const c = cardCote(p); el.textContent = c != null ? fmt(c) : '—'; }
   }
   const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue());
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MASTERSET — cocher un set en entier, reverses comprises
+
+   Un masterset, ce n'est pas « les cartes que je suis » (ça, c'est le volet
+   Cartes, et il ne parle que de valeur). C'est une CASE PAR EXEMPLAIRE À
+   POSSÉDER dans un set donné : la carte 001 en version normale, la 001 en
+   reverse, la 002 en normale, la 002 en reverse… et une seule case pour celles
+   qui n'existent qu'en une version (ex, full art, secrètes).
+
+   D'OÙ VIENT LA LISTE DES REVERSES — et pourquoi ce n'est pas deviné
+   Deviner « commune / peu commune / rare ⇒ il existe un reverse » aurait été
+   faux à peu près un set sur deux : la règle a changé plusieurs fois (les holo
+   rares ont un reverse depuis Épée et Bouclier, les sets promo n'en ont
+   aucun, les galeries non plus). Or TCGdex EXPOSE la variante :
+       /cards?set=<id>&variants.reverse=true
+   renvoie exactement les cartes du set qui existent en reverse — et le total
+   correspond au `cardCount.reverse` du set (165 pour Étincelles Déferlantes).
+   Une requête par set, la vérité au lieu d'une heuristique. La rareté n'est
+   donc jamais lue ici : elle n'a pas besoin de l'être.
+
+   CE QUI EST ENREGISTRÉ, ET CE QUI NE L'EST PAS
+   Seules les cases cochées le sont (`owned`), plus le nom / logo / date du set
+   et le nombre total de cases (`slots`, pour afficher une progression sans
+   ouvrir le set). La liste des cartes et celle des reverses viennent de l'API
+   et de son cache : les réécrire à chaque synchro aurait coûté des dizaines de
+   ko pour une donnée qui ne change jamais.
+
+   LES GALERIES FONT PARTIE DU MASTERSET. « Tempête Argentée » et sa « Galerie
+   de Dresseurs » sont deux sets chez TCGdex mais un seul booster : le
+   masterset les réunit, comme partout ailleurs dans l'app (voir pickSet).
+   ══════════════════════════════════════════════════════════════════════ */
+const MS_N = 1, MS_R = 2;                    // bits : normale, reverse
+const _msCache = {};                         // setId → { cards, rev, setName, logo, serie, date }
+
+function msEntry(setId) { return (state.mastersets || []).find(m => String(m.setId) === String(setId)); }
+function msMask(m, cardId) { return (m.owned && m.owned[cardId]) || 0; }
+// Cases cochées. Plafonné par `slots` : si un set perdait une variante côté
+// API, un bit devenu orphelin ne doit pas afficher « 418 / 417 ».
+function msOwnedCount(m) {
+  let n = 0;
+  const o = m.owned || {};
+  for (const k in o) { const v = o[k] | 0; if (v & MS_N) n++; if (v & MS_R) n++; }
+  return m.slots ? Math.min(n, m.slots) : n;
+}
+function msSlots(d) { return d.cards.length + d.cards.filter(c => d.rev.has(String(c.id))).length; }
+
+// Les cartes d'un set (galeries incluses) et celles qui existent en reverse.
+async function mastersetCards(setId) {
+  if (_msCache[setId]) return _msCache[setId];
+  const set = await apiFetch('/sets/' + setId);
+  let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId }));
+  // On ne DEVINE pas les sous-séries : on regarde celles qui existent vraiment
+  // dans la série (un /sets/inexistant coûte 3 tentatives et ~3 s).
+  let known = null;
+  if (set.serie?.id) {
+    const serie = await apiFetch('/series/' + set.serie.id).catch(() => null);
+    known = (serie?.sets || []).map(x => String(x.id));
+  }
+  const ids = [String(setId)];
+  for (const suf of SUBSET_SUFFIXES) {
+    const subId = setId + suf;
+    if (String(setId).endsWith(suf) || !known || !known.includes(subId)) continue;
+    const sub = await apiFetch('/sets/' + subId).catch(() => null);
+    if (sub?.cards?.length) {
+      cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: sub.id })));
+      ids.push(String(sub.id));
+    }
+  }
+  const rev = new Set();
+  await Promise.all(ids.map(async id => {
+    try {
+      const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&variants.reverse=true`);
+      // `set=sv08` attrape AUSSI `sv08.5` (le filtre est un « contient ») :
+      // on ne garde que le préfixe exact, sinon un masterset se retrouverait
+      // avec les reverses du set voisin.
+      for (const c of list || []) if (String(c.id).startsWith(id + '-')) rev.add(String(c.id));
+    } catch {}
+  }));
+  const out = {
+    cards, rev, setName: set.name || setId, logo: set.logo || null,
+    serieId: set.serie?.id || '', serieName: set.serie?.name || '',
+    date: String(set.releaseDate || '').replace(/\//g, '-'),
+  };
+  _msCache[setId] = out;
+  return out;
+}
+
+// ── Ajouter / retirer un masterset ──────────────────────────────────
+function openMastersetPicker() { openCardPicker('masterset'); }
+async function addMasterset(setId) {
+  setId = String(setId);
+  state.mastersets = state.mastersets || [];
+  closeModal('modal-card-picker');
+  state.investMode = 'masterset';
+  state.mastersetOpen = setId;
+  if (msEntry(setId)) { renderInvestBody(); scrollViewToTop('invest'); return; }
+  // Entrée provisoire : on affiche tout de suite le bandeau et un spinner
+  // plutôt qu'un écran vide le temps des deux requêtes.
+  const m = { setId, setName: '…', logo: null, serieId: '', serieName: '', date: '', slots: 0, owned: {} };
+  state.mastersets.push(m);
+  renderInvestBody(); scrollViewToTop('invest');
+  let d;
+  try { d = await mastersetCards(setId); }
+  catch (e) {
+    console.warn('[masterset]', e);
+    state.mastersets = state.mastersets.filter(x => x !== m);
+    state.mastersetOpen = null;
+    renderInvestBody();
+    toast('Série illisible : vérifie ta connexion', 'error');
+    return;
+  }
+  msSyncMeta(m, d);
+  const seeded = msSeedFromCollection(m, d);
+  save();
+  if (state.view === 'invest' && String(state.mastersetOpen) === setId) renderInvestBody();
+  toast(seeded
+    ? `${m.setName} ajouté · ${seeded} carte${seeded > 1 ? 's' : ''} déjà cochée${seeded > 1 ? 's' : ''}`
+    : `${m.setName} ajouté au masterset`, 'success');
+}
+// Nom, logo, date, nombre de cases : relus du set à chaque ouverture, parce que
+// c'est l'API qui fait foi (et qu'une entrée créée avant l'ajout des galeries
+// aurait un `slots` périmé).
+function msSyncMeta(m, d) {
+  const slots = msSlots(d);
+  let changed = false;
+  const put = (k, v) => { if (v && m[k] !== v) { m[k] = v; changed = true; } };
+  put('setName', d.setName); put('logo', d.logo);
+  put('serieId', d.serieId); put('serieName', d.serieName); put('date', d.date);
+  if (m.slots !== slots) { m.slots = slots; changed = true; }
+  if (changed) save();
+  return changed;
+}
+/* Les cartes qu'on possède DÉJÀ dans la Collection sont cochées d'office (en
+   version normale) : ré-saisir à la main ce que l'app sait déjà aurait été la
+   première chose à reprocher à cet écran. Ça n'a lieu qu'à L'AJOUT du
+   masterset — ensuite les cases n'appartiennent qu'à toi, et décocher reste
+   décoché. */
+function msSeedFromCollection(m, d) {
+  const mine = new Set((state.investCards || []).map(p => p.cardId).filter(Boolean).map(String));
+  if (!mine.size) return 0;
+  m.owned = m.owned || {};
+  let n = 0;
+  for (const c of d.cards) {
+    const id = String(c.id);
+    if (!mine.has(id) || (m.owned[id] & MS_N)) continue;
+    m.owned[id] = (m.owned[id] | 0) | MS_N; n++;
+  }
+  return n;
+}
+function removeMasterset(setId) {
+  const m = msEntry(setId); if (!m) return;
+  const n = msOwnedCount(m);
+  if (!confirm(`Retirer « ${m.setName} » du masterset ?${n ? `\n\n${n} case${n > 1 ? 's' : ''} cochée${n > 1 ? 's' : ''} ${n > 1 ? 'seront perdues' : 'sera perdue'}.` : ''}`)) return;
+  state.mastersets = state.mastersets.filter(x => x !== m);
+  if (String(state.mastersetOpen) === String(setId)) state.mastersetOpen = null;
+  save();
+  renderInvestBody();
+  toast(`${m.setName} retiré du masterset`, 'success');
+}
+
+// ── Cocher ──────────────────────────────────────────────────────────
+// Mise à jour EN PLACE : cocher une case ne redessine pas les 417 vignettes du
+// set (et ne fait donc jamais sauter le défilement).
+function toggleMasterslot(setId, cardId, variant) {
+  const m = msEntry(setId); if (!m) return;
+  const bit = variant === 'r' ? MS_R : MS_N;
+  m.owned = m.owned || {};
+  const next = (m.owned[cardId] | 0) ^ bit;
+  if (next) m.owned[cardId] = next; else delete m.owned[cardId];
+  save();
+  const el = document.querySelector(`.ms-slot[data-slot="${cardId}:${variant}"]`);
+  if (el) {
+    const have = !!(next & bit);
+    el.classList.toggle('have', have);
+    el.classList.toggle('mine', have);
+    el.setAttribute('aria-pressed', String(have));
+  }
+  paintMastersetHead();
+}
+// LE BOUTON DEMANDÉ : tout cocher d'un coup — et le même bouton tout décocher
+// quand le masterset est complet (sinon il n'y aurait aucun moyen de revenir).
+function toggleMastersetAll(setId) {
+  const m = msEntry(setId), d = _msCache[setId];
+  if (!m || !d) return;
+  const full = msOwnedCount(m) >= msSlots(d);
+  if (full && !confirm(`Décocher les ${msSlots(d)} cases de « ${m.setName} » ?`)) return;
+  m.owned = {};
+  if (!full) for (const c of d.cards) m.owned[c.id] = MS_N | (d.rev.has(String(c.id)) ? MS_R : 0);
+  save();
+  renderInvestBody();
+  toast(full ? `${m.setName} remis à zéro` : `${m.setName} : tout est coché`, 'success');
+}
+
+// ── Rendu ───────────────────────────────────────────────────────────
+function renderMastersetBody(body) {
+  if (state.mastersetOpen) { renderMastersetDetail(body, state.mastersetOpen); return; }
+  body.innerHTML = mastersetListHTML();
+}
+function mastersetListHTML() {
+  const list = (state.mastersets || []).slice()
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.setName.localeCompare(b.setName));
+  if (!list.length) return `
+    <div class="empty-state">
+      <div class="empty-state-icon">${ICO.layers}</div>
+      <div class="empty-state-title">Aucun masterset</div>
+      <div class="empty-state-sub">Choisis une série : tu auras une case par exemplaire à posséder — la version normale et la reverse quand elle existe — et une barre de progression.</div>
+      <button class="btn btn-primary" style="margin-top:6px" onclick="openMastersetPicker()">${PLUS}<span>Choisir une série</span></button>
+    </div>`;
+  const slots = list.reduce((a, m) => a + (m.slots || 0), 0);
+  const owned = list.reduce((a, m) => a + msOwnedCount(m), 0);
+  const pct = slots ? Math.round(owned / slots * 100) : 0;
+  const done = list.filter(m => m.slots && msOwnedCount(m) >= m.slots).length;
+  return `
+    <div class="inv-kpis inv-kpis-solo">
+      <div class="inv-kpi"><span class="inv-kpi-val">${owned.toLocaleString('fr-FR')}</span><span class="inv-kpi-lab">Cochées</span></div>
+      <div class="inv-kpi"><span class="inv-kpi-val">${slots.toLocaleString('fr-FR')}</span><span class="inv-kpi-lab">Cases</span></div>
+      <div class="inv-kpi"><span class="inv-kpi-val">${pct}<span class="inv-kpi-unit">%</span></span><span class="inv-kpi-lab">Avancement</span></div>
+      <div class="inv-kpi"><span class="inv-kpi-val">${list.length}${done ? ` <span class="inv-kpi-unit">dont ${done} complet${done > 1 ? 's' : ''}</span>` : ''}</span><span class="inv-kpi-lab">Série${list.length > 1 ? 's' : ''}</span></div>
+    </div>
+    <div class="ms-listbar">
+      <h2 class="ms-listtitle">Mastersets suivis</h2>
+      <button class="btn btn-ghost btn-sm" onclick="openMastersetPicker()">${PLUS}<span>Ajouter une série</span></button>
+    </div>
+    <div class="cardser-grid">${list.map(msBubbleHTML).join('')}</div>`;
+}
+function msBubbleHTML(m, i) {
+  const total = m.slots || 0, owned = msOwnedCount(m);
+  const pct = total ? Math.round(owned / total * 100) : 0;
+  const done = total > 0 && owned >= total;
+  const go = `openMasterset('${esc(m.setId)}')`;
+  return `<div class="cardser-bubble ms-bubble ${done ? 'done' : ''}" style="--i:${Math.min(i, 12)}"
+    role="button" tabindex="0" aria-label="Ouvrir le masterset ${esc(m.setName)} — ${pct} %"
+    onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${go}}">
+    <div class="cardser-logo">${m.logo
+      ? `<img src="${m.logo}.png" alt="${esc(m.setName)}" loading="lazy" decoding="async" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">`
+      : `<div class="cardser-fallback">◆</div>`}</div>
+    <div class="cardser-name">${esc(m.setName)}</div>
+    <div class="cardser-count">${owned} / ${total || '—'} cases${done ? ' · complet' : ''}</div>
+    <div class="progress-wrap ms-prog">
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <span class="progress-label">${pct}%</span>
+    </div>
+    <button class="remove-btn ms-del" title="Retirer ce masterset" aria-label="Retirer ${esc(m.setName)}"
+      onclick="event.stopPropagation();removeMasterset('${esc(m.setId)}')">${ICO.close}</button>
+  </div>`;
+}
+function openMasterset(setId) {
+  state.investMode = 'masterset';
+  state.mastersetOpen = String(setId);
+  renderInvestBody();
+  scrollViewToTop('invest');
+}
+function closeMasterset() { state.mastersetOpen = null; renderInvestBody(); }
+
+function renderMastersetDetail(body, setId) {
+  const m = msEntry(setId);
+  if (!m) { state.mastersetOpen = null; body.innerHTML = mastersetListHTML(); return; }
+  const d = _msCache[setId];
+  if (!d) {
+    body.innerHTML = msHeadHTML(m, null) + `<div class="loading-state"><div class="spinner"></div> Lecture du set et de ses reverses…</div>`;
+    mastersetCards(setId).then(data => {
+      if (state.view !== 'invest' || String(state.mastersetOpen) !== String(setId)) return;
+      msSyncMeta(m, data);
+      renderInvestBody();
+    }).catch(e => {
+      console.warn('[masterset]', e);
+      if (String(state.mastersetOpen) !== String(setId)) return;
+      body.innerHTML = msHeadHTML(m, null) + errBox(`openMasterset('${esc(setId)}')`, e);
+    });
+    return;
+  }
+  body.innerHTML = msHeadHTML(m, d) + mastersetGridHTML(m, d);
+  attachArtUpgrade(body);
+  // Les visuels de la suite du set sont mis en cache pendant qu'on regarde le
+  // haut : descendre dans un set de 250 cartes ne doit pas rallumer un mur noir.
+  warmArt(d.cards.slice(ART_EAGER, ART_EAGER + 40).map(c => c.image && IMG(c.image, 'low')).filter(Boolean));
+}
+// Bandeau : d'où je viens, quel set, où j'en suis, et le bouton « tout cocher ».
+function msHeadHTML(m, d) {
+  const total = m.slots || 0, owned = msOwnedCount(m);
+  const full = total > 0 && owned >= total;
+  return `
+    <div class="cardser-bar">
+      <button class="cardser-back" onclick="closeMasterset()" title="Tous les mastersets" aria-label="Retour aux mastersets">${ICO.left}</button>
+      ${m.logo
+        ? `<div class="cardser-bar-logo"><img src="${m.logo}.png" alt="${esc(m.setName)}" decoding="async" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(m.setName)}}))"></div>`
+        : `<span class="cardser-bar-name">${esc(m.setName)}</span>`}
+      <button class="btn btn-ghost btn-sm ms-all" id="ms-all-btn" ${d ? '' : 'disabled'}
+        aria-label="${full ? 'Tout décocher' : 'Tout cocher'}" title="${full ? 'Décocher les ' + total + ' cases' : 'Cocher les ' + (total || '') + ' cases'}"
+        onclick="toggleMastersetAll('${esc(m.setId)}')">
+        ${full ? ICO.close : ICO.check}<span>${full ? 'Tout décocher' : 'Tout cocher'}</span>
+      </button>
+    </div>
+    <div class="ms-head" id="ms-head">${msProgressHTML(m)}</div>`;
+}
+function msProgressHTML(m) {
+  const total = m.slots || 0, owned = msOwnedCount(m);
+  const pct = total ? Math.round(owned / total * 100) : 0;
+  const left = Math.max(0, total - owned);
+  return `<div class="progress-wrap">
+      <span class="progress-label ms-count">${owned} / ${total || '—'}</span>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <span class="progress-label">${pct}%</span>
+    </div>
+    <div class="ms-legend">${left
+      ? `${left} case${left > 1 ? 's' : ''} à trouver<span class="dot">·</span>clique une carte pour la cocher`
+      : 'Masterset complet 🎉'}</div>`;
+}
+function paintMastersetHead() {
+  const m = msEntry(state.mastersetOpen); if (!m) return;
+  const head = document.getElementById('ms-head');
+  if (head) head.innerHTML = msProgressHTML(m);
+  const btn = document.getElementById('ms-all-btn');
+  if (btn) {
+    const full = m.slots > 0 && msOwnedCount(m) >= m.slots;
+    const lab = full ? 'Tout décocher' : 'Tout cocher';
+    btn.innerHTML = `${full ? ICO.close : ICO.check}<span>${lab}</span>`;
+    btn.setAttribute('aria-label', lab);   // sur téléphone l'étiquette est masquée
+  }
+}
+/* LA GRILLE. Une case par exemplaire : la carte, puis son reverse juste après
+   quand il existe. Le balisage est celui des vignettes de wishlist
+   (`.card-thumb`) — donc le gris/couleur est déjà là : `.card-thumb` est
+   désaturée par défaut, `.mine` lui rend ses couleurs. Une case cochée est en
+   couleur avec sa pastille, une case manquante est grise. */
+function mastersetGridHTML(m, d) {
+  const out = [];
+  let i = 0;
+  for (const c of d.cards) {
+    const mask = msMask(m, c.id);
+    out.push(msSlotHTML(m, c, 'n', !!(mask & MS_N), i++));
+    if (d.rev.has(String(c.id))) out.push(msSlotHTML(m, c, 'r', !!(mask & MS_R), i++));
+  }
+  return `<div class="cards-grid ms-grid">${out.join('')}</div>`;
+}
+function msSlotHTML(m, c, variant, have, i) {
+  const rev = variant === 'r';
+  const go = `toggleMasterslot('${esc(m.setId)}','${esc(String(c.id))}','${variant}')`;
+  return `<div class="card-thumb ms-slot ${have ? 'have mine' : ''}" data-slot="${esc(String(c.id))}:${variant}"
+    style="animation-delay:${Math.min(i * 16, 300)}ms" role="button" tabindex="0" aria-pressed="${have}"
+    aria-label="${esc(c.name)} ${rev ? 'reverse' : 'normale'} — ${have ? 'obtenue' : 'manquante'}"
+    onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${go}}">
+    <div class="card-thumb-imgwrap">
+      ${c.image
+        ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.__set || m.setId)}','${jss(c.name)}')" alt="${esc(c.name)}">`
+        : noImgHTML(c.localId, c.name, c.__set || m.setId)}
+      ${rev ? `<span class="ms-rev" aria-hidden="true">Reverse</span>` : ''}
+      <span class="ms-check" aria-hidden="true">${ICO.check}</span>
+    </div>
+    <div class="card-thumb-info">
+      <div class="card-thumb-name">${esc(c.name)}</div>
+      <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}${rev ? ' · reverse' : ''}</div>
+    </div>
+  </div>`;
 }
 
 // ── Édition SCELLÉ ──────────────────────────────────────────────

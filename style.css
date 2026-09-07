@@ -1309,6 +1309,47 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   transition:transform var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out),
              border-color var(--dur-2) var(--ease-out);
 }
+/* ══════════════════════════════════════════════════════════════════════
+   UN CADRE QUI ATTEND, PAS UN TROU NOIR
+
+   Le cadre d'une vignette est une plaque sombre : tant que le visuel n'était
+   pas arrivé, on regardait un rectangle noir — et sur une série de 48 cartes,
+   ça faisait un mur. Ce pseudo-élément donne au cadre une respiration très
+   lente le temps du chargement. Deux précautions :
+    · c'est une animation d'OPACITÉ (composité, zéro repeint) — pas un dégradé
+      qui se déplace ;
+    · elle vit sous `content-visibility:auto`, donc les vignettes hors écran
+      n'animent rien du tout.
+   `artOk()` (au chargement) et `imgFail()` (à l'échec) posent `.art-in`, qui
+   l'éteint définitivement. Voir artAttrs() dans app.js.
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes art-wait{0%,100%{opacity:.5}50%{opacity:1}}
+.card-thumb-imgwrap::before,.cardtile-art::before,.card-picker-item::before{
+  content:'';position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;
+  /* Assez CLAIR pour se lire comme une plaque en attente et non comme un trou :
+     à .075 d'opacité le cadre restait noir sur l'acier de l'app — c'est
+     précisément le défaut qu'on corrige. */
+  background:
+    radial-gradient(120% 80% at 50% 22%,rgba(255,255,255,.10),transparent 68%),
+    linear-gradient(148deg,rgba(255,255,255,.13),rgba(255,255,255,.035) 48%,rgba(255,255,255,.10));
+  animation:art-wait 1.7s ease-in-out infinite}
+.card-thumb-imgwrap.art-in::before,.cardtile-art.art-in::before,.card-picker-item.art-in::before{
+  animation:none;opacity:0}
+/* Carte sans visuel du tout (`.card-noimg`) : il n'y a rien à attendre, donc
+   rien à faire respirer — le placeholder est déjà la réponse définitive. */
+.card-thumb-imgwrap:has(.card-noimg)::before,
+.cardtile-art:has(.card-noimg)::before,
+.card-picker-item:has(.card-noimg)::before{animation:none;opacity:0}
+/* Le visuel se pose AU-DESSUS de la respiration (sinon elle continuerait de
+   scintiller par-dessus la carte le temps du fondu). */
+.card-thumb-imgwrap img,.card-thumb-imgwrap .card-noimg,
+.cardtile-art img,.cardtile-art .card-noimg,
+.card-picker-item img,.card-picker-item .card-noimg,
+.card-picker-item .card-picker-name{position:relative;z-index:1}
+.cardtile-zoom{z-index:2}
+@media(prefers-reduced-motion:reduce){
+  .card-thumb-imgwrap::before,.cardtile-art::before,.card-picker-item::before{animation:none;opacity:.5}
+}
 /* Même correction que sur les tuiles du portefeuille : `contain` laissait des
    bandes noires (les scans n'ont pas tous exactement le ratio 2,5/3,5). */
 .card-thumb-imgwrap img{width:100%;height:100%;object-fit:cover;background:none;cursor:pointer;
@@ -1865,7 +1906,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   border-radius:var(--pill);background:color-mix(in srgb,var(--acc) 20%,transparent);
   border:1px solid color-mix(in srgb,var(--acc) 40%,transparent);
   transition:transform var(--dur-2) var(--ease-out),background var(--flow),border-color var(--flow)}
-.inv-switch[data-mode="cards"] .inv-switch-pill{transform:translateX(100%)}
+.inv-switch[data-mode="masterset"] .inv-switch-pill{transform:translateX(100%)}
 .inv-switch-btn{position:relative;z-index:1;min-width:118px;min-height:38px;padding:0 20px;
   border-radius:var(--pill);font-size:14px;font-weight:700;color:var(--t3);
   transition:color var(--dur-1) var(--ease-out)}
@@ -2063,6 +2104,89 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardser-bar-name{flex:1;min-width:0;font-size:19px;font-weight:800;letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cardser-bar-meta{flex:none;font-size:12.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MASTERSET — une case par exemplaire, grise ou en couleur
+
+   Aucun nouveau langage visuel : une case de masterset EST une vignette de
+   carte (`.card-thumb`), donc elle hérite du gris/couleur déjà en place —
+   `.card-thumb` est désaturée par défaut, `.mine` lui rend ses couleurs. Ce
+   bloc n'ajoute que ce qui manque : la coche, l'étiquette « Reverse », la
+   barre de progression et la corbeille des bulles.
+   ══════════════════════════════════════════════════════════════════════ */
+.ms-listbar{display:flex;align-items:center;gap:var(--s4);margin:0 0 var(--s4)}
+.ms-listtitle{flex:1;min-width:0;font-size:clamp(16px,2vw,19px);font-weight:800;letter-spacing:-.02em}
+.inv-kpi-unit{font-size:.52em;font-weight:700;letter-spacing:.02em;color:var(--t3);margin-left:2px}
+
+/* ── Bulle d'un masterset (liste) ─────────────────────────────────────
+   `div[role=button]` et non `<button>` : la corbeille est un bouton, et un
+   bouton dans un bouton n'existe pas. Le clavier est géré (Entrée / Espace). */
+.ms-bubble{position:relative;cursor:pointer}
+.ms-bubble:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.ms-bubble .progress-wrap{width:100%;min-width:0;gap:9px}
+.ms-bubble .progress-label{font-size:11px;color:var(--t3)}
+/* Un masterset COMPLET se dit par l'arête, pas par un badge de plus. */
+.ms-bubble.done{border-color:color-mix(in srgb,var(--ok) 46%,transparent)}
+.ms-bubble.done .progress-fill{background:var(--ok)}
+.ms-del{top:9px;right:9px}
+.ms-bubble:hover .ms-del,.ms-del:focus-visible{opacity:1}
+
+/* ── Bandeau du masterset ouvert ── */
+.ms-head{margin-bottom:var(--s5)}
+.ms-head .progress-wrap{width:100%}
+.ms-head .progress-track{height:7px}
+.ms-count{font-variant-numeric:tabular-nums}
+.ms-legend{margin-top:9px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  font-size:12px;color:var(--t3)}
+.ms-legend .dot{opacity:.45}
+.ms-all svg{width:15px;height:15px}
+/* Sur téléphone, le bandeau tient trois objets sur 375 px : le retour, le logo
+   de la série et ce bouton. L'étiquette part, l'icône reste — et `aria-label`
+   dit ce qu'elle fait (voir msHeadHTML / paintMastersetHead). */
+@media(max-width:560px){
+  .ms-all span{display:none}
+  .ms-all{flex:none;width:42px;height:42px;padding:0;display:grid;place-items:center}
+}
+
+/* ── La grille ── */
+/* Deux cases par carte au maximum : un set de 250 en fait ~420. La
+   containment vient de `.cards-grid>.card-thumb` (bloc en haut du fichier) :
+   la grille du masterset EST une `.cards-grid`, il n'y a rien à redire ici. */
+.ms-slot{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ms-slot:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:16px}
+/* La coche : absente tant que la case n'est pas cochée, et jamais un bouton —
+   c'est toute la vignette qui se clique. */
+.ms-check{position:absolute;top:8px;left:8px;z-index:4;width:26px;height:26px;
+  display:grid;place-items:center;border-radius:8px;
+  background:rgba(10,42,31,.86);border:1px solid rgba(61,220,151,.55);color:var(--ok);
+  opacity:0;transform:scale(.6);
+  transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out)}
+.ms-check svg{width:15px;height:15px}
+.ms-slot.have .ms-check{opacity:1;transform:none}
+.ms-slot.have .card-thumb-imgwrap{border-color:color-mix(in srgb,var(--ok) 46%,transparent)}
+/* Au survol d'une case manquante, la carte reprend ses couleurs : on voit ce
+   qu'on est sur le point de cocher. */
+@media(hover:hover){
+  .ms-slot:not(.have):hover .card-thumb-imgwrap img{filter:none}
+  .ms-slot:not(.have):hover .ms-check{opacity:.45;transform:none}
+}
+.ms-slot:active .card-thumb-imgwrap{transform:scale(.985)}
+/* « Reverse » : l'étiquette est la SEULE différence visible entre les deux
+   cases d'une même carte (le scan est le même chez TCGdex). Elle doit donc se
+   lire sans hésitation — d'où le fond plein et la majuscule espacée. */
+.ms-rev{position:absolute;bottom:8px;left:8px;right:8px;z-index:3;
+  padding:4px 0;border-radius:var(--pill);text-align:center;
+  background:rgba(8,10,14,.72);border:1px solid rgba(255,255,255,.16);
+  font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#CFD6E4}
+.ms-slot.have .ms-rev{background:rgba(8,10,14,.6);color:#E7ECF5;
+  border-color:color-mix(in srgb,var(--acc) 34%,transparent)}
+
+/* ── Sélecteur : un bloc déjà masterisé ── */
+.series-item{position:relative}
+.series-item.is-added{border-color:color-mix(in srgb,var(--ok) 55%,transparent)}
+.series-added{position:absolute;top:6px;right:6px;z-index:2;width:20px;height:20px;
+  display:grid;place-items:center;border-radius:50%;background:var(--ok);color:#06251A}
+.series-added svg{width:12px;height:12px}
 
 /* ── Tuile de carte suivie ── */
 /* Tuile horizontale : la vignette à gauche, les chiffres à droite. C'est la
