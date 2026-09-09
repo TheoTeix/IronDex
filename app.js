@@ -8821,6 +8821,13 @@ function renderInvestBody() {
     });
     // Dates de sortie manquantes → on les récupère puis on re-trie en place.
     ensureSetDates(() => { if (state.view === 'invest' && state.investMode === 'cards' && !state.investSeriesOpen) renderInvestBody(); });
+    // Séries restées « ? » depuis un import (« HS : Triomphe »…) : on leur
+    // rend leur vrai set — donc leur logo, leur bloc et leur visuel.
+    repairUnknownSets(n => {
+      toast(`${n} carte${n > 1 ? 's' : ''} rattachée${n > 1 ? 's' : ''} à sa série`, 'success');
+      if (state.view === 'invest' && state.investMode === 'cards') renderInvestBody();
+      prefetchCardPrices();
+    });
     // Visuels encore absents (promos dont l'API n'expose pas le champ image) :
     // URL d'asset reconstruite puis testée. Limité à la série ouverte.
     if (state.investSeriesOpen) {
@@ -9544,12 +9551,19 @@ function toggleMasterslot(setId, cardId, variant) {
   const next = (m.owned[cardId] | 0) ^ bit;
   if (next) m.owned[cardId] = next; else delete m.owned[cardId];
   save();
-  const el = document.querySelector(`.ms-slot[data-slot="${cardId}:${variant}"]`);
-  if (el) {
-    const have = !!(next & bit);
-    el.classList.toggle('have', have);
-    el.classList.toggle('mine', have);
-    el.setAttribute('aria-pressed', String(have));
+  // La vignette et SA coche : la carte reprend ses couleurs dès qu'une des
+  // deux versions est cochée, chaque coche ne parle que de la sienne.
+  const tile = document.querySelector(`.ms-slot[data-card="${cardId}"]`);
+  if (tile) {
+    const any = !!next;
+    tile.classList.toggle('have', any);
+    tile.classList.toggle('mine', any);
+    const tog = tile.querySelector(`.ms-tog[data-var="${variant}"]`);
+    if (tog) {
+      const on = !!(next & bit);
+      tog.classList.toggle('on', on);
+      tog.setAttribute('aria-pressed', String(on));
+    }
   }
   paintMastersetHead();
 }
@@ -9679,7 +9693,7 @@ function msProgressHTML(m) {
       <span class="progress-label">${pct}%</span>
     </div>
     <div class="ms-legend">${left
-      ? `${left} case${left > 1 ? 's' : ''} à trouver<span class="dot">·</span>clique une carte pour la cocher`
+      ? `${left} case${left > 1 ? 's' : ''} à trouver<span class="dot">·</span>une coche par version : normale, reverse`
       : 'Masterset complet 🎉'}</div>`;
 }
 function paintMastersetHead() {
@@ -9694,39 +9708,53 @@ function paintMastersetHead() {
     btn.setAttribute('aria-label', lab);   // sur téléphone l'étiquette est masquée
   }
 }
-/* LA GRILLE. Une case par exemplaire : la carte, puis son reverse juste après
-   quand il existe. Le balisage est celui des vignettes de wishlist
-   (`.card-thumb`) — donc le gris/couleur est déjà là : `.card-thumb` est
-   désaturée par défaut, `.mine` lui rend ses couleurs. Une case cochée est en
-   couleur avec sa pastille, une case manquante est grise. */
+/* LA GRILLE. UNE vignette par carte, et sous elle UNE COCHE PAR VERSION : la
+   normale, puis la reverse quand elle existe — comme sur Pokécardex.
+   Avant, la reverse était une vignette SÉPARÉE : le même scan apparaissait
+   deux fois de suite (TCGdex n'a qu'une image), un set de 250 cartes s'étirait
+   sur 420 cases, et rien ne disait laquelle des deux on regardait — seule une
+   étiquette « Reverse » les distinguait. Le décompte, lui, n'a pas changé :
+   c'est toujours une case par exemplaire à posséder (voir msSlots).
+   Le balisage reste celui des vignettes de wishlist (`.card-thumb`), donc le
+   gris/couleur est déjà là : désaturée par défaut, `.mine` lui rend ses
+   couleurs dès qu'UNE des deux versions est cochée. */
 function mastersetGridHTML(m, d) {
-  const out = [];
-  let i = 0;
-  for (const c of d.cards) {
-    const mask = msMask(m, c.id);
-    out.push(msSlotHTML(m, c, 'n', !!(mask & MS_N), i++));
-    if (d.rev.has(String(c.id))) out.push(msSlotHTML(m, c, 'r', !!(mask & MS_R), i++));
-  }
-  return `<div class="cards-grid ms-grid">${out.join('')}</div>`;
+  return `<div class="cards-grid ms-grid">${d.cards
+    .map((c, i) => msSlotHTML(m, c, d.rev.has(String(c.id)), i)).join('')}</div>`;
 }
-function msSlotHTML(m, c, variant, have, i) {
-  const rev = variant === 'r';
-  const go = `toggleMasterslot('${esc(m.setId)}','${esc(String(c.id))}','${variant}')`;
-  return `<div class="card-thumb ms-slot ${have ? 'have mine' : ''}" data-slot="${esc(String(c.id))}:${variant}"
-    style="animation-delay:${Math.min(i * 16, 300)}ms" role="button" tabindex="0" aria-pressed="${have}"
-    aria-label="${esc(c.name)} ${rev ? 'reverse' : 'normale'} — ${have ? 'obtenue' : 'manquante'}"
-    onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${go}}">
+function msSlotHTML(m, c, hasRev, i) {
+  const id = String(c.id);
+  const mask = msMask(m, c.id);
+  const hasN = !!(mask & MS_N), hasR = hasRev && !!(mask & MS_R);
+  const any = hasN || hasR;
+  // Une coche = un bouton à part entière : chacune ne coche que SA version, et
+  // le clic ne remonte pas à la vignette (qui coche la normale).
+  const tog = (variant, label, on) => {
+    const go = `toggleMasterslot('${esc(m.setId)}','${esc(id)}','${variant}')`;
+    return `<button type="button" class="ms-tog ${on ? 'on' : ''}" data-var="${variant}"
+      aria-pressed="${on}" aria-label="${esc(c.name)} version ${label.toLowerCase()} — ${on ? 'obtenue' : 'manquante'}"
+      onclick="event.stopPropagation();${go}">${label}</button>`;
+  };
+  // La vignette elle-même coche la NORMALE : c'est la plus grande cible, et
+  // c'est le geste attendu (« celle-là, je l'ai »). La reverse, elle, ne se
+  // coche que par sa propre case — on ne l'attrape pas par accident.
+  // Pas de `role=button` sur la vignette : elle contient maintenant de VRAIS
+  // boutons, et un bouton dans un bouton n'existe pas. Le clavier passe donc
+  // par les deux coches, qui atteignent les deux versions.
+  const goN = `toggleMasterslot('${esc(m.setId)}','${esc(id)}','n')`;
+  return `<div class="card-thumb ms-slot ${any ? 'have mine' : ''}" data-card="${esc(id)}"
+    style="animation-delay:${Math.min(i * 16, 300)}ms" onclick="${goN}">
     <div class="card-thumb-imgwrap">
       ${c.image
         ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.__set || m.setId)}','${jss(c.name)}')" alt="${esc(c.name)}">`
         : noImgHTML(c.localId, c.name, c.__set || m.setId)}
-      ${rev ? `<span class="ms-rev" aria-hidden="true">Reverse</span>` : ''}
       <span class="ms-check" aria-hidden="true">${ICO.check}</span>
     </div>
     <div class="card-thumb-info">
       <div class="card-thumb-name">${esc(c.name)}</div>
-      <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}${rev ? ' · reverse' : ''}</div>
+      <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>
     </div>
+    <div class="ms-togs ${hasRev ? '' : 'solo'}">${tog('n', 'Normale', hasN)}${hasRev ? tog('r', 'Reverse', hasR) : ''}</div>
   </div>`;
 }
 
@@ -9906,6 +9934,11 @@ const CARD_SET_ALIASES = {
   'promos mega evolution': 'mep black star promos',
   'promos black star heartgold soulsilver': 'promo hgss',
   'promos black star noir blanc': 'promo bw',
+  // Pokécardex dit « HS : Triomphe », tcgdex « Triomphant » : les deux mots
+  // divergent à la 8e lettre, donc le rattrapage par préfixe commun (plus bas)
+  // ne pouvait pas les rapprocher — les cartes restaient sans set, donc sans
+  // visuel, sans cote et rangées dans « Autres séries ».
+  'hs triomphe': 'triomphant',
   'energies ecarlate et violet': 'ecarlate et violet energie',
   'promo mcdonald s 2024': 'collection mcdonald s 2024',
   'promo mcdonald s 2022': 'collection mcdonald s 2022',
@@ -10015,6 +10048,67 @@ async function importCardRows(rows) {
     prefetchCardPrices();
   } catch (err) { console.warn('import cartes', err); el.classList.remove('open'); toast('Import échoué', 'error'); }
 }
+/* ══════════════════════════════════════════════════════════════════════
+   RATTRAPAGE DES SÉRIES NON RÉSOLUES (setId « ?… »)
+   Quand l'import Pokécardex ne retrouve pas le set d'une ligne, il garde le
+   nom du CSV et préfixe l'identifiant d'un « ? » : la carte n'a alors ni
+   visuel, ni cote, ni bloc — elle tombait tout en bas, dans « Autres séries ».
+   Le cas réel était « HS : Triomphe » (voir CARD_SET_ALIASES).
+   Corriger l'alias ne suffit pas : les cartes déjà enregistrées gardent leur
+   « ? ». On les rattrape donc UNE FOIS par session, à l'ouverture de la
+   Collection — une requête par série orpheline, et la carte récupère son vrai
+   set, son visuel et son numéro.
+   ══════════════════════════════════════════════════════════════════════ */
+let _repairedUnknownSets = false;
+async function repairUnknownSets(onDone) {
+  if (_repairedUnknownSets) return;
+  const orphans = (state.investCards || []).filter(p => String(p.setId || '').startsWith('?'));
+  _repairedUnknownSets = true;
+  if (!orphans.length) return;
+  let idx;
+  try { idx = await buildCardSetIndex(); }
+  catch { _repairedUnknownSets = false; return; }   // hors ligne : on retentera
+  // Une série orpheline = un nom de CSV. On la résout une seule fois, quel que
+  // soit le nombre de cartes qui en dépendent.
+  const byLabel = new Map();
+  for (const p of orphans) {
+    const label = p.setName || String(p.setId).slice(1);
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label).push(p);
+  }
+  let fixed = 0;
+  for (const [label, list] of byLabel) {
+    const key = resolveCardSetKey(label, idx);
+    const info = key ? idx[key] : null;
+    if (!info) continue;
+    // Set de base + ses sous-séries (galeries…) : chaque carte garde SON set
+    // réel, dont dépendent sa cote et son lien Cardmarket.
+    const byLocal = {};
+    for (const k of [key, ...companionSetKeys(key, idx)]) {
+      try {
+        const set = await apiFetch('/sets/' + idx[k].id);
+        (set.cards || []).forEach(c => {
+          const lk = cardLocalKey(c.localId);
+          if (!(lk in byLocal)) byLocal[lk] = { c, set: idx[k] };
+        });
+      } catch {}
+    }
+    for (const p of list) {
+      const hit = byLocal[cardNumLocal(p.number || p.localId)];
+      const src = hit ? hit.set : info;
+      p.setId = src.id; p.setName = src.name; p.logo = src.logo || null;
+      if (hit) {
+        p.cardId = hit.c.id;
+        if (hit.c.localId) p.localId = hit.c.localId;
+        if (hit.c.name) p.name = hit.c.name;
+        if (!p.image && hit.c.image) p.image = hit.c.image;
+      }
+      fixed++;
+    }
+  }
+  if (fixed) { save(); if (onDone) onDone(fixed); }
+}
+
 // Cote en arrière-plan les cartes de l'app qui n'ont AUCUNE valeur enregistrée
 // (après un import, une restauration…) puis met les totaux à jour en place.
 function prefetchCardPrices() {

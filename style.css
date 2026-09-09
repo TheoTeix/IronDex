@@ -215,7 +215,7 @@ ul{list-style:none}
 .cardlist>.cardtile{content-visibility:auto;contain-intrinsic-size:auto 258px}
 .card-picker-grid>.card-picker-item{content-visibility:auto;contain-intrinsic-size:auto 233px}
 .cards-grid>.card-thumb{content-visibility:auto;contain-intrinsic-size:auto 226px}
-.cardser-grid>.cardser-bubble{content-visibility:auto;contain-intrinsic-size:auto 223px}
+.cardser-grid>.cardser-bubble{content-visibility:auto;contain-intrinsic-size:auto 245px}
 
 /* ═══════════════════ MOTION : primitives partagées ═══════════════════ */
 /* Entrée en cascade. --i = index ; 38ms par élément, plafonné (jamais de
@@ -2036,18 +2036,26 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   background:none;box-shadow:none}
 .cardser-logo img,.cardser-detail-logo img{
   filter:drop-shadow(0 0 6px rgba(255,255,255,.30)) drop-shadow(0 2px 8px rgba(0,0,0,.55))}
-.cardser-logo{height:56px;width:100%;min-width:0}
+/* LA HAUTEUR DE LA PLAQUE EST CE QUI DÉCIDE DE LA TAILLE DES VIEUX LOGOS.
+   Les logos récents (Écarlate et Violet, Épée et Bouclier…) sont des bandeaux
+   très larges : c'est `max-width:100%` qui les borne, ils remplissent donc la
+   bulle. Ceux des blocs anciens (HeartGold SoulSilver, EX, Diamant & Perle…)
+   sont presque carrés : bornés à 38 px de haut ils ne faisaient que 38 px de
+   large dans une bulle de 150 — un timbre-poste illisible au milieu du vide.
+   La plaque passe donc à 78 px et l'image à 66 px : le logo carré occupe
+   enfin sa place, le bandeau large ne change pas (sa largeur le borne déjà). */
+.cardser-logo{height:78px;width:100%;min-width:0}
 /* `max-width:100%` est la vraie correction : sans elle, l'image gardait sa
-   largeur intrinsèque (un bandeau de 200 px et plus une fois ramené à 38 px de
+   largeur intrinsèque (un bandeau de 200 px et plus une fois ramené à 66 px de
    haut) et poussait sa bulle — donc sa colonne — hors de l'écran. */
-.cardser-logo img{max-height:38px;max-width:100%;width:auto;object-fit:contain}
+.cardser-logo img{max-height:66px;max-width:100%;width:auto;object-fit:contain}
 /* `.cardser-detail-logo` est un WRAPPER, comme `.cardser-logo` : la plaque
    claire est portée par le div, l'image est bornée à l'intérieur. Quand la
    classe était posée sur l'`<img>` elle-même, `.cardser-detail-logo img` ne
    matchait plus rien : l'image héritait de `display:grid` et d'aucune limite
    de taille, et s'étalait en bandeau blanc sur toute la largeur. */
-.cardser-detail-logo{height:62px;flex:none;max-width:min(420px,52vw)}
-.cardser-detail-logo img{max-height:44px;max-width:100%;width:auto;object-fit:contain}
+.cardser-detail-logo{height:74px;flex:none;max-width:min(420px,52vw)}
+.cardser-detail-logo img{max-height:62px;max-width:100%;width:auto;object-fit:contain}
 .cardser-fallback,.series-fallback{font-size:12px;font-weight:800;color:#39404E;letter-spacing:-.01em;
   padding:0 6px;text-align:center}
 .cardser-name{font-size:14px;font-weight:700;letter-spacing:-.012em;line-height:1.3;text-wrap:balance}
@@ -2154,6 +2162,10 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
    la grille du masterset EST une `.cards-grid`, il n'y a rien à redire ici. */
 .ms-slot{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .ms-slot:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:16px}
+/* Une vignette porte maintenant ses deux coches : elle est donc plus haute que
+   celles d'une wishlist, et la réservation de place doit suivre (sinon la barre
+   de défilement saute quand les cases hors écran se peignent). */
+.ms-grid>.ms-slot{contain-intrinsic-size:auto 272px}
 /* La coche : absente tant que la case n'est pas cochée, et jamais un bouton —
    c'est toute la vignette qui se clique. */
 .ms-check{position:absolute;top:8px;left:8px;z-index:4;width:26px;height:26px;
@@ -2170,16 +2182,36 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .ms-slot:not(.have):hover .card-thumb-imgwrap img{filter:none}
   .ms-slot:not(.have):hover .ms-check{opacity:.45;transform:none}
 }
-.ms-slot:active .card-thumb-imgwrap{transform:scale(.985)}
-/* « Reverse » : l'étiquette est la SEULE différence visible entre les deux
-   cases d'une même carte (le scan est le même chez TCGdex). Elle doit donc se
-   lire sans hésitation — d'où le fond plein et la majuscule espacée. */
-.ms-rev{position:absolute;bottom:8px;left:8px;right:8px;z-index:3;
-  padding:4px 0;border-radius:var(--pill);text-align:center;
-  background:rgba(8,10,14,.72);border:1px solid rgba(255,255,255,.16);
-  font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#CFD6E4}
-.ms-slot.have .ms-rev{background:rgba(8,10,14,.6);color:#E7ECF5;
-  border-color:color-mix(in srgb,var(--acc) 34%,transparent)}
+/* L'enfoncement est celui de l'objet cliqué : appuyer sur une coche ne doit
+   pas faire aussi reculer la carte (`:active` remonte aux ancêtres en CSS). */
+.ms-slot:active:not(:has(.ms-tog:active)) .card-thumb-imgwrap{transform:scale(.985)}
+/* ── LES DEUX COCHES : « Normale » puis « Reverse » ───────────────────
+   Le scan est le MÊME chez TCGdex pour les deux versions : les distinguer par
+   l'image est impossible, et deux vignettes identiques côte à côte ne se
+   lisaient pas. Ce sont donc deux cases nommées sous une seule carte.
+   Une case cochée est PLEINE (vert), une case vide est un contour sourd :
+   l'état se lit d'un coup d'œil sur une grille de 250 cartes, sans avoir à
+   comparer deux nuances de gris. Grille 1fr/1fr plutôt que flex : les deux
+   cases font exactement la même largeur, même quand les mots ne font pas la
+   même longueur. */
+.ms-togs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px}
+.ms-togs.solo{grid-template-columns:1fr}
+.ms-tog{
+  min-width:0;padding:6px 4px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--t3);
+  font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:background var(--dur-1) var(--ease-out),border-color var(--dur-1) var(--ease-out),
+             color var(--dur-1) var(--ease-out),transform var(--dur-0) var(--ease-out);
+}
+.ms-tog.on{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ok);
+  border-color:color-mix(in srgb,var(--ok) 55%,transparent)}
+.ms-tog:active{transform:scale(.96)}
+.ms-tog:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media(hover:hover){
+  .ms-tog:hover{border-color:color-mix(in srgb,var(--ok) 45%,transparent);color:var(--t2)}
+  .ms-tog.on:hover{color:var(--ok)}
+}
 
 /* ── Sélecteur : un bloc déjà masterisé ── */
 .series-item{position:relative}
@@ -2421,9 +2453,14 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .series-item:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--acc) 46%,transparent);
   background:color-mix(in srgb,var(--acc) 8%,transparent)}
 .series-item:active{transform:translateY(-1px) scale(.99);transition-duration:var(--dur-0)}
-.series-logo-wrap{display:grid;place-items:center;width:100%;height:50px;padding:7px 10px;border-radius:var(--r-sm);
+/* Même arbitrage que pour `.cardser-logo` : c'est la hauteur qui décide de la
+   taille des logos presque carrés des blocs anciens (HGSS, EX, Diamant &
+   Perle), les bandeaux récents étant déjà bornés par leur largeur.
+   `max-width:100%` est indispensable ici aussi : sans lui un bandeau garderait
+   sa largeur intrinsèque et pousserait sa colonne hors de la fenêtre. */
+.series-logo-wrap{display:grid;place-items:center;width:100%;height:72px;padding:7px 10px;border-radius:var(--r-sm);
   background:linear-gradient(180deg,#F4F6FA,#D8DEE9)}
-.series-logo{max-height:34px;width:auto;object-fit:contain}
+.series-logo{max-height:58px;max-width:100%;width:auto;object-fit:contain}
 .series-name{font-size:12.5px;font-weight:700;line-height:1.3;text-wrap:balance}
 .series-count{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3)}
 
@@ -3594,6 +3631,12 @@ body::before{display:none}
   .cards-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s4) 8px}
   .cards-grid>*{min-width:0}
   .cards-grid .card-thumb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Masterset : trois colonnes, donc des tuiles de ~104 px. Côte à côte, les
+     deux coches n'avaient plus que 47 px de texte chacune et affichaient
+     « NOR… / REVE… » — une coche qu'il faut deviner ne sert à rien. Elles
+     s'empilent donc : « Normale » puis « Reverse », en pleine largeur. */
+  .ms-togs{grid-template-columns:1fr;gap:5px;margin-top:8px}
+  .ms-tog{padding:7px 4px}
   /* `minmax(0,1fr)` : deux colonnes qui acceptent VRAIMENT de rétrécir. */
   .cardser-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s3)}
   /* Compteurs du portefeuille : une seule LIGNE, pas une grille de carrés.
