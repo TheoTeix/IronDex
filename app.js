@@ -9221,7 +9221,14 @@ function cardsSeriesDetailHTML(setId, groups) {
       <span class="cardser-bar-meta">${seriesBarMetaText(setId, g, rows)}</span>
     </div>
     ${serieFiltersHTML(setId)}
-    <div class="cards-grid">${rows.map((r, i) => r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).join('')}</div>`;
+    ${rows.length
+      ? `<div class="cards-grid">${rows.map((r, i) => r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).join('')}</div>`
+      /* Une grille vide sans explication ressemble à une panne. Ce set n'a que
+         des raretés que les filtres écartent — on le dit, et on montre la
+         sortie. */
+      : `<div class="empty-state"><div class="empty-state-icon">${RARITY_ICO.star}</div>
+          <div class="empty-state-title">Rien à afficher ici</div>
+          <div class="empty-state-sub">Tout ce que contient cette série est masqué par tes réglages d'affichage. Rallume une pastille au-dessus pour revoir les cartes.</div></div>`}`;
 }
 /* L'ÉTOILE — choisir ce qu'on regarde.
    Décochée, les rares disparaissent de la grille : il ne reste que les cartes
@@ -9252,14 +9259,21 @@ function serieFiltersHTML(setId) {
 const RARITY_ICO = {
   star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.1l2.62 5.75 6.28.72-4.66 4.26 1.26 6.17L12 16.9l-5.5 3.1 1.26-6.17L3.1 9.57l6.28-.72z" fill="currentColor"/></svg>',
 };
-/* Le compteur du bandeau : « 32 / 123 · 240 € ». Écrit ici et nulle part
+/* Le compteur du bandeau : « 25 / 109 · 240 € ». Écrit ici et nulle part
    ailleurs — refreshInvestTotals le repeint aussi (quantité, cote qui arrive),
    et deux formats concurrents faisaient disparaître le « / total » au premier
-   changement de quantité. Sans catalogue, pas de dénominateur à annoncer. */
+   changement de quantité. Sans catalogue, pas de dénominateur à annoncer.
+
+   LA FRACTION DÉCRIT LA GRILLE, pas la série : depuis que l'étoile peut
+   masquer des cartes qu'on possède, compter TOUTES mes cartes au numérateur
+   aurait annoncé « 32 / 109 » alors que 25 seulement sont à l'écran. Le prix,
+   lui, reste celui de la série entière : c'est ce qu'on possède qui vaut
+   quelque chose, pas ce qu'on regarde. */
 function seriesBarMetaText(setId, g, rows) {
   rows = rows || seriesRows(setId, g);
   const cat = _serieCat[String(setId)];
-  return `${cat ? `${g.count} / ${rows.length}` : g.count} · ${fmt(g.value)}`;
+  const mine = cat ? rows.filter(r => r.p).length : g.count;
+  return `${cat ? `${mine} / ${rows.length}` : mine} · ${fmt(g.value)}`;
 }
 /* LES LIGNES DE LA GRILLE : le catalogue filtré UNION mes cartes.
    L'union, et pas le catalogue seul : une carte qui est à moi ne doit jamais
@@ -9277,8 +9291,14 @@ function seriesRows(setId, g) {
   for (const p of g.cards) {
     const key = p.cardId ? String(p.cardId) : 'own:' + p.id;
     const hit = rows.get(key);
-    if (hit) hit.p = p;
-    else rows.set(key, { c: null, p, k: p.localId });
+    if (hit) { hit.p = p; continue; }
+    // Absente des lignes : soit un filtre vient d'écarter sa rareté — et une
+    // carte à moi n'y échappe pas —, soit elle n'est pas au catalogue du tout
+    // (commune gardée exprès, carte ajoutée à la main, numéro inconnu de
+    // TCGdex). Le second cas reste affiché : aucun réglage ne le gouverne, et
+    // le faire disparaître serait une perte sèche.
+    if (p.cardId && cat && !serieCardShown(cat, p.cardId)) continue;
+    rows.set(key, { c: null, p, k: p.localId });
   }
   return [...rows.values()].sort((a, b) => cmpLocalId(a.k, b.k));
 }
@@ -9604,9 +9624,11 @@ async function seriesCatalog(setId) {
 const SERIE_FILTERS = [
   { key: 'rare', label: 'Rares', ico: 'star', has: (cat, id) => cat.rare && cat.rare.has(id) },
 ];
-// Une carte du catalogue est-elle visible avec les réglages actuels ? Une
-// carte QU'ON POSSÈDE l'est toujours : un filtre d'affichage ne cache pas la
-// collection (voir seriesRows).
+/* Une carte est-elle visible avec les réglages actuels ? La réponse ne dépend
+   QUE de sa rareté — possédée ou non. Éteindre l'étoile retire donc aussi les
+   rares qu'on a déjà : quand on ne veut plus voir les rares, on ne veut plus
+   les voir du tout, et en garder quelques-unes au milieu des chases aurait
+   donné une grille à trous qu'on ne sait pas lire. */
 function serieCardShown(cat, cardId) {
   if (!cat) return true;
   for (const f of SERIE_FILTERS) {
