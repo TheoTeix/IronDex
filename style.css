@@ -2165,7 +2165,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 /* Une vignette porte maintenant ses deux coches : elle est donc plus haute que
    celles d'une wishlist, et la réservation de place doit suivre (sinon la barre
    de défilement saute quand les cases hors écran se peignent). */
-.ms-grid>.ms-slot{contain-intrinsic-size:auto 272px}
+.ms-grid>.ms-slot{contain-intrinsic-size:auto 266px}
 /* La coche : absente tant que la case n'est pas cochée, et jamais un bouton —
    c'est toute la vignette qui se clique. */
 .ms-check{position:absolute;top:8px;left:8px;z-index:4;width:26px;height:26px;
@@ -2194,23 +2194,52 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
    comparer deux nuances de gris. Grille 1fr/1fr plutôt que flex : les deux
    cases font exactement la même largeur, même quand les mots ne font pas la
    même longueur. */
-.ms-togs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px}
-.ms-togs.solo{grid-template-columns:1fr}
+.ms-togs{display:flex;justify-content:center;gap:7px;margin-top:8px}
 .ms-tog{
-  min-width:0;padding:6px 4px;border-radius:9px;cursor:pointer;
-  border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--t3);
-  font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:none;width:34px;height:30px;display:grid;place-items:center;cursor:pointer;
+  border-radius:9px;border:1px solid var(--line);background:none;color:var(--t3);
   transition:background var(--dur-1) var(--ease-out),border-color var(--dur-1) var(--ease-out),
              color var(--dur-1) var(--ease-out),transform var(--dur-0) var(--ease-out);
 }
-.ms-tog.on{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ok);
-  border-color:color-mix(in srgb,var(--ok) 55%,transparent)}
-.ms-tog:active{transform:scale(.96)}
+.ms-tog svg{width:17px;height:17px}
+/* Obtenue : le glyphe passe au vert et son cadre se teinte. Pas de pavé plein
+   — répété 420 fois, c'était la couleur des étiquettes qu'on voyait, pas
+   celle des cartes. */
+.ms-tog.on{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);
+  border-color:color-mix(in srgb,var(--ok) 48%,transparent)}
+.ms-tog:active{transform:scale(.92)}
 .ms-tog:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 @media(hover:hover){
-  .ms-tog:hover{border-color:color-mix(in srgb,var(--ok) 45%,transparent);color:var(--t2)}
+  .ms-tog:hover{border-color:color-mix(in srgb,var(--ok) 42%,transparent);color:var(--t2)}
   .ms-tog.on:hover{color:var(--ok)}
+}
+
+/* ── Ce qu'on affiche dans une série : l'étoile ───────────────────────
+   Une pastille par famille de rareté, sous la barre de la série. L'étoile est
+   le symbole IMPRIMÉ sur une carte rare : le repère est déjà dans l'œil du
+   collectionneur, il n'y a rien à apprendre. Le nombre à côté dit combien de
+   cartes la pastille gouverne — sans lui, on clique sans savoir ce qu'on
+   enlève. Allumée = affiché, éteinte = masqué, et l'éteinte reste lisible
+   (barrée d'aucune manière : c'est un interrupteur, pas une erreur). */
+.serie-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 var(--s4)}
+.serie-chip{
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+  padding:6px 11px 6px 9px;border-radius:var(--pill);
+  border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--t3);
+  font-size:11.5px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.02em;
+  transition:background var(--dur-1) var(--ease-out),border-color var(--dur-1) var(--ease-out),
+             color var(--dur-1) var(--ease-out),transform var(--dur-0) var(--ease-out);
+}
+.serie-chip svg{width:14px;height:14px;flex:none}
+.serie-chip.on{background:color-mix(in srgb,var(--acc) 18%,transparent);color:#fff;
+  border-color:color-mix(in srgb,var(--acc) 52%,transparent)}
+/* Éteinte, l'étoile se vide : le symbole lui-même dit l'état, pas seulement la
+   couleur du fond — c'est ce qui le rend lisible en niveaux de gris. */
+.serie-chip:not(.on) svg{opacity:.55}
+.serie-chip:active{transform:scale(.96)}
+.serie-chip:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media(hover:hover){
+  .serie-chip:hover{border-color:color-mix(in srgb,var(--acc) 46%,transparent);color:var(--t1)}
 }
 
 /* ── Série ouverte : les cases qu'on n'a pas ──────────────────────────
@@ -3693,12 +3722,10 @@ body::before{display:none}
   .cards-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s4) 8px}
   .cards-grid>*{min-width:0}
   .cards-grid .card-thumb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* Masterset : trois colonnes, donc des tuiles de ~104 px. Côte à côte, les
-     deux coches n'avaient plus que 47 px de texte chacune et affichaient
-     « NOR… / REVE… » — une coche qu'il faut deviner ne sert à rien. Elles
-     s'empilent donc : « Normale » puis « Reverse », en pleine largeur. */
-  .ms-togs{grid-template-columns:1fr;gap:5px;margin-top:8px}
-  .ms-tog{padding:7px 4px}
+  /* Les deux coches sont des pictogrammes : elles tiennent côte à côte même
+     sur des tuiles de 104 px. C'est le texte (« NOR… / REVE… » tronqué) qui
+     obligeait à les empiler. */
+  .ms-tog{width:38px;height:32px}
   /* `minmax(0,1fr)` : deux colonnes qui acceptent VRAIMENT de rétrécir. */
   .cardser-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s3)}
   /* Compteurs du portefeuille : une seule LIGNE, pas une grille de carrés.

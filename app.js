@@ -191,6 +191,7 @@ const state = {
   sealedPeriods: [],          // colonnes de valeur (semestres) : ['2026-07','2026-12', …]
   investCards: [],            // cartes suivies : { id, cardId, name, setId, setName, logo, number, localId, rarity, type, qty, image, buyPrice }
   investMode: 'cards',        // volet actif de la Collection : 'cards' | 'masterset'
+  serieShow: { rare: true },  // ce qu'on affiche dans une série ouverte (voir SERIE_FILTERS)
   investSeriesOpen: null,     // set ouvert dans le volet Cartes (détail) — runtime
   mastersets: [],             // mastersets suivis : { setId, setName, logo, serieId, serieName, date, slots, owned:{ cardId: 1|2|3 } }
   mastersetOpen: null,        // masterset ouvert (setId) — runtime
@@ -509,7 +510,7 @@ function autoBackup(tag) {
     .catch(() => false);
 }
 function collectionSnapshot() {
-  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, mastersets: state.mastersets, investMode: state.investMode, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
+  return { wishlists: state.wishlists, gradedCards: state.gradedCards, milobellus: state.milobellus, binders: state.binders, sealed: state.sealed, sealedPeriods: state.sealedPeriods, investCards: state.investCards, mastersets: state.mastersets, investMode: state.investMode, serieShow: state.serieShow, setDates: state.setDates, setBlocs: state.setBlocs, heroRef: state.heroRef, lastUpdated: new Date().toISOString() };
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -784,6 +785,9 @@ function applyLoaded(d) {
   }));
   state.mastersetOpen = null;
   state.investMode = d.investMode === 'masterset' ? 'masterset' : 'cards';
+  // Un réglage absent (sauvegarde d'avant ce filtre) vaut « tout affiché » :
+  // on ne fait jamais disparaître des cartes à cause d'une donnée manquante.
+  state.serieShow = { rare: (d.serieShow?.rare) !== false };
   state.setDates = d.setDates || {};
   state.setBlocs = d.setBlocs || {};
   state.investSeriesOpen = null;
@@ -9216,8 +9220,38 @@ function cardsSeriesDetailHTML(setId, groups) {
         : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
       <span class="cardser-bar-meta">${seriesBarMetaText(setId, g, rows)}</span>
     </div>
+    ${serieFiltersHTML(setId)}
     <div class="cards-grid">${rows.map((r, i) => r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).join('')}</div>`;
 }
+/* L'ÉTOILE — choisir ce qu'on regarde.
+   Décochée, les rares disparaissent de la grille : il ne reste que les cartes
+   au-dessus (double rare, ultra, illustration, secrètes) — la vraie liste de
+   recherche d'un set récent. Le compte est affiché parce qu'une pastille qui
+   ne dit pas combien de cartes elle gouverne ne s'appuie jamais avec confiance.
+   Le bandeau ne paraît QUE si la famille existe dans ce set : un set promo n'a
+   pas de rares, et une pastille qui ne fait rien n'a rien à faire là. Il
+   n'apparaît pas non plus avant le catalogue — on ne propose pas de filtrer ce
+   qui n'est pas encore affiché. */
+function serieFiltersHTML(setId) {
+  const cat = _serieCat[String(setId)];
+  if (!cat) return '';
+  const chips = SERIE_FILTERS.map(f => {
+    const n = cat.cards.filter(c => f.has(cat, String(c.id))).length;
+    if (!n) return '';
+    const on = state.serieShow?.[f.key] !== false;
+    return `<button class="serie-chip ${on ? 'on' : ''}" aria-pressed="${on}"
+      title="${on ? 'Masquer' : 'Afficher'} les ${esc(f.label.toLowerCase())} (${n})"
+      aria-label="${on ? 'Masquer' : 'Afficher'} les ${esc(f.label.toLowerCase())} — ${n} carte${n > 1 ? 's' : ''}"
+      onclick="toggleSerieShow('${f.key}')">${RARITY_ICO[f.ico] || ''}<span>${n}</span></button>`;
+  }).filter(Boolean);
+  if (!chips.length) return '';
+  return `<div class="serie-filters" role="group" aria-label="Ce qui est affiché">${chips.join('')}</div>`;
+}
+// L'étoile est le symbole IMPRIMÉ sur une carte rare : c'est le repère que le
+// collectionneur a déjà dans l'œil, pas une icône à apprendre.
+const RARITY_ICO = {
+  star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.1l2.62 5.75 6.28.72-4.66 4.26 1.26 6.17L12 16.9l-5.5 3.1 1.26-6.17L3.1 9.57l6.28-.72z" fill="currentColor"/></svg>',
+};
 /* Le compteur du bandeau : « 32 / 123 · 240 € ». Écrit ici et nulle part
    ailleurs — refreshInvestTotals le repeint aussi (quantité, cote qui arrive),
    et deux formats concurrents faisaient disparaître le « / total » au premier
@@ -9236,7 +9270,10 @@ function seriesBarMetaText(setId, g, rows) {
 function seriesRows(setId, g) {
   const cat = _serieCat[String(setId)];
   const rows = new Map();
-  for (const c of (cat ? cat.cards : [])) rows.set(String(c.id), { c, p: null, k: c.localId });
+  for (const c of (cat ? cat.cards : [])) {
+    if (!serieCardShown(cat, c.id)) continue;
+    rows.set(String(c.id), { c, p: null, k: c.localId });
+  }
   for (const p of g.cards) {
     const key = p.cardId ? String(p.cardId) : 'own:' + p.id;
     const hit = rows.get(key);
@@ -9537,9 +9574,51 @@ async function seriesCatalog(setId) {
       for (const c of list || []) if (String(c.id).startsWith(id + '-')) skip.add(String(c.id));
     } catch {}
   }));
-  const out = { cards: b.cards.filter(c => !skip.has(String(c.id))), vintage, setTotal: b.cards.length };
+  /* LES RARES SONT MISES À PART, pas écartées : c'est la seule famille que
+     l'utilisateur peut montrer ou cacher (l'étoile du bandeau). On note donc
+     QUI en fait partie, et le filtrage se décide au rendu.
+     Sur une série ancienne, on ne retient que les rares NON HOLO : là-bas
+     l'holo rare est la pièce du set (le Dracaufeu du Set de Base est de rareté
+     « Rare » avec variants.holo), et décocher l'étoile ne doit pas la faire
+     disparaître. Sur une série récente la question ne se pose pas — toutes les
+     « Rare » y sont holo (vérifié : variants.holo=false renvoie 0 sur
+     Étincelles Déferlantes), donc l'étoile gouverne bien les 37 rares. */
+  const rare = new Set();
+  const holoGuard = vintage ? '&variants.holo=false' : '';
+  await Promise.all(b.ids.map(async id => {
+    try {
+      const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:Rare')}${holoGuard}`);
+      for (const c of list || []) if (String(c.id).startsWith(id + '-')) rare.add(String(c.id));
+    } catch {}
+  }));
+  const cards = b.cards.filter(c => !skip.has(String(c.id)));
+  const out = { cards, rare, vintage, setTotal: b.cards.length };
   _serieCat[setId] = out;
   return out;
+}
+/* ── CE QUE L'ÉTOILE GOUVERNE ────────────────────────────────────────
+   Une seule famille aujourd'hui : les rares. La table existe pour que la
+   suivante (le rond des communes, le losange des peu communes — les symboles
+   imprimés sur les cartes) ne soit qu'une ligne à ajouter, ici et dans
+   seriesCatalog. */
+const SERIE_FILTERS = [
+  { key: 'rare', label: 'Rares', ico: 'star', has: (cat, id) => cat.rare && cat.rare.has(id) },
+];
+// Une carte du catalogue est-elle visible avec les réglages actuels ? Une
+// carte QU'ON POSSÈDE l'est toujours : un filtre d'affichage ne cache pas la
+// collection (voir seriesRows).
+function serieCardShown(cat, cardId) {
+  if (!cat) return true;
+  for (const f of SERIE_FILTERS) {
+    if (state.serieShow?.[f.key] === false && f.has(cat, String(cardId))) return false;
+  }
+  return true;
+}
+function toggleSerieShow(key) {
+  state.serieShow = state.serieShow || {};
+  state.serieShow[key] = state.serieShow[key] === false;
+  save();
+  renderInvestBody();
 }
 /* Le catalogue arrive APRÈS le premier rendu, volontairement : mes cartes
    s'affichent tout de suite (elles sont déjà en mémoire) et les cases
@@ -9635,6 +9714,16 @@ function refreshSeriesCotes(setId) {
    masterset les réunit, comme partout ailleurs dans l'app (voir pickSet).
    ══════════════════════════════════════════════════════════════════════ */
 const MS_N = 1, MS_R = 2;                    // bits : normale, reverse
+/* Les deux versions d'une carte, en un glyphe chacune : la même carte, nue
+   pour la normale, traversée d'un reflet pour la reverse. Le trait est le
+   même que celui des icônes de l'app (1.9 px, bouts arrondis). */
+const MS_ICO = {
+  n: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.4" stroke="currentColor" stroke-width="1.9"/></svg>',
+  // Le reflet traverse la carte de coin à coin : à 17 px, deux traits courts au
+  // milieu se confondaient avec l'intérieur du cadre. Un trait franc + un
+  // second plus court, c'est la lecture « holographique » d'un coup d'œil.
+  r: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.4" stroke="currentColor" stroke-width="1.9"/><path d="M7.2 18.4 16.9 5.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12.6 18.5 17.3 12.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+};
 const _msCache = {};                         // setId → { cards, rev, setName, logo, serie, date }
 
 function msEntry(setId) { return (state.mastersets || []).find(m => String(m.setId) === String(setId)); }
@@ -9971,11 +10060,18 @@ function msSlotHTML(m, c, hasRev, i) {
   const any = hasN || hasR;
   // Une coche = un bouton à part entière : chacune ne coche que SA version, et
   // le clic ne remonte pas à la vignette (qui coche la normale).
+  // UN PICTOGRAMME, PAS UN MOT. « NORMALE » et « REVERSE » en capitales sous
+  // chaque carte, c'était deux pavés de texte répétés 250 fois : on lisait la
+  // grille des étiquettes avant de voir les cartes. Les deux glyphes sont la
+  // MÊME carte, l'une nue et l'autre traversée d'un reflet — la différence se
+  // lit sans légende. Le mot reste dans l'infobulle et pour les lecteurs
+  // d'écran, là où il ne coûte rien.
   const tog = (variant, label, on) => {
     const go = `toggleMasterslot('${esc(m.setId)}','${esc(id)}','${variant}')`;
     return `<button type="button" class="ms-tog ${on ? 'on' : ''}" data-var="${variant}"
-      aria-pressed="${on}" aria-label="${esc(c.name)} version ${label.toLowerCase()} — ${on ? 'obtenue' : 'manquante'}"
-      onclick="event.stopPropagation();${go}">${label}</button>`;
+      aria-pressed="${on}" title="${label} — ${on ? 'obtenue' : 'manquante'}"
+      aria-label="${esc(c.name)} version ${label.toLowerCase()} — ${on ? 'obtenue' : 'manquante'}"
+      onclick="event.stopPropagation();${go}">${MS_ICO[variant]}</button>`;
   };
   // La vignette elle-même coche la NORMALE : c'est la plus grande cible, et
   // c'est le geste attendu (« celle-là, je l'ai »). La reverse, elle, ne se
