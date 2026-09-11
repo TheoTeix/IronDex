@@ -2213,6 +2213,19 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .ms-tog.on:hover{color:var(--ok)}
 }
 
+/* ── Série ouverte : les cases qu'on n'a pas ──────────────────────────
+   Le grisé ne vient PAS d'ici : une `.card-thumb` sans `.mine` est désaturée
+   par défaut (voir plus haut). Ce bloc n'ajoute que le geste — au survol, la
+   carte reprend ses couleurs le temps qu'on la regarde, comme les cases du
+   masterset. C'est ce qui rend la grille lisible : on voit ce qui manque d'un
+   coup d'œil, et ce qu'on regarde en vrai. */
+.cardser-miss{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.cardser-miss:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:16px}
+.cardser-miss:active .card-thumb-imgwrap{transform:scale(.985)}
+@media(hover:hover){
+  .cardser-miss:hover .card-thumb-imgwrap img{filter:none}
+}
+
 /* ── Sélecteur : un bloc déjà masterisé ── */
 .series-item{position:relative}
 .series-item.is-added{border-color:color-mix(in srgb,var(--ok) 55%,transparent)}

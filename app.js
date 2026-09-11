@@ -8809,6 +8809,8 @@ function renderInvestBody() {
       paintCardValues((state.investCards || [])
         .filter(p => String(p.setId) === String(state.investSeriesOpen))
         .map(p => p.cardId).filter(Boolean));
+      // Le reste du set (les cases grisées) arrive ensuite, puis re-rend.
+      ensureSeriesCatalog(state.investSeriesOpen);
     }
     // Visuels manquants (promos surtout : absents du catalogue FR mais présents
     // en anglais) → retrouvés puis ENREGISTRÉS pour ne plus jamais les chercher.
@@ -9187,7 +9189,7 @@ function prefetchSeriesArt(setId) {
 }
 function cardsSeriesGridHTML(groups) {
   return `<div class="cardser-grid">${groups.map(g => `
-    <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
+    <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}');prefetchSeriesCatalog('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
       <div class="cardser-logo">${g.logo ? `<img src="${g.logo}.png" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
       <div class="cardser-name">${esc(g.setName)}</div>
       <div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}${g.date ? ` · ${esc(g.date.slice(0, 4))}` : ''}</div>
@@ -9200,7 +9202,8 @@ function cardsSeriesDetailHTML(setId, groups) {
   groups = groups || cardsGrouped();
   const g = groups.find(x => String(x.setId) === String(setId));
   if (!g) { state.investSeriesOpen = null; return cardsBlocsHTML(groups); }
-  const cards = g.cards.slice().sort((a, b) => (cardCote(b) ?? -1) - (cardCote(a) ?? -1));
+  const rows = seriesRows(setId, g);
+  const cat = _serieCat[String(setId)];
   return `
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeInvestSeries()" title="Toutes les séries" aria-label="Retour aux séries">${ICO.left}</button>
@@ -9208,9 +9211,27 @@ function cardsSeriesDetailHTML(setId, groups) {
         ? `<div class="cardser-bar-logo"><img src="${g.logo}.png" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
       <button class="cardser-add" onclick="addInvestCard('${esc(String(g.setId))}')" title="Ajouter une carte à ${esc(g.setName)}" aria-label="Ajouter une carte à cette série">${ICO.plus || PLUS}</button>
-      <span class="cardser-bar-meta">${g.count} · ${fmt(g.value)}</span>
+      <span class="cardser-bar-meta">${cat ? `${g.count} / ${rows.length}` : g.count} · ${fmt(g.value)}</span>
     </div>
-    <div class="cards-grid">${cards.map(investCardThumbHTML).join('')}</div>`;
+    <div class="cards-grid">${rows.map((r, i) => r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).join('')}</div>`;
+}
+/* LES LIGNES DE LA GRILLE : le catalogue filtré UNION mes cartes.
+   L'union, et pas le catalogue seul : une carte qui est à moi ne doit jamais
+   disparaître de l'écran parce qu'un filtre de rareté l'écarte (une commune
+   gardée exprès, une carte ajoutée à la main, un numéro que TCGdex ne connaît
+   pas). Tant que le catalogue n'est pas arrivé, il ne reste que mes cartes —
+   dans le même ordre, donc rien ne saute quand le reste se glisse entre. */
+function seriesRows(setId, g) {
+  const cat = _serieCat[String(setId)];
+  const rows = new Map();
+  for (const c of (cat ? cat.cards : [])) rows.set(String(c.id), { c, p: null, k: c.localId });
+  for (const p of g.cards) {
+    const key = p.cardId ? String(p.cardId) : 'own:' + p.id;
+    const hit = rows.get(key);
+    if (hit) hit.p = p;
+    else rows.set(key, { c: null, p, k: p.localId });
+  }
+  return [...rows.values()].sort((a, b) => cmpLocalId(a.k, b.k));
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -9254,6 +9275,35 @@ function investCardThumbHTML(p, i) {
         <div class="card-thumb-name">${esc(p.name)}</div>
         <div class="card-thumb-sub">#${p.localId || '—'}</div>
         <div class="cv-skeleton" data-value="${esc(cid)}"></div>
+      </div>
+    </div>`;
+}
+/* ══════════════════════════════════════════════════════════════════════
+   LA VIGNETTE D'UNE CARTE QU'ON N'A PAS
+
+   La même, moins tout ce qui n'a aucun sens sur une carte absente : ni
+   pastille « ×N », ni croix de retrait, ni cote. Et surtout PAS la classe
+   `mine` — c'est elle, et elle seule, qui rend ses couleurs à une
+   `.card-thumb`. Le grisé n'est donc pas un effet ajouté ici : c'est l'état
+   par défaut de la vignette, déjà en place dans les wishlists.
+   Un clic ouvre la fiche : c'est là qu'on lit la rareté, la cote et les liens
+   marché — y compris pour une carte qui n'est pas à soi (voir openCardDetail).
+   ══════════════════════════════════════════════════════════════════════ */
+function investMissingThumbHTML(c, i) {
+  const cid = String(c.id || '');
+  const open = `openCardDetail('${esc(cid)}')`;
+  return `
+    <div class="card-thumb cardser-miss" data-card="${esc(cid)}" style="animation-delay:${Math.min(i * 26, 340)}ms"
+      role="button" tabindex="0" aria-label="${esc(c.name)} — pas dans ta collection"
+      onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${open}}">
+      <div class="card-thumb-imgwrap">
+        ${c.image
+          ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.__set || '')}','${jss(c.name)}')" alt="${esc(c.name)}">`
+          : noImgHTML(c.localId, c.name, c.__set)}
+      </div>
+      <div class="card-thumb-info">
+        <div class="card-thumb-name">${esc(c.name)}</div>
+        <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>
       </div>
     </div>`;
 }
@@ -9353,7 +9403,101 @@ function cardTileHTML(p) {
     </div>
   </article>`;
 }
+/* ══════════════════════════════════════════════════════════════════════
+   LE CATALOGUE D'UNE SÉRIE — ce qu'il reste à trouver
+
+   Ouvrir une série ne montrait QUE mes cartes : on voyait sa collection, pas
+   le set. On montre donc toutes les cartes du set — les miennes en couleur,
+   les autres en grisé. Aucun nouveau langage visuel : `.card-thumb` est
+   désaturée par défaut et `.mine` lui rend ses couleurs, exactement comme dans
+   les wishlists et le masterset.
+
+   CE QU'ON NE MONTRE PAS : les communes, les peu communes et les holo simples.
+   Ce sont des cartes qu'on ne cherche pas, et 180 cases de bulk noieraient les
+   quarante qui comptent. SAUF sur les séries anciennes, où l'holo rare EST la
+   carte du set — le Dracaufeu du Set de Base n'est pas du remplissage.
+
+   D'OÙ VIENT LA RARETÉ, et pourquoi ce n'est pas deviné
+   Ni /sets/{id} ni /cards?set={id} ne l'exposent carte par carte : la lire
+   sur chaque fiche aurait coûté 250 requêtes pour ouvrir une série. Mais le
+   filtre de TCGdex sait la trier — à condition d'écrire `eq:`. Sans lui le
+   filtre est un « contient », et `rarity=Holo Rare` ramène AUSSI les Holo Rare
+   V, VMAX et VSTAR, c'est-à-dire précisément les cartes à garder : 107 cartes
+   au lieu de 45 sur Tempête Argentée. Deux à quatre requêtes par set, en
+   cache.
+   ══════════════════════════════════════════════════════════════════════ */
+// Toujours écartées. Le nom exact vient de /rarities (TCGdex FR).
+const BULK_RARITIES = ['Commune', 'Peu Commune'];
+// Écartées seulement sur les séries récentes. Les deux graphies existent selon
+// l'époque ; `eq:` garantit qu'on ne touche pas à « Rare Holo LV.X » ni aux
+// « Holo Rare V / VMAX / VSTAR », qui sont des chases.
+const HOLO_RARITIES = ['Holo Rare', 'Rare Holo'];
+/* LA FRONTIÈRE « ANCIEN / RÉCENT ». Une date, parce qu'aucune donnée ne dit
+   « ici l'holo cesse d'être la pièce du set » : HS Triomphant a déjà des Rare
+   Prime et des LÉGENDE au-dessus de ses holo, et un test « existe-t-il une
+   rareté supérieure ? » aurait donc classé HGSS en récent. Le repère retenu
+   est l'entrée dans Noir & Blanc : Triomphant (2010-11) et L'appel des
+   Légendes (2011-02) restent anciens, Noir & Blanc (2011-04) non. Une seule
+   constante à déplacer si la limite doit bouger. */
+const VINTAGE_BEFORE = '2011-03-01';
+
+const _serieCat = {};
+async function seriesCatalog(setId) {
+  setId = String(setId);
+  if (_serieCat[setId]) return _serieCat[setId];
+  const b = await setWithSubsets(setId);
+  const vintage = !!b.date && b.date < VINTAGE_BEFORE;
+  const drop = vintage ? BULK_RARITIES : BULK_RARITIES.concat(HOLO_RARITIES);
+  const skip = new Set();
+  const jobs = [];
+  for (const id of b.ids) for (const r of drop) jobs.push([id, r]);
+  await Promise.all(jobs.map(async ([id, r]) => {
+    try {
+      const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:' + r)}`);
+      // `set=sv08` attrape AUSSI `sv08.5` : sans le préfixe exact, une série
+      // écarterait les communes de sa voisine.
+      for (const c of list || []) if (String(c.id).startsWith(id + '-')) skip.add(String(c.id));
+    } catch {}
+  }));
+  const out = { cards: b.cards.filter(c => !skip.has(String(c.id))), vintage, setTotal: b.cards.length };
+  _serieCat[setId] = out;
+  return out;
+}
+/* Le catalogue arrive APRÈS le premier rendu, volontairement : mes cartes
+   s'affichent tout de suite (elles sont déjà en mémoire) et les cases
+   manquantes se glissent entre elles quand TCGdex répond. Un spinner aurait
+   caché ce qu'on a déjà pour attendre ce qu'on n'a pas. */
+let _catPending = null;
+function ensureSeriesCatalog(setId) {
+  setId = String(setId);
+  if (!setId || setId.startsWith('?') || _serieCat[setId] || _catPending === setId) return;
+  _catPending = setId;
+  seriesCatalog(setId).then(() => {
+    _catPending = null;
+    if (state.view === 'invest' && state.investMode === 'cards' && String(state.investSeriesOpen) === setId)
+      renderInvestBody();
+  }).catch(e => { _catPending = null; console.warn('[catalogue série]', e); });
+}
+/* ORDRE DU SET. Les numéros purement chiffrés d'abord (1 → 252), puis les
+   préfixés regroupés par préfixe (GG01…, SV105…, TG01…) : c'est l'ordre des
+   listes officielles, et le seul lisible dès qu'on montre les cases
+   manquantes. Trier « 23 » comme du texte plaçait 100 avant 23. */
+function localIdParts(v) {
+  const t = String(v == null ? '' : v).trim().toUpperCase();
+  const m = t.match(/^(\D*)(\d+)(.*)$/);
+  return m ? [m[1], parseInt(m[2], 10), m[3]] : [t, 0, ''];
+}
+function cmpLocalId(a, b) {
+  const A = localIdParts(a), B = localIdParts(b);
+  if (A[0] !== B[0]) return A[0] < B[0] ? -1 : 1;
+  if (A[1] !== B[1]) return A[1] - B[1];
+  return A[2] < B[2] ? -1 : A[2] > B[2] ? 1 : 0;
+}
+
 function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestBody(); scrollViewToTop('invest'); resolveSeriesLive(setId); }
+// Survoler une bulle prépare déjà ses visuels (prefetchSeriesArt) : préparer
+// aussi son catalogue fait que la série s'ouvre complète, sans transition.
+function prefetchSeriesCatalog(setId) { ensureSeriesCatalog(setId); }
 function closeInvestSeries() { state.investSeriesOpen = null; renderInvestBody(); }
 // Cotes + liens CM précis pour la série ouverte uniquement (léger : quelques dizaines).
 function resolveSeriesLive(setId) {
@@ -9430,27 +9574,9 @@ function msSlots(d) { return d.cards.length + d.cards.filter(c => d.rev.has(Stri
 // Les cartes d'un set (galeries incluses) et celles qui existent en reverse.
 async function mastersetCards(setId) {
   if (_msCache[setId]) return _msCache[setId];
-  const set = await apiFetch('/sets/' + setId);
-  let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId }));
-  // On ne DEVINE pas les sous-séries : on regarde celles qui existent vraiment
-  // dans la série (un /sets/inexistant coûte 3 tentatives et ~3 s).
-  let known = null;
-  if (set.serie?.id) {
-    const serie = await apiFetch('/series/' + set.serie.id).catch(() => null);
-    known = (serie?.sets || []).map(x => String(x.id));
-  }
-  const ids = [String(setId)];
-  for (const suf of SUBSET_SUFFIXES) {
-    const subId = setId + suf;
-    if (String(setId).endsWith(suf) || !known || !known.includes(subId)) continue;
-    const sub = await apiFetch('/sets/' + subId).catch(() => null);
-    if (sub?.cards?.length) {
-      cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: sub.id })));
-      ids.push(String(sub.id));
-    }
-  }
+  const b = await setWithSubsets(setId);
   const rev = new Set();
-  await Promise.all(ids.map(async id => {
+  await Promise.all(b.ids.map(async id => {
     try {
       const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&variants.reverse=true`);
       // `set=sv08` attrape AUSSI `sv08.5` (le filtre est un « contient ») :
@@ -9460,11 +9586,46 @@ async function mastersetCards(setId) {
     } catch {}
   }));
   const out = {
-    cards, rev, setName: set.name || setId, logo: set.logo || null,
+    cards: b.cards, rev, setName: b.setName, logo: b.logo,
+    serieId: b.serieId, serieName: b.serieName, date: b.date,
+  };
+  _msCache[setId] = out;
+  return out;
+}
+/* ── UN SET ET SES SOUS-SÉRIES, EN UN SEUL OBJET ─────────────────────
+   Le masterset et le catalogue d'une série ont besoin exactement de la même
+   chose : les cartes du set PLUS celles de ses galeries (voir subsetParentId),
+   chacune gardant son vrai `__set` — dont dépendent sa cote et son lien
+   Cardmarket. C'était écrit une fois ; à deux endroits, ça aurait divergé.
+   On ne DEVINE pas les sous-séries : on regarde celles qui existent vraiment
+   dans la série (un /sets/inexistant coûte 3 tentatives et ~3 s). */
+const _setBundle = {};
+async function setWithSubsets(setId) {
+  setId = String(setId);
+  if (_setBundle[setId]) return _setBundle[setId];
+  const set = await apiFetch('/sets/' + setId);
+  let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId }));
+  let known = null;
+  if (set.serie?.id) {
+    const serie = await apiFetch('/series/' + set.serie.id).catch(() => null);
+    known = (serie?.sets || []).map(x => String(x.id));
+  }
+  const ids = [setId];
+  for (const suf of SUBSET_SUFFIXES) {
+    const subId = setId + suf;
+    if (setId.endsWith(suf) || !known || !known.includes(subId)) continue;
+    const sub = await apiFetch('/sets/' + subId).catch(() => null);
+    if (sub?.cards?.length) {
+      cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: String(sub.id) })));
+      ids.push(String(sub.id));
+    }
+  }
+  const out = {
+    ids, cards, setName: set.name || setId, logo: set.logo || null,
     serieId: set.serie?.id || '', serieName: set.serie?.name || '',
     date: String(set.releaseDate || '').replace(/\//g, '-'),
   };
-  _msCache[setId] = out;
+  _setBundle[setId] = out;
   return out;
 }
 
