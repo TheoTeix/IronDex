@@ -115,7 +115,20 @@
    par-dessus » : la scène (fond + aurora + grain) est posée une fois, en
    `position:fixed`, et ne se redessine JAMAIS d'une page à l'autre. Les pages,
    elles, sont transparentes et ne font que glisser au-dessus. */
-html{-webkit-text-size-adjust:100%;background:var(--v-0)}
+/* LA GOUTTIÈRE EST RÉSERVÉE EN PERMANENCE — et ce n'est pas un détail.
+   MESURÉ : quand la barre de défilement apparaît ou disparaît, la largeur
+   utile passe de 289 à 300 px, soit ONZE PIXELS. Toute la page se décale
+   d'autant, et ça se voit surtout là où l'œil a un repère fixe : le bouton de
+   compte en haut à droite sautait à chaque passage d'un volet long (Collection)
+   à un volet court (Masterset). Rien n'avait bougé dans le code — c'est la
+   fenêtre qui changeait de largeur sous la page.
+   `stable` réserve la place de la barre même quand elle n'est pas là : 11 px
+   de décalage → 0 (revérifié après coup). */
+html{-webkit-text-size-adjust:100%;background:var(--v-0);scrollbar-gutter:stable}
+/* Même bascule à l'intérieur d'une modale : le sélecteur de cartes passe d'une
+   liste de 25 séries à une grille de 250 cartes, donc d'un corps qui défile à
+   un corps qui ne défile pas. Le contenu se décalait de la même façon. */
+.modal-body{scrollbar-gutter:stable}
 body{
   /* `svh` et non `dvh` : avec `dvh`, la hauteur de référence CHANGE quand la
      barre d'adresse de Safari se replie — le document se redimensionne pendant
@@ -1214,9 +1227,19 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   transition:transform var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out),
              border-color var(--dur-2) var(--ease-out);
 }
-.wishlist-card:hover{transform:translateY(-4px);box-shadow:var(--e3);
+/* PAS DE DÉPLACEMENT AU SURVOL — la même règle que les vignettes de cartes,
+   qui l'avaient déjà adoptée : une grille de tuiles qui se soulèvent une à une
+   sous le curseur, c'est un tapis qui ondule, et le regard suit le mouvement
+   au lieu de suivre le contenu. Le survol se dit par l'ARÊTE : l'accent prend
+   le liseré, l'ombre s'approfondit. Rien ne bouge.
+   Il en reste quelque chose, et c'est voulu : une carte cliquable doit dire
+   qu'elle est cliquable (voir hover-vs-tap). C'est le mouvement qu'on retire,
+   pas la réponse. */
+.wishlist-card:hover{box-shadow:var(--e3);
   border-color:color-mix(in srgb,var(--tc) 38%,transparent)}
-.wishlist-card:active{transform:translateY(-1px) scale(.995);transition-duration:var(--dur-0)}
+/* L'enfoncement, lui, reste : c'est une réponse au doigt/au clic, pas une
+   décoration au passage du curseur. */
+.wishlist-card:active{transform:scale(.994);transition-duration:var(--dur-0)}
 .wishlist-card.dragging{opacity:.45}
 .wishlist-card.drag-over{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 40%,transparent)}
 /* Le halo par-carte (PRISME) est posé en ::after dans le bloc LIQUID GLASS :
@@ -1249,8 +1272,10 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   margin-right:-16px;
   transition:transform var(--dur-2) var(--ease-out);
   transition-delay:calc(var(--k,0) * 22ms)}
-.wishlist-card:hover .wishlist-preview>img,
-.wishlist-card:hover .wishlist-preview>.wl-prev-ph{transform:translateX(calc(var(--k,0) * 7px))}
+/* L'ÉVENTAIL AU SURVOL EST RETIRÉ. Les cinq vignettes s'écartaient en cascade
+   dès que le curseur passait : beaucoup de mouvement pour une information que
+   la pile donne déjà à l'arrêt, et ça bougeait sur toute la grille pendant
+   qu'on la parcourait. La pile reste, elle ne s'anime plus. */
 /* Le placeholder remplit son conteneur (pas de .card-noimg imbriqué). */
 .wishlist-preview>.wl-prev-ph{overflow:hidden;display:block}
 .wishlist-preview>.wl-prev-ph .card-noimg{border-radius:0;aspect-ratio:auto;height:100%}
@@ -3759,11 +3784,9 @@ body::before{display:none}
   .cards-grid .card-thumb-name{font-size:11.5px}
   .cards-grid .card-thumb-meta,.cards-grid .card-thumb-price{font-size:10.5px}
 
-  /* Sur écran tactile, `:hover` reste COLLÉ après un tap : l'éventail des
-     vignettes se décalait puis restait de travers. On le neutralise ici (le
-     bloc @media(hover:none) plus haut ne couvrait pas ce cas). */
-  .wishlist-card:hover .wishlist-preview>img,
-  .wishlist-card:hover .wishlist-preview>.wl-prev-ph{transform:none}
+  /* L'éventail au survol n'existe plus (voir .wishlist-card:hover) : le
+     garde-fou contre le `:hover` collant après un tap n'a plus d'objet. Seule
+     la transition inutile reste à couper. */
   .wishlist-preview>img,.wishlist-preview>.wl-prev-ph{transition:none;transition-delay:0s}
 
   /* Vignettes de wishlist : 52 px, c'étaient des timbres. On les agrandit d'un
