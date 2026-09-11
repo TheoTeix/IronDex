@@ -3595,7 +3595,7 @@ function refreshInvestTotals() {
   const g = cardsGrouped().find(x => String(x.setId) === String(state.investSeriesOpen));
   if (!g) return;
   if (head) head.textContent = `${g.count} carte${g.count > 1 ? 's' : ''} · ${fmt(g.value)}`;
-  if (bar) bar.textContent = `${g.count} · ${fmt(g.value)}`;
+  if (bar) bar.textContent = seriesBarMetaText(state.investSeriesOpen, g);
 }
 
 // Précharge TOUT ce dont l'app a besoin (modèles 3D, puis les cotes encore
@@ -3777,6 +3777,11 @@ function palCommands() {
     { kind: 'act', name: 'Récupérer les cotes partagées', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullSharedPrices() },
     { kind: 'act', name: 'Mon compte', sub: vaultOn() ? `${vaultDisplayName()} · synchro et déconnexion` : 'Se connecter', ico: ICO.info, run: () => openAccount() },
     { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
+    /* Le « + » du bandeau d'une série n'existe plus : on ajoute en cliquant une
+       case grisée. Mais une série dont on ne possède AUCUNE carte n'a pas de
+       bulle dans la Collection, donc pas de case grisée à cliquer — sans cette
+       entrée, il n'y aurait plus aucun moyen de commencer un set. */
+    { kind: 'act', name: 'Ajouter une carte', sub: 'Choisir dans le catalogue complet', ico: ICO.plus, run: () => addInvestCard() },
     { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
     { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
     // Sur téléphone seulement : la question « la page remplit-elle l'écran ? »
@@ -9203,17 +9208,24 @@ function cardsSeriesDetailHTML(setId, groups) {
   const g = groups.find(x => String(x.setId) === String(setId));
   if (!g) { state.investSeriesOpen = null; return cardsBlocsHTML(groups); }
   const rows = seriesRows(setId, g);
-  const cat = _serieCat[String(setId)];
   return `
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeInvestSeries()" title="Toutes les séries" aria-label="Retour aux séries">${ICO.left}</button>
       ${g.logo
         ? `<div class="cardser-bar-logo"><img src="${g.logo}.png" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
-      <button class="cardser-add" onclick="addInvestCard('${esc(String(g.setId))}')" title="Ajouter une carte à ${esc(g.setName)}" aria-label="Ajouter une carte à cette série">${ICO.plus || PLUS}</button>
-      <span class="cardser-bar-meta">${cat ? `${g.count} / ${rows.length}` : g.count} · ${fmt(g.value)}</span>
+      <span class="cardser-bar-meta">${seriesBarMetaText(setId, g, rows)}</span>
     </div>
     <div class="cards-grid">${rows.map((r, i) => r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).join('')}</div>`;
+}
+/* Le compteur du bandeau : « 32 / 123 · 240 € ». Écrit ici et nulle part
+   ailleurs — refreshInvestTotals le repeint aussi (quantité, cote qui arrive),
+   et deux formats concurrents faisaient disparaître le « / total » au premier
+   changement de quantité. Sans catalogue, pas de dénominateur à annoncer. */
+function seriesBarMetaText(setId, g, rows) {
+  rows = rows || seriesRows(setId, g);
+  const cat = _serieCat[String(setId)];
+  return `${cat ? `${g.count} / ${rows.length}` : g.count} · ${fmt(g.value)}`;
 }
 /* LES LIGNES DE LA GRILLE : le catalogue filtré UNION mes cartes.
    L'union, et pas le catalogue seul : une carte qui est à moi ne doit jamais
@@ -9281,31 +9293,97 @@ function investCardThumbHTML(p, i) {
 /* ══════════════════════════════════════════════════════════════════════
    LA VIGNETTE D'UNE CARTE QU'ON N'A PAS
 
-   La même, moins tout ce qui n'a aucun sens sur une carte absente : ni
-   pastille « ×N », ni croix de retrait, ni cote. Et surtout PAS la classe
-   `mine` — c'est elle, et elle seule, qui rend ses couleurs à une
-   `.card-thumb`. Le grisé n'est donc pas un effet ajouté ici : c'est l'état
-   par défaut de la vignette, déjà en place dans les wishlists.
-   Un clic ouvre la fiche : c'est là qu'on lit la rareté, la cote et les liens
-   marché — y compris pour une carte qui n'est pas à soi (voir openCardDetail).
+   Grisée, et elle porte les DEUX gestes qu'on peut avoir envie de faire :
+    · « + » — je l'ai, ajoute-la. Il apparaît au survol, par-dessus le visuel,
+      et c'est toute la vignette qui l'active : c'est la plus grande cible, et
+      le geste attendu devant une case vide.
+    · « i » en haut à droite — je veux juste la regarder. Sans lui, consulter
+      une carte aurait voulu dire l'ajouter puis la retirer.
+   Le « i » est là où la croix de retrait se trouve sur une carte possédée :
+   en haut à droite vit l'action secondaire, des deux côtés.
+
+   Pas de `role=button` sur la vignette : elle contient de VRAIS boutons, et un
+   bouton dans un bouton n'existe pas (même leçon que .ms-slot). Le clavier
+   passe donc par le « + » et le « i », qui atteignent les deux gestes.
+
+   Le grisé n'est pas un effet ajouté ici : une `.card-thumb` sans `.mine` est
+   désaturée par défaut, comme dans les wishlists.
    ══════════════════════════════════════════════════════════════════════ */
 function investMissingThumbHTML(c, i) {
   const cid = String(c.id || '');
-  const open = `openCardDetail('${esc(cid)}')`;
+  // Seul l'IDENTIFIANT passe par l'onclick : le nom est relu du catalogue au
+  // moment du clic. « Taupiqueur d'Alola » cassait la chaîne JS de l'ancien
+  // sélecteur, et cette grille affiche des sets entiers.
+  const add = `addMissingCard('${esc(cid)}')`;
+  const info = `openCardDetail('${esc(cid)}')`;
   return `
     <div class="card-thumb cardser-miss" data-card="${esc(cid)}" style="animation-delay:${Math.min(i * 26, 340)}ms"
-      role="button" tabindex="0" aria-label="${esc(c.name)} — pas dans ta collection"
-      onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${open}}">
+      onclick="${add}">
       <div class="card-thumb-imgwrap">
         ${c.image
           ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.__set || '')}','${jss(c.name)}')" alt="${esc(c.name)}">`
           : noImgHTML(c.localId, c.name, c.__set)}
+        <button class="cardser-miss-add" tabindex="0" title="Ajouter à ma collection"
+          aria-label="Ajouter ${esc(c.name)} à ma collection"
+          onclick="event.stopPropagation();${add}">${ICO.plus || PLUS}</button>
+        <button class="cardser-miss-info" title="Voir la fiche"
+          aria-label="Voir la fiche de ${esc(c.name)} sans l'ajouter"
+          onclick="event.stopPropagation();${info}">i</button>
       </div>
       <div class="card-thumb-info">
         <div class="card-thumb-name">${esc(c.name)}</div>
         <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>
       </div>
     </div>`;
+}
+/* AJOUTER DEPUIS LA GRILLE — la carte telle que le catalogue la connaît.
+   La ligne créée a exactement la même forme que celle du sélecteur (voir
+   pickCard) : c'est la même donnée, et deux formes divergentes auraient fini
+   par se voir à la sauvegarde. La carte de galerie garde SON set (`__set`),
+   dont dépendent sa cote et son lien Cardmarket.
+   La vignette est remplacée SUR PLACE : re-rendre les 250 cases d'un set pour
+   en colorer une aurait fait clignoter toute la grille. */
+function addMissingCard(cardId) {
+  cardId = String(cardId);
+  const setId = state.investSeriesOpen;
+  const cat = setId ? _serieCat[String(setId)] : null;
+  const c = cat && cat.cards.find(x => String(x.id) === cardId);
+  if (!c) return;
+  if ((state.investCards || []).some(x => String(x.cardId) === cardId)) {
+    toast('Cette carte est déjà à toi', 'error');
+    return;
+  }
+  const p = {
+    id: sealedUid(), cardId,
+    name: c.name || '', setId: String(c.__set || setId || ''), setName: c.__setName || '',
+    logo: null, number: c.localId != null ? String(c.localId) : '',
+    localId: c.localId != null ? String(c.localId) : '',
+    rarity: '', type: '', qty: 1, image: c.image || '', buyPrice: null,
+  };
+  const inf = getCachedSetInfo(p.setId);
+  if (inf) {
+    if (inf.logo) p.logo = inf.logo;
+    const hit = (inf.cards || []).find(x => String(x.id) === cardId);
+    if (hit && hit.rarity) p.rarity = hit.rarity;
+  }
+  state.investCards.push(p);
+  save(); investBadge();
+  const tile = document.querySelector(`.cardser-miss[data-card="${cardId}"]`);
+  if (tile) {
+    const host = tile.parentElement;
+    tile.outerHTML = investCardThumbHTML(p, 0);
+    if (host) attachArtUpgrade(host);
+  }
+  paintCardValues([cardId]);
+  refreshInvestTotals();
+  toast(`${p.name} ajoutée`, 'success');
+  // La cote arrive en tâche de fond : elle alimente la valeur de la série et
+  // le total de la Collection.
+  getRawPrice(cardId).then(() => {
+    if (state.view !== 'invest' || state.investMode !== 'cards') return;
+    paintCardValues([cardId]);
+    refreshInvestTotals();
+  }).catch(() => {});
 }
 // Puce de rareté : couleur portée par la rareté elle-même (lecture immédiate).
 function rarityClass(r) {
@@ -9604,7 +9682,10 @@ async function setWithSubsets(setId) {
   setId = String(setId);
   if (_setBundle[setId]) return _setBundle[setId];
   const set = await apiFetch('/sets/' + setId);
-  let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId }));
+  // `__setName` en plus de `__set` : une carte de galerie s'enregistre sous SON
+  // set et sous SON nom (« Tempête Argentée Galerie de Dresseurs »), comme le
+  // fait déjà le sélecteur — c'est ce nom qui regroupe les bulles.
+  let cards = (set.cards || []).map(c => Object.assign({}, c, { __set: setId, __setName: set.name || setId }));
   let known = null;
   if (set.serie?.id) {
     const serie = await apiFetch('/series/' + set.serie.id).catch(() => null);
@@ -9616,7 +9697,7 @@ async function setWithSubsets(setId) {
     if (setId.endsWith(suf) || !known || !known.includes(subId)) continue;
     const sub = await apiFetch('/sets/' + subId).catch(() => null);
     if (sub?.cards?.length) {
-      cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: String(sub.id) })));
+      cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: String(sub.id), __setName: sub.name || String(sub.id) })));
       ids.push(String(sub.id));
     }
   }

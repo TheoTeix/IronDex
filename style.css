@@ -2220,11 +2220,53 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
    masterset. C'est ce qui rend la grille lisible : on voit ce qui manque d'un
    coup d'œil, et ce qu'on regarde en vrai. */
 .cardser-miss{cursor:pointer;-webkit-tap-highlight-color:transparent}
-.cardser-miss:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:16px}
-.cardser-miss:active .card-thumb-imgwrap{transform:scale(.985)}
+/* L'enfoncement est celui de l'objet cliqué : appuyer sur le « i » ne doit pas
+   faire reculer la carte (`:active` remonte aux ancêtres en CSS). */
+.cardser-miss:active:not(:has(.cardser-miss-info:active)) .card-thumb-imgwrap{transform:scale(.985)}
 @media(hover:hover){
   .cardser-miss:hover .card-thumb-imgwrap img{filter:none}
 }
+/* LE « + » : la réponse à « je l'ai ». Posé au CENTRE du visuel et non dans un
+   coin — c'est l'action principale de la case, et un coin l'aurait mise au même
+   rang que le « i ». Absent au repos (une grille de 250 cases piquée de 250
+   pastilles n'est plus une grille), il paraît au survol ; sur un écran tactile
+   il n'y a pas de survol, donc il est visible d'emblée (voir @media hover:none).
+   Le halo sombre derrière lui le garde lisible sur une illustration claire. */
+.cardser-miss-add{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(.6);z-index:4;
+  width:46px;height:46px;display:grid;place-items:center;cursor:pointer;
+  border-radius:50%;border:1px solid color-mix(in srgb,var(--acc) 55%,transparent);
+  background:color-mix(in srgb,var(--acc) 34%,rgba(4,5,8,.72));color:#fff;
+  font-size:22px;font-weight:800;line-height:1;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 6px 20px rgba(0,0,0,.5);opacity:0;
+  transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out),
+             background var(--dur-1) var(--ease-out)}
+.cardser-miss-add svg{width:22px;height:22px}
+@media(hover:hover){
+  .cardser-miss:hover .cardser-miss-add{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  .cardser-miss-add:hover{background:color-mix(in srgb,var(--acc) 62%,rgba(4,5,8,.6))}
+}
+.cardser-miss-add:focus-visible{opacity:1;transform:translate(-50%,-50%) scale(1);
+  outline:2px solid var(--acc);outline-offset:3px}
+.cardser-miss-add:active{transform:translate(-50%,-50%) scale(.92)}
+/* LE « i » : juste regarder, sans ajouter. Même place et même gabarit que la
+   croix de retrait d'une carte possédée — en haut à droite vit l'action
+   secondaire, des deux côtés de la grille. */
+.cardser-miss-info{
+  position:absolute;top:8px;right:8px;z-index:5;width:26px;height:26px;
+  display:grid;place-items:center;cursor:pointer;border-radius:8px;
+  background:rgba(4,5,8,.62);border:1px solid var(--line-2);color:var(--t2);
+  font:800 13px/1 ui-serif,Georgia,serif;font-style:italic;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;
+  transition:opacity var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out),
+             color var(--dur-1) var(--ease-out)}
+@media(hover:hover){
+  .cardser-miss:hover .cardser-miss-info{opacity:1}
+  .cardser-miss-info:hover{background:color-mix(in srgb,var(--acc) 28%,rgba(4,5,8,.6));
+    color:#fff;border-color:color-mix(in srgb,var(--acc) 50%,transparent)}
+}
+.cardser-miss-info:focus-visible{opacity:1;outline:2px solid var(--acc);outline-offset:2px}
 
 /* ── Sélecteur : un bloc déjà masterisé ── */
 .series-item{position:relative}
@@ -2743,6 +2785,13 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .card-picker-item:hover,.binder-tile:hover .binder-tile-cover,.cardtile:hover,
   .fp-item:hover .fp-thumb{transform:none}
   .title-edit-btn,.remove-btn,.owned-toggle,.cardtile-del,.binder-tile-actions,.zoom-btn{opacity:1}
+  /* Pas de survol : le « + » et le « i » d'une case grisée sont visibles
+     d'emblée, sinon les deux gestes seraient invisibles au doigt. Mais 122
+     cases piquées chacune de deux pastilles pleines, ce n'est plus une grille
+     de cartes : ils s'effacent et rapetissent, juste assez pour se voir et se
+     viser sans couvrir l'illustration. */
+  .cardser-miss-add{opacity:.6;transform:translate(-50%,-50%) scale(.76)}
+  .cardser-miss-info{opacity:.8}
   .foil::after{display:none}
 }
 
