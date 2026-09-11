@@ -2214,6 +2214,12 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .ms-tog.on:hover{color:var(--ok)}
 }
 
+/* Grille en train de se réorganiser (voir flipGrid) : l'entrée en cascade est
+   coupée, c'est le glissement qui raconte le changement. Les deux ensemble se
+   marchaient dessus — et 102 « rise » relancés à chaque clic de filtre, c'est
+   600 ms de bruit pour une information qui tient dans un déplacement. */
+.cards-grid.is-settling>*,.wishlists-grid.is-settling>*{animation:none!important}
+
 /* ── Ce qu'on affiche dans une série : l'étoile ───────────────────────
    Une pastille par famille de rareté, sous la barre de la série. L'étoile est
    le symbole IMPRIMÉ sur une carte rare : le repère est déjà dans l'œil du

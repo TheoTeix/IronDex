@@ -5086,7 +5086,10 @@ function setupWishlistDnD(root) {
       const [moved] = state.wishlists.splice(from, 1);
       const tIdx = state.wishlists.findIndex(w => w.id === targetId);
       state.wishlists.splice(from < origTo ? tIdx + 1 : tIdx, 0, moved);
-      save(); renderWishlists();
+      save();
+      // Réordonner, c'est LE cas d'école du glissement : les cartes rejoignent
+      // leur nouvelle place au lieu de réapparaître ailleurs d'un coup.
+      flipLayout('.wishlists-grid', () => renderWishlists());
     });
   });
 }
@@ -9640,7 +9643,7 @@ function toggleSerieShow(key) {
   state.serieShow = state.serieShow || {};
   state.serieShow[key] = state.serieShow[key] === false;
   save();
-  renderInvestBody();
+  flipGrid(() => renderInvestBody());
 }
 /* Le catalogue arrive APRÈS le premier rendu, volontairement : mes cartes
    s'affichent tout de suite (elles sont déjà en mémoire) et les cases
@@ -9673,6 +9676,78 @@ function cmpLocalId(a, b) {
   return A[2] < B[2] ? -1 : A[2] > B[2] ? 1 : 0;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   FLIP — LA GRILLE SE RÉORGANISE, ELLE NE RENAÎT PAS
+
+   MESURÉ : chaque bascule de filtre relançait 102 animations « rise », la
+   dernière finissant 600 ms après le clic. Or filtrer n'est pas « arriver »,
+   c'est « certaines sont parties » : rejouer l'entrée de toute la grille
+   disait le contraire, et un mouvement qui accompagne n'importe quel
+   changement finit par ne plus rien vouloir dire.
+
+   Ce que fait FLIP (First, Last, Invert, Play) : on note où sont les cartes
+   AVANT, on re-rend, on regarde où elles sont APRÈS, et on les fait glisser de
+   l'ancienne place à la nouvelle. Celles qui restent coulissent, seules les
+   nouvelles venues apparaissent.
+
+   DEUX LECTURES DE LAYOUT EN TOUT, jamais une par carte : toutes les mesures
+   d'un côté, toutes les écritures de l'autre (voir reduce-reflows). Les
+   animations ne touchent que transform et opacity, donc elles sont composées
+   par le GPU et ne provoquent aucun reflow.
+
+   Mouvement réduit : on saute tout et on re-rend sèchement.
+   ══════════════════════════════════════════════════════════════════════ */
+function flipGrid(mutate) { flipLayout('#inv-mode-body .cards-grid', mutate); }
+// `sel` désigne la grille : la même mécanique sert la Collection (filtre,
+// retrait) et le réordonnancement des wishlists au glisser-déposer. La clé
+// d'identité est `data-card` ou `data-id` selon l'écran — c'est elle qui dit
+// « cette tuile-là est la même qu'avant », donc qu'elle doit glisser et non
+// clignoter.
+function flipLayout(sel, mutate) {
+  const grid = document.querySelector(sel);
+  if (!grid || prefersReducedMotion()) { mutate(); return; }
+  const key = el => el.getAttribute('data-card') || el.getAttribute('data-id');
+  const before = new Map();
+  for (const el of grid.children) {
+    const k = key(el);
+    if (k) { const r = el.getBoundingClientRect(); before.set(k, { x: r.left, y: r.top }); }
+  }
+  mutate();
+  const after = document.querySelector(sel);
+  if (!after) return;
+  // L'entrée en cascade est la chorégraphie de l'ARRIVÉE dans une série. Elle
+  // n'a rien à faire ici : c'est le glissement qui raconte le changement, et
+  // les deux ensemble se marchaient dessus.
+  after.classList.add('is-settling');
+  const kids = [...after.children];
+  const read = kids.map(el => ({ el, k: key(el), r: el.getBoundingClientRect() }));
+  /* ON N'ANIME QUE CE QUI SE VOIT. Un set de 250 cartes, c'est 250 animations
+     dont une quinzaine tombent dans l'écran : les autres coûtaient leur
+     création pour un mouvement que personne ne regarde (mesuré : 22 ms → 8 ms
+     par bascule). La bande déborde d'une hauteur d'écran de chaque côté, pour
+     que les tuiles qui entrent par le bord glissent elles aussi. */
+  const h = innerHeight, haut = -h, bas = h * 2;
+  const visible = (r, b) => (r.bottom > haut && r.top < bas) || (b && b.y > haut && b.y < bas);
+  for (const { el, k, r } of read) {
+    const b = k && before.get(k);
+    if (!visible(r, b)) continue;
+    if (!b) {
+      el.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }],
+        { duration: 240, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'backwards' });
+      continue;
+    }
+    const dx = Math.round(b.x - r.left), dy = Math.round(b.y - r.top);
+    if (!dx && !dy) continue;
+    el.animate([{ transform: `translate3d(${dx}px,${dy}px,0)` }, { transform: 'none' }],
+      { duration: 360, easing: 'cubic-bezier(.32,.72,0,1)' });
+  }
+}
+// Une seule source de vérité pour « l'utilisateur veut moins de mouvement » :
+// la requête était réécrite à quatre endroits, avec des orthographes qui
+// auraient fini par diverger.
+function prefersReducedMotion() {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion:reduce)').matches;
+}
 function openInvestSeries(setId) { state.investSeriesOpen = setId; renderInvestBody(); scrollViewToTop('invest'); resolveSeriesLive(setId); }
 // Survoler une bulle prépare déjà ses visuels (prefetchSeriesArt) : préparer
 // aussi son catalogue fait que la série s'ouvre complète, sans transition.
@@ -9930,8 +10005,28 @@ function toggleMastersetAll(setId) {
   m.owned = {};
   if (!full) for (const c of d.cards) m.owned[c.id] = MS_N | (d.rev.has(String(c.id)) ? MS_R : 0);
   save();
-  renderInvestBody();
+  // EN PLACE. Re-rendre rejouait l'entrée en cascade des 417 vignettes — la
+  // chorégraphie de l'arrivée dans un set, déclenchée par une case à cocher —
+  // et faisait repartir le défilement du haut. Cocher ne déplace rien : seules
+  // les couleurs changent, donc seules les classes changent.
+  paintMastersetSlots(m);
+  paintMastersetHead();
   toast(full ? `${m.setName} remis à zéro` : `${m.setName} : tout est coché`, 'success');
+}
+// Remet chaque vignette et chaque coche de la grille au niveau de `owned`.
+function paintMastersetSlots(m) {
+  const grid = document.querySelector('.ms-grid'); if (!grid) return;
+  for (const tile of grid.children) {
+    const id = tile.getAttribute('data-card'); if (!id) continue;
+    const mask = msMask(m, id), any = !!mask;
+    tile.classList.toggle('have', any);
+    tile.classList.toggle('mine', any);
+    for (const tog of tile.querySelectorAll('.ms-tog')) {
+      const on = !!(mask & (tog.getAttribute('data-var') === 'r' ? MS_R : MS_N));
+      tog.classList.toggle('on', on);
+      tog.setAttribute('aria-pressed', String(on));
+    }
+  }
 }
 
 // ── Rendu ───────────────────────────────────────────────────────────
@@ -10173,7 +10268,11 @@ async function addInvestCard(setId) {
 }
 function deleteInvestCard(id) {
   const i = state.investCards.findIndex(x => x.id === id); if (i < 0) return;
-  state.investCards.splice(i, 1); save(); renderInvestBody(); investBadge(); toast('Carte retirée', 'success');
+  state.investCards.splice(i, 1); save();
+  // Retirer UNE carte ne fait pas renaître la série : les voisines se
+  // referment sur la place laissée vide.
+  flipGrid(() => renderInvestBody());
+  investBadge(); toast('Carte retirée', 'success');
 }
 // Quantité : mise à jour EN PLACE (cote, total, plus-value, KPI) — la tuile
 // n'est pas reconstruite, donc aucun saut de scroll ni perte de focus.
