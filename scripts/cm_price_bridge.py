@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -458,9 +459,35 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {'ok': True, 'prices': [Handler.bridge.price(str(x)) for x in urls[:200]]})
 
 
+def lan_ip():
+    """L'adresse de cette machine sur le réseau local.
+
+    Aucun paquet n'est envoyé : on ouvre une socket UDP « vers » une adresse
+    publique et on demande au système quelle interface il aurait choisie.
+    C'est la seule méthode fiable quand la machine a plusieurs interfaces
+    (Wi-Fi + Ethernet + VPN) — `gethostname()` renvoie souvent 127.0.0.1.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('192.0.2.1', 9))   # TEST-NET-1 : réservé, jamais routé
+        return s.getsockname()[0]
+    except Exception:
+        return '127.0.0.1'
+    finally:
+        s.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description='Pont Cardmarket (premier prix FR / Near Mint)')
     ap.add_argument('--port', type=int, default=4610)
+    # ── ATTEINDRE LE PONT DEPUIS UN AUTRE APPAREIL ────────────────────
+    # Par défaut le pont n'écoute QUE sur la boucle locale : il sait aller
+    # chercher n'importe quelle fiche Cardmarket, donc l'ouvrir à tout le
+    # réseau sans le demander serait un choix pris à la place de l'utilisateur.
+    # `--lan` l'expose sur le réseau local et affiche l'adresse à recopier dans
+    # l'app (Profil › Pont Cardmarket).
+    ap.add_argument('--lan', action='store_true',
+                    help='écoute aussi sur le réseau local (pour lire les cotes depuis un téléphone, un iPad, un autre poste)')
     ap.add_argument('--login', action='store_true',
                     help='ouvre un navigateur pour renouveler l’accès Cardmarket, puis quitte')
     # Une fiche par seconde : au-delà, Cloudflare coupe (mesuré vers 2/s).
@@ -474,7 +501,8 @@ def main():
 
     bridge = Bridge(args.delay)
     Handler.bridge = bridge
-    srv = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    host = '0.0.0.0' if args.lan else '127.0.0.1'
+    srv = ThreadingHTTPServer((host, args.port), Handler)
     threading.Thread(target=bridge.keepalive, daemon=True).start()
     if bridge.needs_login:
         print('aucun accès enregistré : je le fabrique…')
@@ -486,6 +514,13 @@ def main():
         print(f'accès Cardmarket en place (obtenu il y a '
               f'{(int(time.time()) - bridge.cookies_at) // 60} min)')
     print(f'pont prêt sur http://127.0.0.1:{args.port} — aucune fenêtre, requêtes HTTP seules')
+    if args.lan:
+        ip = lan_ip()
+        print(f'réseau local : http://{ip}:{args.port}')
+        print('  · à recopier dans l’app : Profil › Pont Cardmarket')
+        print('  · l’app doit être ouverte en http:// sur cet appareil — depuis une page')
+        print('    https:// le navigateur refuse un pont en http (contenu mixte), et')
+        print('    seule la boucle locale échappe à cette règle.')
     print('Ctrl+C pour arrêter')
     try:
         srv.serve_forever()

@@ -44,7 +44,26 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui63">
+  <link rel="stylesheet" href="style.css?v=ui66">
+  <!-- ══ LA POIGNÉE DE MAIN, PAYÉE D'AVANCE ══════════════════════════
+       MESURÉ : le premier visuel de carte coûtait 330 ms, dont 222 ms de
+       seule négociation TLS avec assets.tcgdex.net — avant même qu'un octet
+       d'image circule. Le navigateur n'ouvrait cette connexion qu'en
+       découvrant la première <img>, donc après avoir lu le HTML, la feuille
+       de style et app.js.
+       `preconnect` la lui fait ouvrir tout de suite, en parallèle du reste :
+       quand la première carte est demandée, le tunnel est déjà là.
+       `crossorigin` est OBLIGATOIRE ici — sans lui le navigateur ouvre une
+       connexion anonyme qui ne sera pas réutilisée pour les images, et la
+       poignée de main est payée deux fois.
+       api.tcgdex.net suit le même raisonnement : c'est la toute première
+       requête de l'app (séries, sets, fiches). ══════════════════════════ -->
+  <link rel="preconnect" href="https://assets.tcgdex.net" crossorigin>
+  <link rel="preconnect" href="https://api.tcgdex.net" crossorigin>
+  <!-- Repli pour les navigateurs qui ignorent preconnect : la résolution DNS
+       seule vaut déjà quelques dizaines de millisecondes. -->
+  <link rel="dns-prefetch" href="https://assets.tcgdex.net">
+  <link rel="dns-prefetch" href="https://api.tcgdex.net">
 </head>
 <body>
 
@@ -445,7 +464,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui63"></script>
-<script src="app.js?v=ui63"></script>
+<script src="cloud-config.js?v=ui66"></script>
+<script src="app.js?v=ui66"></script>
 </body>
 </html>

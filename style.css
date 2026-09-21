@@ -2245,6 +2245,26 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
    600 ms de bruit pour une information qui tient dans un déplacement. */
 .cards-grid.is-settling>*,.wishlists-grid.is-settling>*{animation:none!important}
 
+/* ── LE CONTENU D'UNE FICHE ARRIVE, IL N'APPARAÎT PAS ────────────────
+   Une fiche s'ouvre sur un spinner (le temps d'aller chercher la carte), puis
+   son intérieur est remplacé d'un coup. L'ouverture de la modale durait 380 ms
+   et le contenu surgissait au milieu : deux gestes qui se contredisaient.
+   Une entrée courte — plus courte que l'ouverture, pour rester dessous —
+   suffit à raccorder les deux. Le mouvement réduit l'annule (règle globale). */
+.sheet-in{animation:sheet-in var(--dur-2) var(--ease-out) both}
+@keyframes sheet-in{from{opacity:0;transform:translate3d(0,8px,0)}to{opacity:1;transform:none}}
+/* Le visuel de la fiche : la petite variante arrive du cache (donc tout de
+   suite), la nette se pose par-dessus. On adoucit le remplacement pour que la
+   montée en finesse ne soit pas un clignotement. */
+.detail-img{transition:opacity var(--dur-1) var(--ease-out)}
+
+/* Champ de réglage dans un volet du profil (adresse du pont Cardmarket). */
+.pf-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.pf-field-lab{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--t3)}
+.pf-field .input{width:100%;font-family:var(--mono,ui-monospace,monospace);font-size:13px}
+.cloud-report code,.pf-note code{font-family:var(--mono,ui-monospace,monospace);font-size:.92em;
+  padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.07);border:1px solid var(--line)}
+
 /* ── Ce qu'on affiche dans une série : l'étoile ───────────────────────
    Une pastille par famille de rareté, sous la barre de la série. L'étoile est
    le symbole IMPRIMÉ sur une carte rare : le repère est déjà dans l'œil du

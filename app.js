@@ -101,6 +101,12 @@ function artOk(img) {
 }
 // Substitution low → high à l'approche de l'écran. `rootMargin` généreux : la
 // version nette est prête AVANT qu'on arrive dessus.
+// `requestIdleCallback` n'existe pas partout (Safari l'a ajouté tard) : le
+// repli en setTimeout fait le même travail, en moins fin.
+function idle(fn, timeout = 500) {
+  if (typeof requestIdleCallback === 'function') return requestIdleCallback(fn, { timeout });
+  return setTimeout(fn, Math.min(timeout, 120));
+}
 let _artIO = null;
 function artObserver() {
   if (_artIO) return _artIO;
@@ -114,17 +120,59 @@ function artObserver() {
       if (!hi) continue;
       delete img.dataset.hi;
       if (_imgFailedSrc.has(hi)) continue;
-      const probe = new Image();
-      probe.decoding = 'async';
-      probe.onload = () => { if (img.isConnected) img.src = hi; };
-      probe.onerror = () => _imgFailedSrc.add(hi);
-      probe.src = hi;
+      // …ET SEULEMENT SI LA VIGNETTE EN A BESOIN (voir needsHiArt) : sur une
+      // grille, `low` suffit presque toujours, et `high` pèse quatre fois plus.
+      if (!needsHiArt(img)) continue;
+      /* …ET QUAND LE NAVIGATEUR A FINI L'URGENT. La montée en finesse partait
+         immédiatement, donc pendant que les vignettes `low` d'en dessous
+         étaient encore en vol : 82 Ko qui prenaient la place de 19 Ko
+         attendus à l'écran. En la passant en tâche de fond, la grille se
+         remplit d'abord — c'est ce qu'on regarde — et les cartes s'affinent
+         ensuite, quand plus rien ne presse. Le délai de secours garantit
+         qu'elle a lieu même si le fil ne se libère jamais. */
+      idle(() => {
+        if (!img.isConnected || _imgFailedSrc.has(hi)) return;
+        const probe = new Image();
+        probe.decoding = 'async';
+        probe.onload = () => { if (img.isConnected) img.src = hi; };
+        probe.onerror = () => _imgFailedSrc.add(hi);
+        probe.src = hi;
+      }, 700);
     }
     // Une marge d'un tiers d'écran, pas plus : on veut la version nette de ce
     // qu'on va REGARDER, pas des 417 cases d'un masterset qu'on traverse en
     // défilant (ce serait ~50 Mo de `high` pour rien, sur un réseau mobile).
   }, { rootMargin: '250px 0px' });
   return _artIO;
+}
+/* ══════════════════════════════════════════════════════════════════════
+   QUAND FAUT-IL VRAIMENT LA VERSION NETTE ?
+
+   MESURÉ chez TCGdex : `low` fait 245×337 px pour 19 Ko, `high` 600×825 px
+   pour 82 Ko — quatre fois et demie plus lourd. Or une vignette de grille fait
+   158 px de large sur ordinateur, 104 sur téléphone. L'app chargeait POURTANT
+   les deux pour chaque carte visible : 103 Ko par carte là où 19 suffisaient,
+   et les `high` se disputaient la bande passante avec les `low` d'en dessous —
+   c'est exactement la latence qu'on sentait en parcourant une série.
+
+   La règle tient en une ligne : on ne demande `high` que si la vignette
+   affichée réclame plus que les 245 px de `low`. Le ratio de l'écran est
+   plafonné à 2 : au-delà (téléphones en 3×) on paierait 82 Ko pour une finesse
+   que personne ne distingue sur une vignette de 104 px.
+
+   Conséquence concrète : sur un écran classique et sur téléphone, la grille ne
+   charge plus que `low`. La fiche ouverte, elle, est grande — elle passe le
+   seuil et reçoit sa version nette, comme avant.
+   ══════════════════════════════════════════════════════════════════════ */
+const ART_LOW_W = 245;
+// Tolérance de 15 % : en dessous, le manque de définition ne se voit pas sur
+// une vignette, et 82 Ko pour ça ne se justifie pas. Elle fait basculer les
+// tuiles de téléphone (132 px en 2× = 264 px demandés) du bon côté.
+const ART_HI_FROM = ART_LOW_W * 1.15;
+function needsHiArt(img) {
+  const w = img.getBoundingClientRect().width;
+  if (!w) return true;              // pas encore mesurable : on ne dégrade pas
+  return w * Math.min(window.devicePixelRatio || 1, 2) > ART_HI_FROM;
 }
 function attachArtUpgrade(root = document) {
   const io = artObserver();
@@ -1783,6 +1831,32 @@ function renderProfile() {
           <div id="account-report" class="cloud-report" hidden></div>
         </div>
       </details>
+
+      <!-- ── LE PONT CARDMARKET ───────────────────────────────────
+           L'adresse se réglait en éditant localStorage à la main : autant
+           dire que personne ne pouvait s'en servir depuis un téléphone. Elle
+           a maintenant un champ, un test, et un état lisible. -->
+      <details class="pf-fold">
+        <summary class="pf-fold-sum">
+          <span class="pf-fold-title">Pont Cardmarket</span>
+          <span class="pf-fold-state"><span id="cmb-dot" class="pf-sync-dot" aria-hidden="true"></span><span id="cmb-line">premier prix FR / Near Mint</span></span>
+          <span class="pf-fold-chev" aria-hidden="true">${ICO.left}</span>
+        </summary>
+        <div class="pf-fold-body">
+          <p class="pf-note">Les cotes des API sont des <b>moyennes toutes langues</b>. La première offre française en Near Mint ne se lit que sur la fiche Cardmarket, et Cloudflare n'y laisse passer qu'un vrai navigateur : c'est le rôle du pont.</p>
+          <p class="pf-note">Sur la machine qui le fait tourner : <code>python3 scripts/cm_price_bridge.py</code>. Pour le joindre depuis un téléphone, un iPad ou un autre poste, ajoute <code>--lan</code> et recopie l'adresse affichée ici.</p>
+          <div class="pf-field">
+            <label class="pf-field-lab" for="cmb-url">Adresse du pont</label>
+            <input class="input" id="cmb-url" type="url" inputmode="url" autocomplete="off"
+              spellcheck="false" placeholder="http://127.0.0.1:4610" value="${esc(cmBridgeSetting())}">
+          </div>
+          <div class="pf-actions">
+            <button class="btn btn-ghost btn-sm" onclick="saveCmBridge()">Enregistrer et tester</button>
+            <button class="btn btn-ghost btn-sm" onclick="resetCmBridge()">Revenir à cet appareil</button>
+          </div>
+          <div id="cmb-report" class="cloud-report" hidden></div>
+        </div>
+      </details>
     </section>
 
     <!-- ── LA SORTIE ────────────────────────────────────────────────
@@ -1796,6 +1870,9 @@ function renderProfile() {
   // sections `.reveal` naissent à opacité 0 et attendent l'observateur, et le
   // spotlight ne suit le curseur que sur les surfaces qu'on lui a présentées.
   setTimeout(() => { attachSpotlights(el); attachReveals(el); }, 0);
+  // L'état du pont est affiché sans qu'on ait à déplier ni à tester : on le
+  // demande une fois, en arrière-plan, et la pastille répond.
+  pingCmBridge(false).then(paintCmBridgeState).catch(() => {});
 }
 
 /* Le pseudo est la seule chose de ce profil que l'app possède vraiment (le
@@ -3072,6 +3149,52 @@ function cmBridgeHosts() {
   return _cmBridgeBase ? [_cmBridgeBase] : CM_BRIDGE_HOSTS;
 }
 function cmBridgeBase() { return cmBridgeHosts()[0]; }
+/* ── RÉGLAGE DU PONT (Profil › Pont Cardmarket) ──────────────────────
+   L'adresse vivait dans localStorage et nulle part ailleurs : il fallait
+   ouvrir la console pour s'en servir, donc personne ne pouvait joindre le
+   pont depuis un téléphone ou un iPad. */
+function cmBridgeSetting() {
+  try { return localStorage.getItem('irondex-cm-bridge') || ''; } catch { return ''; }
+}
+function paintCmBridgeState(st) {
+  const dot = document.getElementById('cmb-dot'), line = document.getElementById('cmb-line');
+  if (!line) return;
+  const s = st && st.up ? (st.ready ? 'ok' : 'warn') : 'off';
+  if (dot) dot.setAttribute('data-sync', s === 'ok' ? 'ok' : s === 'warn' ? 'pending' : 'error');
+  line.textContent = !st || !st.up ? 'éteint — cotes en moyenne'
+    : st.ready ? 'en ligne — premier prix FR / Near Mint'
+    : 'en ligne, accès Cardmarket à renouveler';
+}
+function cmBridgeReport(msg, kind) {
+  const el = document.getElementById('cmb-report');
+  if (!el) return;
+  el.hidden = false;
+  el.className = `cloud-report ${kind || ''}`;
+  el.innerHTML = msg;
+}
+async function saveCmBridge() {
+  const inp = document.getElementById('cmb-url');
+  if (!inp) return;
+  const raw = inp.value.trim().replace(/\/+$/, '');
+  try { raw ? localStorage.setItem('irondex-cm-bridge', raw) : localStorage.removeItem('irondex-cm-bridge'); } catch {}
+  _cmBridgeBase = null;
+  cmBridgeReport('Test en cours…', '');
+  const st = await pingCmBridge(true);
+  paintCmBridgeState(st);
+  if (st.up && st.ready) cmBridgeReport(`Pont joint sur <b>${esc(st.base || raw || '127.0.0.1')}</b> — les cotes viendront de la première offre FR / Near Mint.`, 'good');
+  else if (st.up) cmBridgeReport('Pont joint, mais son accès Cardmarket doit être renouvelé : <code>python3 scripts/cm_price_bridge.py --login</code>', 'bad');
+  else if (raw && /^http:\/\//i.test(raw) && location.protocol === 'https:' && !/\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(raw))
+    // Le cas le plus fréquent, et le plus opaque : la requête n'échoue pas,
+    // elle est refusée par le navigateur avant de partir.
+    cmBridgeReport("Injoignable — et ce n'est pas le pont : cette page est en <b>https</b>, le pont en <b>http</b>, et le navigateur bloque ce mélange. Seule la boucle locale (127.0.0.1) y échappe. Ouvre l'app en http:// sur cet appareil pour joindre un pont distant.", 'bad');
+  else cmBridgeReport('Injoignable. Vérifie que le pont tourne (avec <code>--lan</code> s\'il est sur une autre machine) et que l\'adresse est la bonne.', 'bad');
+}
+function resetCmBridge() {
+  try { localStorage.removeItem('irondex-cm-bridge'); } catch {}
+  _cmBridgeBase = null;
+  const inp = document.getElementById('cmb-url'); if (inp) inp.value = '';
+  saveCmBridge();
+}
 // État du pont, revalidé au plus toutes les 20 s : une carte cotée en 400 ms
 // ne doit pas payer un ping à chaque fois.
 let _cmBridge = { at: 0, up: false, ready: false }, _cmBridgePing = null;
@@ -5296,7 +5419,17 @@ async function openCardDetail(cardId) {
     <div class="detail-grid">
       <div class="detail-card-stage spot" id="detail-stage">
         <div class="detail-img-wrap" id="detail-img-wrap">
-          ${card.image ? `<img class="detail-img" src="${IMG(card.image)}" onerror="imgFail(this,'${esc(String(card.localId||''))}','${esc(card.set?.id||'')}','${jss(card.name)}')" alt="${esc(card.name)}">` : noImgHTML(card.localId, card.name, card.set?.id, 'detail-img')}
+          <!-- LA CARTE EST LÀ AVANT MÊME QUE LA FICHE FINISSE DE S'OUVRIR.
+               On affichait directement la variante nette (82 Ko, jamais en
+               cache) : la fiche s'ouvrait sur un rectangle vide, puis le
+               visuel tombait dedans une demi-seconde plus tard — le
+               « saccadé » qu'on voyait. Or la petite variante (19 Ko) est
+               DÉJÀ dans le cache : c'est la vignette qu'on vient de cliquer,
+               et TCGdex la sert en immutable pour un an. Elle s'affiche donc
+               instantanément, et data-hi laisse attachArtUpgrade poser la
+               version nette une fois décodée — sans clignotement, puisqu'elle
+               est préchargée par une image sonde. -->
+          ${card.image ? `<img class="detail-img" src="${IMG(card.image, 'low')}" data-hi="${IMG(card.image)}" decoding="async" onerror="imgFail(this,'${esc(String(card.localId||''))}','${esc(card.set?.id||'')}','${jss(card.name)}')" alt="${esc(card.name)}">` : noImgHTML(card.localId, card.name, card.set?.id, 'detail-img')}
           ${card.image ? `<button class="zoom-btn" title="Voir en grand" aria-label="Agrandir" onclick="event.stopPropagation();openPhotoLightbox('${IMG(card.image)}','${jss(card.name)}')"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.2-3.2M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>` : ''}
         </div>
       </div>
@@ -5334,7 +5467,12 @@ async function openCardDetail(cardId) {
       </div>
     </div>`;
   hydrateFallbackImages(body);
+  attachArtUpgrade(body);   // low déjà affichée → high posée par-dessus
   attachSpotlights(body);
+  // Le contenu ARRIVE au lieu d'apparaître : la coquille s'est ouverte sur un
+  // spinner, remplacer son intérieur d'un coup faisait un à-coup au milieu de
+  // l'animation d'ouverture.
+  body.firstElementChild?.classList.add('sheet-in');
   boundedTask(getRawPrice(cardId), 20000).then(p => {
     const el = document.getElementById('cd-raw'), note = document.getElementById('cd-note');
     if (!el || !el.isConnected) return;
@@ -7578,23 +7716,63 @@ function jss(s) {
 //  ACTUALISATION DES SÉRIES — écran de sync dédié + détection des
 //  nouvelles séries (≠ chargement initial de la page)
 // ════════════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════════════════════════════
+   CE QU'ON SURVEILLE : LES SETS, PAS LES BLOCS
+
+   Le bouton comparait la liste des SÉRIES — les blocs : « Écarlate et
+   Violet », « Méga-Évolution ». Or un bloc sort tous les deux ans, un set tous
+   les deux mois. Le « 30ᵉ Anniversaire » (16/09/2026, 158 cartes) est arrivé
+   DANS Méga-Évolution, un bloc déjà connu : le bouton répondait « À jour »
+   pendant qu'une extension entière venait de paraître. Il ne regardait pas au
+   bon endroit.
+
+   On compare donc /sets — 202 entrées en UNE requête — et le bloc n'est plus
+   qu'un cas particulier : une nouvelle série arrive forcément avec ses sets.
+   La liste est classée du plus ancien au plus récent, ce qui donne gratuitement
+   « la sortie du moment » pour l'afficher même quand il n'y a rien de neuf.
+   ══════════════════════════════════════════════════════════════════════ */
 const SERIES_STORE_KEY = 'pkm_known_series_v1';
+const SETS_STORE_KEY = 'pkm_known_sets_v1';
 function getKnownSeries() { try { return JSON.parse(localStorage.getItem(SERIES_STORE_KEY)) || []; } catch { return []; } }
 function setKnownSeries(ids) { try { localStorage.setItem(SERIES_STORE_KEY, JSON.stringify(ids)); } catch {} }
+function getKnownSets() { try { return JSON.parse(localStorage.getItem(SETS_STORE_KEY)) || []; } catch { return []; } }
+function setKnownSets(ids) { try { localStorage.setItem(SETS_STORE_KEY, JSON.stringify(ids)); } catch {} }
 
-// Vérification silencieuse au démarrage : signale (pastille sur le bouton)
-// qu'une nouvelle série est sortie depuis la dernière visite.
+/* Le catalogue des sets, TCG Pocket exclu. Le sélecteur masque déjà Pocket
+   (voir renderPickerSeries) : annoncer « Parade Onirique » dans les nouveautés
+   aurait envoyé chercher un set que l'app n'ouvre pas. /sets ne dit pas à
+   quelle série appartient un set — d'où la liste d'exclusion, lue une fois. */
+async function catalogSets() {
+  const all = await apiFetch('/sets');
+  let hide = new Set();
+  try { hide = new Set(((await apiFetch('/series/tcgp'))?.sets || []).map(x => String(x.id))); } catch {}
+  return (all || []).filter(s => !hide.has(String(s.id)));
+}
+/* Les sets parus depuis la dernière visite.
+   PREMIÈRE FOIS (installation neuve, ou mise à jour depuis la version qui ne
+   suivait que les blocs) : on mémorise l'existant sans rien annoncer —
+   déclarer 202 « nouveautés » n'aurait informé de personne. C'est pour ce
+   cas-là que `latest` existe : même sans rien de neuf, le bouton dit quelle
+   est la dernière extension parue. */
+async function scanNewSets(commit) {
+  const sets = await catalogSets();
+  const ids = sets.map(s => String(s.id));
+  const known = getKnownSets();
+  const first = !known.length;
+  const fresh = first ? [] : sets.filter(s => !known.includes(String(s.id)));
+  if (first || commit) setKnownSets(ids);
+  return { sets, fresh, latest: sets[sets.length - 1] || null };
+}
+
+// Vérification silencieuse au démarrage : pastille sur le bouton quand une
+// extension est sortie depuis la dernière visite.
 async function checkForNewSeries() {
   try {
-    const series = await apiFetch('/series');
-    const known = getKnownSeries();
-    if (!known.length) { setKnownSeries(series.map(s => s.id)); return; }
-    const fresh = series.filter(s => !known.includes(s.id));
-    if (fresh.length) {
-      const btn = document.getElementById('btn-refresh');
-      btn?.classList.add('has-new');
-      btn?.setAttribute('title', `${fresh.length} nouvelle série disponible — clique pour actualiser`);
-    }
+    const { fresh } = await scanNewSets(false);
+    if (!fresh.length) return;
+    const btn = document.getElementById('btn-refresh');
+    btn?.classList.add('has-new');
+    btn?.setAttribute('title', `${fresh.length} nouveau${fresh.length > 1 ? 'x' : ''} set${fresh.length > 1 ? 's' : ''} — ${fresh.map(s => s.name).join(' · ')}`);
   } catch {}
 }
 
@@ -7638,21 +7816,30 @@ async function refreshSeries() {
   Object.keys(enCardCache).forEach(k => delete enCardCache[k]);
   _ghSetsIndexPromise = null;
 
-  let series = [], fresh = [];
+  let sets = [], fresh = [], latest = null, series = [];
   try {
-    series = await apiFetch('/series');
-    const known = getKnownSeries();
-    if (known.length) fresh = series.filter(s => !known.includes(s.id));
-    setKnownSeries(series.map(s => s.id));
+    ({ sets, fresh, latest } = await scanNewSets(true));
+    // Les blocs restent suivis : ils ne servent plus à détecter, mais la
+    // pastille du démarrage et le compte affiché s'appuient dessus.
+    series = await apiFetch('/series').catch(() => []);
+    if (series.length) setKnownSeries(series.map(s => s.id));
   } catch {}
 
   // Durée minimale pour apprécier l'animation
   await new Promise(r => setTimeout(r, Math.max(0, 1900 - (performance.now() - t0))));
 
   sub.classList.add('done');
-  if (!series.length) { title.textContent = 'Hors ligne'; sub.textContent = 'Impossible de contacter le serveur'; }
-  else if (fresh.length) { title.textContent = 'Nouveautés !'; sub.textContent = `${fresh.length} nouvelle${fresh.length>1?'s':''} série${fresh.length>1?'s':''} — ${fresh.map(s => s.name).join(' · ')}`; }
-  else { title.textContent = 'À jour'; sub.textContent = `${series.length} séries synchronisées`; }
+  if (!sets.length) { title.textContent = 'Hors ligne'; sub.textContent = 'Impossible de contacter le serveur'; }
+  else if (fresh.length) {
+    title.textContent = 'Nouveautés !';
+    sub.textContent = `${fresh.length} nouveau${fresh.length > 1 ? 'x' : ''} set${fresh.length > 1 ? 's' : ''} — ${fresh.map(s => s.name).join(' · ')}`;
+  } else {
+    // « À jour » tout seul ne prouve rien — on ne sait pas si le bouton a
+    // regardé. Nommer la dernière extension parue le prouve, et c'est
+    // justement ce qu'on venait vérifier.
+    title.textContent = 'À jour';
+    sub.textContent = `${sets.length} sets synchronisés${latest ? ` · dernier paru : ${latest.name}` : ''}`;
+  }
   await new Promise(r => setTimeout(r, fresh.length ? 1700 : 1050));
 
   overlay.classList.add('closing');
