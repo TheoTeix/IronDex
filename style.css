@@ -215,20 +215,28 @@ ul{list-style:none}
    sont sous le pli, à chaque rendu. C'est ce qui faisait « accrocher » les
    longues listes sur iPhone.
 
-   `content-visibility:auto` lui dit de ne rien faire tant que la tuile n'est
-   pas près de l'écran. `contain-intrinsic-size: auto <h>` réserve la place :
-   `auto` = « retiens la vraie hauteur dès que tu l'auras mesurée une fois »
-   (donc rien ne bouge quand on remonte), et la longueur n'est qu'une estimation
-   pour ce qui n'a jamais été affiché — elle est calée sur les hauteurs
-   réellement mesurées sur iPhone (258 px pour une tuile, 233 px dans le
-   sélecteur, 225 px pour une vignette).
+   ══ POURQUOI `content-visibility:auto` EST RETIRÉ D'ICI ══
+   Il réserve la place des tuiles non rendues avec une hauteur ESTIMÉE
+   (`contain-intrinsic-size`). Or cette hauteur ne peut pas être une constante :
+   une vignette suit la largeur de sa colonne, qui va de 158 à 240 px selon
+   l'écran — soit de 268 à 383 px de haut. MESURÉ : les tuiles rendues faisaient
+   273 px, celles hors écran restaient à la réservation de 226 px. Chaque
+   vignette GRANDISSAIT donc de 47 px en se révélant, et rétrécissait en
+   sortant : la page bougeait sous le doigt à chaque défilement, et le visuel
+   repassait par sa plaque d'attente — le clignotement qu'on voyait en
+   remontant une grille. Même écart sur les bulles de série, de 34 px dans
+   l'autre sens.
+
+   Ce qu'il économisait, mesuré sur 400 tuiles (l'échelle d'un masterset) :
+   21,8 ms de rendu contre 36,1 ms sans lui. Quatorze millisecondes, UNE FOIS,
+   au moment du rendu — contre une secousse à chaque défilement. Le choix n'est
+   pas serré.
+   Et sa raison d'être a disparu entre-temps : les visuels hors écran ne sont
+   plus ni téléchargés ni décodés, `loading="lazy"` s'en charge au-delà des
+   quatorze premiers (voir artAttrs).
 
    Volontairement PAS appliqué au classeur 3D : ses pochettes vivent dans un
    contexte `preserve-3d`, où la containment casserait la perspective. */
-.cardlist>.cardtile{content-visibility:auto;contain-intrinsic-size:auto 258px}
-.card-picker-grid>.card-picker-item{content-visibility:auto;contain-intrinsic-size:auto 233px}
-.cards-grid>.card-thumb{content-visibility:auto;contain-intrinsic-size:auto 226px}
-.cardser-grid>.cardser-bubble{content-visibility:auto;contain-intrinsic-size:auto 245px}
 
 /* ═══════════════════ MOTION : primitives partagées ═══════════════════ */
 /* Entrée en cascade. --i = index ; 38ms par élément, plafonné (jamais de
@@ -1341,14 +1349,21 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    pas arrivé, on regardait un rectangle noir — et sur une série de 48 cartes,
    ça faisait un mur. Ce pseudo-élément donne au cadre une respiration très
    lente le temps du chargement. Deux précautions :
-    · c'est une animation d'OPACITÉ (composité, zéro repeint) — pas un dégradé
-      qui se déplace ;
-    · elle vit sous `content-visibility:auto`, donc les vignettes hors écran
-      n'animent rien du tout.
+   ══ LA PLAQUE NE RESPIRE PLUS ══
+   Elle pulsait (opacité .5 → 1 → .5, en boucle) pour dire « ça arrive ». Mais
+   c'est précisément le clignotement qu'on voyait en parcourant une grille :
+   des dizaines de cadres qui battent chacun à son rythme, et qui repartent de
+   zéro dès qu'on remonte. Une attente n'a pas besoin de bouger pour se lire —
+   la plaque claire suffit à dire qu'il y a quelque chose à venir, et elle ne
+   tire plus l'œil.
+   Ce qui reste est un FONDU, et un seul : quand le visuel arrive, la plaque
+   s'efface sous lui. C'est le seul mouvement qui porte une information.
+   Bénéfice de bord : sans animation en boucle, une grille de 400 vignettes
+   n'entretient plus 400 animations infinies — ce dont `content-visibility`
+   nous protégeait avant d'être retiré (voir plus haut).
    `artOk()` (au chargement) et `imgFail()` (à l'échec) posent `.art-in`, qui
-   l'éteint définitivement. Voir artAttrs() dans app.js.
+   l'efface définitivement. Voir artAttrs() dans app.js.
    ══════════════════════════════════════════════════════════════════════ */
-@keyframes art-wait{0%,100%{opacity:.5}50%{opacity:1}}
 .card-thumb-imgwrap::before,.cardtile-art::before,.card-picker-item::before{
   content:'';position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;
   /* Assez CLAIR pour se lire comme une plaque en attente et non comme un trou :
@@ -1357,9 +1372,9 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   background:
     radial-gradient(120% 80% at 50% 22%,rgba(255,255,255,.10),transparent 68%),
     linear-gradient(148deg,rgba(255,255,255,.13),rgba(255,255,255,.035) 48%,rgba(255,255,255,.10));
-  animation:art-wait 1.7s ease-in-out infinite}
+  opacity:.85;transition:opacity var(--dur-2) var(--ease-out)}
 .card-thumb-imgwrap.art-in::before,.cardtile-art.art-in::before,.card-picker-item.art-in::before{
-  animation:none;opacity:0}
+  opacity:0}
 /* Carte sans visuel du tout (`.card-noimg`) : il n'y a rien à attendre, donc
    rien à faire respirer — le placeholder est déjà la réponse définitive. */
 .card-thumb-imgwrap:has(.card-noimg)::before,
@@ -1372,9 +1387,7 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .card-picker-item img,.card-picker-item .card-noimg,
 .card-picker-item .card-picker-name{position:relative;z-index:1}
 .cardtile-zoom{z-index:2}
-@media(prefers-reduced-motion:reduce){
-  .card-thumb-imgwrap::before,.cardtile-art::before,.card-picker-item::before{animation:none;opacity:.5}
-}
+/* Plus d'animation ici : le mouvement réduit n'a plus rien à désactiver. */
 /* Même correction que sur les tuiles du portefeuille : `contain` laissait des
    bandes noires (les scans n'ont pas tous exactement le ratio 2,5/3,5). */
 .card-thumb-imgwrap img{width:100%;height:100%;object-fit:cover;background:none;cursor:pointer;
@@ -2190,7 +2203,8 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 /* Une vignette porte maintenant ses deux coches : elle est donc plus haute que
    celles d'une wishlist, et la réservation de place doit suivre (sinon la barre
    de défilement saute quand les cases hors écran se peignent). */
-.ms-grid>.ms-slot{contain-intrinsic-size:auto 266px}
+/* `contain-intrinsic-size` n'a plus de lecteur depuis que
+   `content-visibility` est retiré des grilles de cartes. */
 /* La coche : absente tant que la case n'est pas cochée, et jamais un bouton —
    c'est toute la vignette qui se clique. */
 .ms-check{position:absolute;top:8px;left:8px;z-index:4;width:26px;height:26px;
@@ -3604,7 +3618,6 @@ body::before{display:none}
   .card-picker-check svg{width:10px;height:10px}
   /* Trois colonnes = des vignettes plus petites : la cascade d'entrée doit
      suivre le nouveau rythme, sinon la dernière ligne visible arrive en retard. */
-  .card-picker-grid>.card-picker-item{contain-intrinsic-size:auto 168px}
 
   /* ── Confort tactile ──────────────────────────────────────────
      Pas de flash bleu au doigt, pas de zoom au double-tap, et AUCUN rebond de

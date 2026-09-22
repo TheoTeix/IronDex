@@ -5784,9 +5784,7 @@ async function renderPickerSeries() {
   try {
     // L'API renvoie les séries dans l'ordre chronologique (Base → … → Écarlate
     // et Violet). On retire le TCG Pocket et on inverse : les blocs récents d'abord.
-    const series = (await apiFetch('/series'))
-      .filter(s => s.id !== 'tcgp' && !/pocket/i.test(s.name || '') && !/pocket/i.test(s.id || ''))
-      .slice().reverse();
+    const series = (await apiFetch('/series')).filter(keptSerie).slice().reverse();
     body.innerHTML = `
       ${pickerSteps(0)}
       <div class="picker-lead"><span class="picker-eyebrow">Catalogue complet</span><h3 class="picker-heading">Choisis une série</h3></div>
@@ -5796,7 +5794,7 @@ async function renderPickerSeries() {
         ${series.map((s, i) => `<div class="series-item stagger" style="--i:${Math.min(i,14)}" onmouseenter="prefetchSeries('${s.id}')" data-serie="${esc(s.id)}" data-serie-name="${esc(s.name)}">
           <div class="series-logo-wrap">
             ${s.logo
-              ? `<img class="series-logo" src="${s.logo}.png" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
+              ? `<img class="series-logo" src="${logoSrc(s.id, s.logo)}" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
           <div class="series-name">${esc(s.name)}</div></div>`).join('')}
@@ -5846,7 +5844,7 @@ async function pickSeries(serieId, serieName) {
           ${ms ? `<span class="series-added" aria-hidden="true">${ICO.check}</span>` : ''}
           <div class="series-logo-wrap">
             ${s.logo
-              ? `<img class="series-logo" src="${s.logo}.png" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
+              ? `<img class="series-logo" src="${logoSrc(s.id, s.logo)}" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
           <div class="series-name">${esc(s.name)}</div><div class="series-count">${ms
@@ -7946,8 +7944,12 @@ function setKnownSets(ids) { try { localStorage.setItem(SETS_STORE_KEY, JSON.str
    quelle série appartient un set — d'où la liste d'exclusion, lue une fois. */
 async function catalogSets() {
   const all = await apiFetch('/sets');
-  let hide = new Set();
-  try { hide = new Set(((await apiFetch('/series/tcgp'))?.sets || []).map(x => String(x.id))); } catch {}
+  const hide = new Set();
+  // Les blocs masqués (voir HIDDEN_SERIES) : annoncer « Parade Onirique » ou
+  // un kit de dresseur enverrait chercher un set que l'app n'ouvre pas.
+  await Promise.all([...HIDDEN_SERIES].map(async id => {
+    try { ((await apiFetch('/series/' + id))?.sets || []).forEach(x => hide.add(String(x.id))); } catch {}
+  }));
   return (all || []).filter(s => !hide.has(String(s.id)));
 }
 /* Les sets parus depuis la dernière visite.
@@ -9338,6 +9340,19 @@ const PROMO_LOGO = 'https://assets.tcgdex.net/fr/swsh/swshp/logo';
 function isPromoSet(setId, setName) {
   return /promo/i.test(String(setName || '')) || /p$/.test(String(setId || ''));
 }
+/* ── LOGOS REMPLACÉS À LA MAIN ───────────────────────────────────────
+   TCGdex sert pour le 30ᵉ Anniversaire un logo qui n'est pas celui du produit.
+   On garde le fichier officiel, détouré, dans le dépôt : c'est une image fixe
+   de 225 Ko, elle n'a pas à faire un aller-retour réseau à chaque affichage.
+   La table sert aussi aux sous-séries repliées dans ce set. */
+const LOGO_OVERRIDE = { '30th': 'logo-30th.png', '30th-c': 'logo-30th.png' };
+// La source finale d'un logo de set — `logo` est une URL TCGdex SANS extension
+// (convention de l'API), d'où le « .png » ajouté ici et nulle part ailleurs.
+function logoSrc(setId, logo) {
+  const own = LOGO_OVERRIDE[String(setId || '')];
+  if (own) return own;
+  return logo ? logo + '.png' : '';
+}
 function groupLogo(setId, setName, logo) {
   if (logo) return logo;
   return isPromoSet(setId, setName) ? PROMO_LOGO : null;
@@ -9547,13 +9562,24 @@ let _blocsOpen = null;
    plus récente. Un rang de position est donc exact et gratuit, là où aller
    chercher 187 dates aurait coûté 187 requêtes.
    ══════════════════════════════════════════════════════════════════════ */
+/* LES BLOCS QU'ON NE MONTRE PAS. Le TCG Pocket n'est pas le jeu de cartes
+   physique. « POP » (les séries des tournois organisés) et « Kits du
+   dresseur » sont des distributions confidentielles que personne ne
+   collectionne comme un set — les lister, c'était vingt bulles vides de plus à
+   traverser pour arriver aux vraies séries.
+   Un seul endroit décide, pour que le sélecteur et la Collection ne puissent
+   pas diverger. */
+const HIDDEN_SERIES = new Set(['tcgp', 'pop', 'tk']);
+function keptSerie(s) {
+  const id = String(s?.id || '');
+  return !HIDDEN_SERIES.has(id) && !/pocket/i.test(s?.name || '') && !/pocket/i.test(id);
+}
 let _catalog = null, _catalogPending = false;
 function ensureCatalog(onReady) {
   if (_catalog || _catalogPending) return;
   _catalogPending = true;
   (async () => {
-    const series = (await apiFetch('/series'))
-      .filter(s => s.id !== 'tcgp' && !/pocket/i.test(s.name || '') && !/pocket/i.test(s.id || ''));
+    const series = (await apiFetch('/series')).filter(keptSerie);
     const out = [];
     await runPool(series.map((s, i) => ({ s, i })), async ({ s, i }) => {
       const full = await apiFetch('/series/' + s.id).catch(() => null);
@@ -9690,7 +9716,7 @@ function prefetchSeriesArt(setId) {
 function cardsSeriesGridHTML(groups) {
   return `<div class="cardser-grid">${groups.map(g => `
     <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}');prefetchSeriesCatalog('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
-      <div class="cardser-logo">${g.logo ? `<img src="${g.logo}.png" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
+      <div class="cardser-logo">${g.logo ? `<img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
       <div class="cardser-name">${esc(g.setName)}</div>
       <div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}${g.date ? ` · ${esc(g.date.slice(0, 4))}` : ''}</div>
       <div class="cardser-val">${fmt(g.value)}</div>
@@ -9707,7 +9733,7 @@ function cardsSeriesDetailHTML(setId, groups) {
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeInvestSeries()" title="Toutes les séries" aria-label="Retour aux séries">${ICO.left}</button>
       ${g.logo
-        ? `<div class="cardser-bar-logo"><img src="${g.logo}.png" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
+        ? `<div class="cardser-bar-logo"><img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
       <span class="cardser-bar-meta">${seriesBarMetaText(setId, g, rows)}</span>
     </div>
@@ -10567,7 +10593,7 @@ function msBubbleHTML(m, i) {
     role="button" tabindex="0" aria-label="Ouvrir le masterset ${esc(m.setName)} — ${pct} %"
     onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${go}}">
     <div class="cardser-logo">${m.logo
-      ? `<img src="${m.logo}.png" alt="${esc(m.setName)}" loading="lazy" decoding="async" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">`
+      ? `<img src="${logoSrc(m.setId, m.logo)}" alt="${esc(m.setName)}" loading="lazy" decoding="async" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">`
       : `<div class="cardser-fallback">◆</div>`}</div>
     <div class="cardser-name">${esc(m.setName)}</div>
     <div class="cardser-count">${owned} / ${total || '—'} cases${done ? ' · complet' : ''}</div>
@@ -10618,7 +10644,7 @@ function msHeadHTML(m, d) {
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeMasterset()" title="Tous les mastersets" aria-label="Retour aux mastersets">${ICO.left}</button>
       ${m.logo
-        ? `<div class="cardser-bar-logo"><img src="${m.logo}.png" alt="${esc(m.setName)}" decoding="async" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(m.setName)}}))"></div>`
+        ? `<div class="cardser-bar-logo"><img src="${logoSrc(m.setId, m.logo)}" alt="${esc(m.setName)}" decoding="async" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(m.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(m.setName)}</span>`}
       <button class="btn btn-ghost btn-sm ms-all" id="ms-all-btn" ${d ? '' : 'disabled'}
         aria-label="${full ? 'Tout décocher' : 'Tout cocher'}" title="${full ? 'Décocher les ' + total + ' cases' : 'Cocher les ' + (total || '') + ' cases'}"
