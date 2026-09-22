@@ -2254,6 +2254,10 @@ const PTCG_SET_CANDIDATES = {
   'sm3.5': ['sm35'], 'sm7.5': ['sm75'],
   'sm115': ['sm115', 'sma'], 'sma': ['sma'],
   'cel25': ['cel25', 'cel25c'],
+  // 30ᵉ Anniversaire : chez pokemontcg.io le set s'appelle « me55 », et sa
+  // Collection Classique « me55c » — aucune des transformations génériques
+  // plus bas ne mène de « 30th » à « me55 ».
+  '30th': ['me55'], '30th-c': ['me55c'],
   'swsh4.5': ['swsh45', 'swsh45sv'], 'swsh4.5sv': ['swsh45sv'],
   'swsh9.5tg': ['swsh9tg'], 'swsh10.5tg': ['swsh10tg'],
   'swsh11.5tg': ['swsh11tg'], 'swsh12.5tg': ['swsh12tg'],
@@ -2426,11 +2430,11 @@ async function fetchExternalImage(setId, localId) {
   // 1) miroir GitHub de pokemontcg.io : couvre TOUS les sets candidats
   //    (galeries, coffres, kits, McDo, Collection Classique...) sans dépendre
   //    de l'API instable.
-  for (const ext of ptcgSetCandidates(setId)) {
-    const map = await fetchGhSetImages(ext);
-    const hit = map.get(String(localId)) || map.get(normNum(localId));
-    if (hit) return hit;
-  }
+  // Même table VÉRIFIÉE que pour un set entier : une carte isolée n'a pas
+  // moins droit au bon visuel (voir verifiedSetImages).
+  const map = await verifiedSetImages(setId);
+  const hit = map && (map.get(String(localId)) || map.get(normNum(localId)));
+  if (hit) return hit;
   // 2) fiche directe api.pokemontcg.io en tout dernier recours (timeout court)
   const p = await fetchPtcgCard(setId, localId);
   const url = p?.images?.large || p?.images?.small;
@@ -2448,21 +2452,94 @@ async function fetchExternalImage(setId, localId) {
 async function fillSetImages(cards, setId) {
   if (!setId || !cards.length) return false;
   if (cards.some(c => c.image)) return false;   // le set a ses visuels : rien à faire
-  for (const ext of ptcgSetCandidates(setId)) {
-    let map;
-    try { map = await fetchGhSetImages(ext); } catch { continue; }
-    if (!map || !map.size) continue;
-    let n = 0;
-    for (const c of cards) {
-      const hit = map.get(String(c.localId)) || map.get(normNum(c.localId));
-      if (!hit) continue;
-      c.image = hit;                                   // convention DIRECT:: — voir IMG()
-      fallbackCache[`${setId}#${c.localId}`] = hit;
-      n++;
-    }
-    if (n) { persistImgFallbackSoon(); return true; }
+  const map = await verifiedSetImages(setId);
+  if (!map || !map.size) return false;
+  let n = 0;
+  for (const c of cards) {
+    const hit = map.get(String(c.localId)) || map.get(normNum(c.localId));
+    if (!hit || c.image) continue;
+    c.image = hit;                                   // convention DIRECT:: — voir IMG()
+    fallbackCache[`${setId}#${c.localId}`] = hit;
+    n++;
   }
-  return false;
+  if (n) persistImgFallbackSoon();
+  return n > 0;
+}
+/* ══════════════════════════════════════════════════════════════════════
+   APPARIER SANS SE TROMPER DE CARTE
+
+   Le miroir était lu PAR NUMÉRO, et ça marche pour presque tous les sets. Mais
+   la Collection Classique du 30ᵉ Anniversaire numérote ses cartes 001→030
+   pendant que pokemontcg.io garde les numéros d'origine des rééditions
+   (Dracaufeu = 4, Ondine = 18). Résultat mesuré avant correction : six cartes
+   « retrouvées », toutes FAUSSES — « Genesect EX » illustré par Dracaufeu.
+   Un visuel qui ment est pire qu'un visuel absent, et il ne se voit pas : on
+   croit que ça marche.
+
+   Le numéro reste donc la référence, mais il est VÉRIFIÉ : TCGdex publie le
+   nom anglais de chaque carte même quand il n'a pas l'image, et le miroir
+   porte le sien. Si les deux ne désignent pas la même carte, l'appariement est
+   rejeté — et on retombe sur le nom, qui lui ne se trompe pas de set.
+   Un nom porté par deux cartes est écarté des deux côtés : mieux vaut une case
+   vide qu'un tirage au sort.
+   Mesuré sur 30th-c : 6 visuels faux → 29 justes sur 30.
+   ══════════════════════════════════════════════════════════════════════ */
+const _enNamesCache = {};
+function enNamesOfSet(setId) {
+  if (setId in _enNamesCache) return Promise.resolve(_enNamesCache[setId]);
+  return (_enNamesCache[setId] = (async () => {
+    try {
+      const r = await fetchTimeout(`https://api.tcgdex.net/v2/en/sets/${encodeURIComponent(setId)}`, 8000);
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (!Array.isArray(d?.cards)) return null;
+      return new Map(d.cards.map(c => [String(c.localId), c.name || '']));
+    } catch { return null; }
+  })());
+}
+const _verifiedImgCache = {};
+function verifiedSetImages(setId) {
+  if (setId in _verifiedImgCache) return Promise.resolve(_verifiedImgCache[setId]);
+  return (_verifiedImgCache[setId] = (async () => {
+    const en = await enNamesOfSet(setId);
+    // Un nom que DEUX cartes du set portent ne peut servir à rien.
+    const dup = new Set();
+    if (en) {
+      const seen = new Map();
+      for (const nm of en.values()) { const k = _cardNorm(nm); if (k) seen.set(k, (seen.get(k) || 0) + 1); }
+      for (const [k, n] of seen) if (n > 1) dup.add(k);
+    }
+    for (const ext of ptcgSetCandidates(setId)) {
+      let json = [];
+      try { json = await fetchGhSetJson(ext); } catch {}
+      if (!json.length) continue;
+      const byNum = new Map(), byName = new Map();
+      for (const c of json) {
+        const url = c.images?.large || c.images?.small;
+        if (!url) continue;
+        const v = 'DIRECT::' + url, nm = _cardNorm(c.name);
+        const suf = String(c.id || '').split('-')[1] || '';
+        for (const k of [String(c.number), normNum(c.number), normNum(suf)]) {
+          if (k && !byNum.has(k)) byNum.set(k, { v, nm });
+        }
+        if (nm) byName.set(nm, byName.has(nm) ? null : v);   // null = homonyme
+      }
+      const out = new Map();
+      for (const [localId, name] of (en || new Map())) {
+        const want = _cardNorm(name);
+        const hit = byNum.get(String(localId)) || byNum.get(normNum(localId));
+        // Le numéro, s'il ne désigne pas visiblement une AUTRE carte.
+        if (hit && (!want || !hit.nm || hit.nm === want)) { out.set(String(localId), hit.v); continue; }
+        // Sinon le nom, quand il est sans ambiguïté des deux côtés.
+        if (want && !dup.has(want)) { const byN = byName.get(want); if (byN) out.set(String(localId), byN); }
+      }
+      // Sans noms anglais (set inconnu de TCGdex EN), on ne peut rien vérifier :
+      // le numéro seul reprend son rôle, comme avant.
+      if (!en) for (const [k, v] of byNum) out.set(k, v.v);
+      if (out.size) return out;
+    }
+    return new Map();
+  })());
 }
 
 // ── Cache PERSISTANT des visuels retrouvés ─────────────────────────
@@ -5670,7 +5747,17 @@ async function pickSeries(serieId, serieName) {
 // Ouvrir « Tempête Argentée » ne montrait donc pas ses 30 cartes TG, et il n'y
 // avait aucun moyen d'y arriver depuis là — surtout depuis le « + » d'une
 // série, qui entre directement dans le set.
-const SUBSET_SUFFIXES = ['tg', 'gg', 'sv'];
+/* `cc` et `-c` : les « Collections Classiques » (Célébrations en 2021, le 30ᵉ
+   Anniversaire en 2026). Même situation que les galeries : deux sets chez
+   TCGdex, un seul produit pour le collectionneur. */
+const SUBSET_SUFFIXES = ['tg', 'gg', 'sv', 'cc', '-c'];
+/* Les suffixes collés d'une ou deux lettres (tg, gg, sv) sont AMBIGUS —
+   « 2024sv » est la Collection McDonald's 2024, pas un Shiny Vault — d'où
+   l'exigence d'un radical qui finit par un chiffre. « cc » et « -c » ne se
+   confondent avec rien, et leur parent ne finit pas forcément par un chiffre :
+   « 30th-c » sort de « 30th ». Le vrai garde-fou reste le même dans les deux
+   cas — le parent doit EXISTER (voir displaySetId et pickSeries). */
+const SUBSET_LOOSE = new Set(['cc', '-c']);
 async function pickSet(setId) {
   state.pickerSet = setId; state.pickerSearch = ''; state.pickerSubsets = [];
   const body = document.getElementById('picker-body');
@@ -9022,6 +9109,12 @@ function renderInvestBody() {
     });
     // Dates de sortie manquantes → on les récupère puis on re-trie en place.
     ensureSetDates(() => { if (state.view === 'invest' && state.investMode === 'cards' && !state.investSeriesOpen) renderInvestBody(); });
+    // Le catalogue complet (tous les sets, même ceux où je n'ai rien) arrive
+    // ensuite : mes séries s'affichent tout de suite, les vides se glissent
+    // entre elles — même principe que le catalogue d'une série ouverte.
+    ensureCatalog(() => {
+      if (state.view === 'invest' && state.investMode === 'cards' && !state.investSeriesOpen) renderInvestBody();
+    });
     // Séries restées « ? » depuis un import (« HS : Triomphe »…) : on leur
     // rend leur vrai set — donc leur logo, leur bloc et leur visuel.
     repairUnknownSets(n => {
@@ -9236,7 +9329,8 @@ function subsetParentId(setId) {
   for (const suf of SUBSET_SUFFIXES) {
     if (id.length <= suf.length || !id.endsWith(suf)) continue;
     const base = id.slice(0, -suf.length);
-    if (base.length < 3 || /^\d+$/.test(base) || !/\d$/.test(base)) continue;
+    if (base.length < 3 || /^\d+$/.test(base)) continue;
+    if (!SUBSET_LOOSE.has(suf) && !/\d$/.test(base)) continue;
     return base;
   }
   return null;
@@ -9291,7 +9385,7 @@ function investCardsBodyHTML() {
   // Série ouverte = on est DANS une série : le titre « Portefeuille cartes »,
   // son texte d'explication, les boutons d'import et les compteurs globaux
   // n'ont plus rien à y faire. On ne garde que le logo, le retour et le « + ».
-  if (nCards && state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen, groups);
+  if (state.investSeriesOpen) return cardsSeriesDetailHTML(state.investSeriesOpen, cardsAllGroups(groups));
   return `
     <!-- Ni titre de page, ni texte d'explication, ni bouton d'import CSV : ils
          mangeaient un demi-écran pour ne rien apprendre à qui ouvre son propre
@@ -9303,30 +9397,121 @@ function investCardsBodyHTML() {
       <div class="inv-kpi"><span class="inv-kpi-val">${groups.length}</span><span class="inv-kpi-lab">Série${groups.length > 1 ? 's' : ''}</span></div>
       ${invested > 0 ? `<div class="inv-kpi"><span class="inv-kpi-val ${total - invested >= 0 ? 'pos' : 'neg'}">${fmtSign(total - invested)}</span><span class="inv-kpi-lab">Plus-value</span></div>` : ''}
     </div>
-    ${nCards
-      ? (state.investSeriesOpen ? cardsSeriesDetailHTML(state.investSeriesOpen, groups) : cardsBlocsHTML(groups))
-      : `<div class="empty-state"><div class="empty-state-icon">${ICO.card}</div><div class="empty-state-title">Aucune carte suivie</div>
-          <div class="empty-state-sub">Importe ton export Pokécardex (CSV) — j'ajoute toutes les cartes (hors communes, peu communes et holo), avec leur visuel et leur cote. Ou ajoute-les à la main.</div>
+    <!-- L'appel à l'import reste tant que le coffre est vide — c'est là qu'il
+         sert. Il ne REMPLACE plus le catalogue : depuis que tous les sets sont
+         listés, il y a quelque chose à parcourir dès la première visite, et
+         cacher 187 séries derrière un état vide aurait été un contresens. -->
+    ${nCards ? '' : `<div class="empty-state"><div class="empty-state-icon">${ICO.card}</div><div class="empty-state-title">Aucune carte suivie</div>
+          <div class="empty-state-sub">Importe ton export Pokécardex (CSV) — j'ajoute toutes les cartes (hors communes, peu communes et holo), avec leur visuel et leur cote. Ou ouvre une série ci-dessous et clique les cartes que tu as.</div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px"><label class="btn btn-primary btn-import"><span>Importer un CSV</span><input type="file" accept=".csv,.txt" hidden onchange="onCardsFile(this)"></label>
-          <button class="btn btn-ghost" onclick="addInvestCard()">${PLUS}Ajouter une carte</button></div></div>`}`;
+          <button class="btn btn-ghost" onclick="addInvestCard()">${PLUS}Ajouter une carte</button></div></div>`}
+    ${cardsBlocsHTML(cardsAllGroups(groups))}`;
 }
 // Volets par BLOC. Un portefeuille de 40 séries en grille plate ne se lit
 // pas ; par bloc, on retrouve « ses » séries d'un coup d'œil. Le bloc le plus
 // récent est ouvert, les autres sont repliés (état runtime : on ne persiste pas
 // un pli d'interface).
 let _blocsOpen = null;
+/* ══════════════════════════════════════════════════════════════════════
+   TOUT LE CATALOGUE, PAS SEULEMENT CE QUE JE POSSÈDE
+
+   La Collection ne listait que les séries où j'avais déjà une carte : pour
+   commencer un set, il fallait passer par la palette et savoir qu'il existait.
+   On affiche donc TOUS les sets — du Set de Base à aujourd'hui — les vides à
+   côté des autres, avec exactement le même fonctionnement : on les ouvre, on
+   voit la grille grisée, on ajoute en cliquant une carte.
+
+   D'OÙ VIENNENT LES BLOCS ET L'ORDRE. /sets donne bien les 202 sets en une
+   requête, mais sans dire à quelle série ils appartiennent ni quand ils sont
+   sortis — or c'est le bloc qui structure l'écran. /series/{id} donne les deux
+   à la fois : la liste des sets du bloc, dans l'ordre chronologique. Dix-neuf
+   requêtes, une par bloc, mises en cache par apiFetch et persistées.
+   L'ORDRE EST CELUI DE L'API, pas une date : le brief d'un set n'expose pas
+   `releaseDate`, mais les listes sont déjà classées de la plus ancienne à la
+   plus récente. Un rang de position est donc exact et gratuit, là où aller
+   chercher 187 dates aurait coûté 187 requêtes.
+   ══════════════════════════════════════════════════════════════════════ */
+let _catalog = null, _catalogPending = false;
+function ensureCatalog(onReady) {
+  if (_catalog || _catalogPending) return;
+  _catalogPending = true;
+  (async () => {
+    const series = (await apiFetch('/series'))
+      .filter(s => s.id !== 'tcgp' && !/pocket/i.test(s.name || '') && !/pocket/i.test(s.id || ''));
+    const out = [];
+    await runPool(series.map((s, i) => ({ s, i })), async ({ s, i }) => {
+      const full = await apiFetch('/series/' + s.id).catch(() => null);
+      (full?.sets || []).forEach((x, j) => out.push({
+        setId: String(x.id), setName: x.name || String(x.id), logo: x.logo || null,
+        serieId: String(s.id), serieName: s.name || String(s.id),
+        serieRank: i, rank: j,
+      }));
+    }, 6);
+    _catalog = out;
+  })().then(() => { _catalogPending = false; if (onReady) onReady(); })
+      .catch(e => { _catalogPending = false; console.warn('[catalogue]', e); });
+}
+/* Les groupes affichés : les miens, PLUS une bulle vide par set du catalogue
+   que je n'ai pas encore. Les sous-séries (galerie, Collection Classique)
+   n'ont jamais leur propre bulle — elles sont repliées dans leur parent,
+   comme partout ailleurs (voir displaySetId). */
+function cardsAllGroups(owned) {
+  owned = owned || cardsGrouped();
+  if (!_catalog) return owned;
+  const have = new Set(owned.map(g => String(g.setId)));
+  const known = new Set(_catalog.map(s => s.setId));
+  const out = owned.slice();
+  for (const s of _catalog) {
+    if (have.has(s.setId)) continue;
+    if (displaySetId(s.setId, known) !== s.setId) continue;
+    out.push({
+      setId: s.setId, setName: s.setName, logo: s.logo, cards: [],
+      value: 0, count: 0, date: setReleaseDate(s.setId), __empty: true,
+    });
+  }
+  return out;
+}
+// Position d'un set dans le catalogue : sert à ranger les bulles quand on n'a
+// pas de date (les sets vides n'en ont aucune — voir ensureCatalog).
+let _catalogIndex = null;
+function catalogEntry(setId) {
+  if (!_catalog) return null;
+  if (!_catalogIndex || _catalogIndex.size !== _catalog.length) {
+    _catalogIndex = new Map(_catalog.map(s => [s.setId, s]));
+  }
+  return _catalogIndex.get(String(setId)) || null;
+}
 function cardsBlocsHTML(groups) {
   const map = new Map();
   for (const g of groups) {
-    const b = (state.setBlocs || {})[g.setId];
+    // Le bloc vient du catalogue quand on l'a (il couvre TOUS les sets), sinon
+    // de `setBlocs`, renseigné set par set pour les cartes qu'on possède.
+    const cat = catalogEntry(g.setId);
+    const b = cat ? { id: cat.serieId, name: cat.serieName } : (state.setBlocs || {})[g.setId];
     const id = b ? b.id : '_autres';
     const name = b ? b.name : 'Autres séries';
-    if (!map.has(id)) map.set(id, { id, name, series: [], value: 0, count: 0, date: '' });
+    if (!map.has(id)) map.set(id, { id, name, series: [], value: 0, count: 0, date: '', rank: cat ? cat.serieRank : -1 });
     const e = map.get(id);
     e.series.push(g); e.value += g.value; e.count += g.count;
     if ((g.date || '') > e.date) e.date = g.date || '';
+    if (cat && cat.serieRank > e.rank) e.rank = cat.serieRank;
   }
-  const blocs = [...map.values()].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  // Les sets de chaque bloc, du plus récent au plus ancien. Le rang de
+  // position du catalogue fait foi : un set vide n'a pas de date de sortie, et
+  // trier sur une date absente l'aurait relégué en fin de bloc au hasard.
+  for (const b of map.values()) {
+    b.series.sort((x, y) => {
+      const cx = catalogEntry(x.setId), cy = catalogEntry(y.setId);
+      if (cx && cy) return cy.rank - cx.rank;
+      if (cx) return -1;
+      if (cy) return 1;
+      return (y.date || '').localeCompare(x.date || '') || y.count - x.count;
+    });
+  }
+  // Blocs les plus récents en tête. Idem : le rang prime, la date ne sert plus
+  // que de repli pour un bloc absent du catalogue (« Autres séries »).
+  const blocs = [...map.values()].sort((a, b) =>
+    (b.rank - a.rank) || (b.date || '').localeCompare(a.date || ''));
   // Le pli est un état RUNTIME, et il doit rester cohérent quand la liste des
   // blocs change : au premier rendu les blocs ne sont pas encore connus (une
   // seule entrée « Autres séries »), et sans ce garde-fou c'est elle qui
@@ -9340,7 +9525,7 @@ function cardsBlocsHTML(groups) {
       <button class="bloc-head" onclick="toggleBloc('${esc(b.id)}')" aria-expanded="${open}">
         <span class="bloc-chev" aria-hidden="true">${CHEV}</span>
         <span class="bloc-name">${esc(b.name)}</span>
-        <span class="bloc-meta">${b.series.length} série${b.series.length > 1 ? 's' : ''} · ${b.count} carte${b.count > 1 ? 's' : ''}</span>
+        <span class="bloc-meta">${b.series.filter(g => g.count).length} / ${b.series.length} série${b.series.length > 1 ? 's' : ''} · ${b.count} carte${b.count > 1 ? 's' : ''}</span>
         <span class="bloc-val">${fmt(b.value)}</span>
       </button>
       <div class="bloc-body"${open ? '' : ' hidden'}>${cardsSeriesGridHTML(b.series)}</div>
@@ -9803,6 +9988,15 @@ async function seriesCatalog(setId) {
   }));
   const cards = b.cards.filter(c => !skip.has(String(c.id)));
   const out = { cards, rare, vintage, setTotal: b.cards.length };
+  /* Les sous-séries que TCGdex n'illustre pas — la Collection Classique du 30ᵉ
+     n'a AUCUNE image, dans aucune langue — vont chercher leurs visuels
+     ailleurs, une requête par sous-set concerné. Sans ça, réunir les deux sets
+     n'aurait fait que déplacer trente « Visuel indisponible » dans la série
+     principale. */
+  const gaps = [...new Set(cards.filter(c => !c.image).map(c => c.__set).filter(Boolean))];
+  await Promise.all(gaps.map(async g => {
+    try { await fillSetImages(cards.filter(c => c.__set === g), g); } catch {}
+  }));
   _serieCat[setId] = out;
   return out;
 }
