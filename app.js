@@ -5793,7 +5793,7 @@ async function renderPickerSeries() {
       <div class="series-grid" id="series-grid">
         ${series.map((s, i) => `<div class="series-item stagger" style="--i:${Math.min(i,14)}" onmouseenter="prefetchSeries('${s.id}')" data-serie="${esc(s.id)}" data-serie-name="${esc(s.name)}">
           <div class="series-logo-wrap">
-            ${s.logo
+            ${logoSrc(s.id, s.logo)
               ? `<img class="series-logo" src="${logoSrc(s.id, s.logo)}" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
@@ -5843,7 +5843,7 @@ async function pickSeries(serieId, serieName) {
           return `<div class="series-item stagger ${ms ? 'is-added' : ''}" style="--i:${Math.min(i,14)}" onmouseenter="prefetchSet('${s.id}')" data-set="${esc(s.id)}"${ms ? ' title="Déjà dans ton masterset"' : ''}>
           ${ms ? `<span class="series-added" aria-hidden="true">${ICO.check}</span>` : ''}
           <div class="series-logo-wrap">
-            ${s.logo
+            ${logoSrc(s.id, s.logo)
               ? `<img class="series-logo" src="${logoSrc(s.id, s.logo)}" alt="${esc(s.name)}" onerror="this.parentElement.innerHTML='<div class=\\'series-fallback\\'>◆</div>'">`
               : `<div class="series-fallback">◆</div>`}
           </div>
@@ -9716,7 +9716,7 @@ function prefetchSeriesArt(setId) {
 function cardsSeriesGridHTML(groups) {
   return `<div class="cardser-grid">${groups.map(g => `
     <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}');prefetchSeriesCatalog('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
-      <div class="cardser-logo">${g.logo ? `<img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
+      <div class="cardser-logo">${logoSrc(g.setId, g.logo) ? `<img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
       <div class="cardser-name">${esc(g.setName)}</div>
       <div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}${g.date ? ` · ${esc(g.date.slice(0, 4))}` : ''}</div>
       <div class="cardser-val">${fmt(g.value)}</div>
@@ -9732,7 +9732,7 @@ function cardsSeriesDetailHTML(setId, groups) {
   return `
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeInvestSeries()" title="Toutes les séries" aria-label="Retour aux séries">${ICO.left}</button>
-      ${g.logo
+      ${logoSrc(g.setId, g.logo)
         ? `<div class="cardser-bar-logo"><img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(g.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(g.setName)}</span>`}
       <span class="cardser-bar-meta">${seriesBarMetaText(setId, g, rows)}</span>
@@ -10592,7 +10592,7 @@ function msBubbleHTML(m, i) {
   return `<div class="cardser-bubble ms-bubble ${done ? 'done' : ''}" style="--i:${Math.min(i, 12)}"
     role="button" tabindex="0" aria-label="Ouvrir le masterset ${esc(m.setName)} — ${pct} %"
     onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${go}}">
-    <div class="cardser-logo">${m.logo
+    <div class="cardser-logo">${logoSrc(m.setId, m.logo)
       ? `<img src="${logoSrc(m.setId, m.logo)}" alt="${esc(m.setName)}" loading="lazy" decoding="async" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">`
       : `<div class="cardser-fallback">◆</div>`}</div>
     <div class="cardser-name">${esc(m.setName)}</div>
@@ -10643,7 +10643,7 @@ function msHeadHTML(m, d) {
   return `
     <div class="cardser-bar">
       <button class="cardser-back" onclick="closeMasterset()" title="Tous les mastersets" aria-label="Retour aux mastersets">${ICO.left}</button>
-      ${m.logo
+      ${logoSrc(m.setId, m.logo)
         ? `<div class="cardser-bar-logo"><img src="${logoSrc(m.setId, m.logo)}" alt="${esc(m.setName)}" decoding="async" onerror="this.closest('.cardser-bar-logo').replaceWith(Object.assign(document.createElement('span'),{className:'cardser-bar-name',textContent:${JSON.stringify(m.setName)}}))"></div>`
         : `<span class="cardser-bar-name">${esc(m.setName)}</span>`}
       <button class="btn btn-ghost btn-sm ms-all" id="ms-all-btn" ${d ? '' : 'disabled'}
