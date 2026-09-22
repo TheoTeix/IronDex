@@ -2146,6 +2146,12 @@ async function apiFetch(path) {
   if (path in apiPromises) return apiPromises[path];
   const p = (async () => {
     try {
+      // LA COPIE LOCALE D'ABORD. IndexedDB est asynchrone, donc on l'interroge
+      // ICI plutôt qu'au démarrage : le premier rendu n'est pas retardé, et
+      // aucune requête ne part pour une donnée qu'on a déjà sur place.
+      await migrateLegacyApiCache();
+      const saved = await readApi(path);
+      if (saved !== undefined) { cache[path] = saved; return saved; }
       // Timeout dur : une requête TCGdex qui ne répond jamais gelait toute la
       // chaîne aval (fiches, cotes… → « chargement infini » sur les détails).
       // Retry automatique : TCGdex renvoie ponctuellement des 5xx / coupe la
@@ -2184,23 +2190,110 @@ function prefetchApi(path) { apiFetch(path).catch(() => {}); }
 function prefetchSeries(id) { prefetchApi(`/series/${id}`); }
 function prefetchSet(id) { prefetchApi(`/sets/${id}`); }
 
-// ── Cache persistant (localStorage) des données structurelles ──────
-// Les séries et sets ne changent quasi jamais : on les garde d'une session à
-// l'autre → « parcourir les séries » devient instantané dès la 2e visite. Les
-// cotes (/cards/*) NE sont PAS persistées (elles évoluent) : elles restent en
-// cache mémoire, rechargées au boot comme avant. Bornage LRU par taille.
+/* ══════════════════════════════════════════════════════════════════════
+   OÙ VIT LE CATALOGUE — ET POURQUOI PAS DANS LA BASE
+
+   CE QUI N'ALLAIT PAS, MESURÉ AVEC UN CACHE PLEIN (une centaine de sets
+   parcourus, 2,57 Mo) :
+    · écrire UNE entrée coûtait 18 ms, parce que localStorage ne sait stocker
+      qu'une chaîne : à chaque set visité, TOUT le cache était re-sérialisé
+      puis réécrit ;
+    · le démarrage payait 13 ms de lecture et d'analyse SYNCHRONES, sur le fil
+      principal, avant le premier pixel ;
+    · et le plafond de 1,6 Mo — posé justement pour borner ces deux coûts —
+      faisait évincer les sets les plus anciens, donc les re-télécharger.
+   Autrement dit : plus on parcourait de séries, plus l'app s'alourdissait.
+   Exactement l'usure qu'on craignait.
+
+   POURQUOI PAS DANS SUPABASE. Le catalogue est une donnée PUBLIQUE et
+   IDENTIQUE pour tout le monde : le ranger par compte ferait payer un
+   aller-retour réseau là où une copie locale ne coûte rien, et il faudrait en
+   plus tenir sa fraîcheur à jour à la main — un set qui sort ne se
+   propagerait plus tout seul. La base est faite pour ce qui est À MOI (ma
+   collection, mes cotes), pas pour un annuaire que chacun peut relire.
+   Les VISUELS encore moins : ils sont déjà servis par un CDN en `immutable`
+   pour un an et gardés par le service worker. Les ré-héberger, ce serait
+   ~530 Mo à stocker et à payer en sortie, pour un chargement PLUS lent.
+
+   INDEXEDDB, DONC. Une entrée par chemin, écrite seule — plus de
+   re-sérialisation globale ; lue en asynchrone — le fil principal ne bloque
+   plus au démarrage ; et sans plafond étroit, donc sans éviction : les 2,9 Mo
+   du catalogue entier y tiennent sans effort, et une série déjà parcourue ne
+   se retélécharge jamais.
+   Le repli reste localStorage si IndexedDB est indisponible (navigation
+   privée stricte), avec ses anciennes bornes.
+   ══════════════════════════════════════════════════════════════════════ */
 const APICACHE_KEY = 'irondex-apicache-v1';
 const APICACHE_MAX_BYTES = 1_600_000, APICACHE_MAX_ENTRY = 60_000;
-let _apiStore = { total: 0, order: [], map: {} };
-function loadApiCache() {
+const APIDB_NAME = 'irondex-api', APIDB_STORE = 'paths';
+let _apiStore = { total: 0, order: [], map: {} };   // repli localStorage seulement
+
+let _apiDbPromise = null;
+function apiDb() {
+  if (_apiDbPromise) return _apiDbPromise;
+  return (_apiDbPromise = new Promise(res => {
+    try {
+      if (typeof indexedDB === 'undefined') return res(null);
+      const rq = indexedDB.open(APIDB_NAME, 1);
+      rq.onupgradeneeded = () => {
+        const db = rq.result;
+        if (!db.objectStoreNames.contains(APIDB_STORE)) db.createObjectStore(APIDB_STORE);
+      };
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+      rq.onblocked = () => res(null);
+    } catch { res(null); }
+  }));
+}
+/* LECTURE CIBLÉE, PAS D'ASPIRATION AU DÉMARRAGE.
+   Premier jet : tout charger d'un coup (getAll). Mesuré sur une base pleine —
+   37 ms et 4,4 Mo installés en mémoire, pour des sets qu'on n'ouvrira
+   peut-être jamais. Une lecture par clé coûte 0,3 ms : on ne lit donc que le
+   chemin demandé, au moment où il est demandé. Rien ne bloque le démarrage, et
+   la mémoire ne porte que ce qu'on regarde. */
+function readApi(path) {
+  return apiDb().then(db => {
+    if (!db) return undefined;
+    return new Promise(res => {
+      try {
+        const tx = db.transaction(APIDB_STORE, 'readonly');
+        const rq = tx.objectStore(APIDB_STORE).get(path);
+        rq.onsuccess = () => res(rq.result);
+        tx.onerror = tx.onabort = () => res(undefined);
+      } catch { res(undefined); }
+    });
+  }).catch(() => undefined);
+}
+/* REPRISE DE L'ANCIEN CACHE, une seule fois : ce qui a déjà été téléchargé n'a
+   aucune raison de l'être une deuxième fois. Puis on le jette — le garder,
+   c'était payer sa relecture synchrone à chaque démarrage pour rien. */
+let _apiMigration = null;
+function migrateLegacyApiCache() {
+  if (_apiMigration) return _apiMigration;
+  return (_apiMigration = (async () => {
+    const db = await apiDb();
+    if (!db) { loadApiCacheLegacy(); return; }
+    let d = null;
+    try {
+      const raw = localStorage.getItem(APICACHE_KEY);
+      if (!raw) return;
+      d = JSON.parse(raw);
+    } catch { return; }
+    for (const path in (d?.map || {})) { try { rememberApi(path, d.map[path].d); } catch {} }
+    try { localStorage.removeItem(APICACHE_KEY); } catch {}
+  })());
+}
+// Repli : l'ancien cache localStorage, avec ses bornes (voir plus haut).
+function loadApiCacheLegacy() {
   try {
     const raw = localStorage.getItem(APICACHE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d && d.map) { _apiStore = d; for (const p in d.map) cache[p] = d.map[p].d; }
-    }
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (d && d.map) { _apiStore = d; for (const p in d.map) if (!(p in cache)) cache[p] = d.map[p].d; }
   } catch {}
 }
+// Appelé au démarrage : ne fait plus que la reprise de l'ancien cache.
+function loadApiCache() { migrateLegacyApiCache(); }
 let _apiPersistTimer = null;
 function persistApiSoon() {
   if (_apiPersistTimer) return;
@@ -2218,19 +2311,41 @@ function persistApiSoon() {
 }
 function rememberApi(path, data) {
   if (!/^\/(series|sets)/.test(path)) return;   // structurel uniquement
-  let s; try { s = JSON.stringify(data); } catch { return; }
-  const n = s.length;
-  if (n > APICACHE_MAX_ENTRY) return;
-  if (_apiStore.map[path]) _apiStore.total -= _apiStore.map[path].n;
-  else _apiStore.order.push(path);
-  _apiStore.map[path] = { d: data, n };
-  _apiStore.total += n;
-  while (_apiStore.total > APICACHE_MAX_BYTES && _apiStore.order.length > 1) {
-    const old = _apiStore.order.shift();
-    if (old === path) { _apiStore.order.push(path); continue; }
-    if (_apiStore.map[old]) { _apiStore.total -= _apiStore.map[old].n; delete _apiStore.map[old]; }
-  }
-  persistApiSoon();
+  apiDb().then(db => {
+    if (db) {
+      // UNE entrée, écrite seule : c'est tout l'intérêt du changement.
+      try { db.transaction(APIDB_STORE, 'readwrite').objectStore(APIDB_STORE).put(data, path); } catch {}
+      return;
+    }
+    // Repli localStorage : on garde le bornage LRU, il protège du quota.
+    let s; try { s = JSON.stringify(data); } catch { return; }
+    const n = s.length;
+    if (n > APICACHE_MAX_ENTRY) return;
+    if (_apiStore.map[path]) _apiStore.total -= _apiStore.map[path].n;
+    else _apiStore.order.push(path);
+    _apiStore.map[path] = { d: data, n };
+    _apiStore.total += n;
+    while (_apiStore.total > APICACHE_MAX_BYTES && _apiStore.order.length > 1) {
+      const old = _apiStore.order.shift();
+      if (old === path) { _apiStore.order.push(path); continue; }
+      if (_apiStore.map[old]) { _apiStore.total -= _apiStore.map[old].n; delete _apiStore.map[old]; }
+    }
+    persistApiSoon();
+  }).catch(() => {});
+}
+// Vider le catalogue persistant (bouton « Actualiser » — voir refreshSeries).
+async function clearApiCache() {
+  _apiStore = { total: 0, order: [], map: {} };
+  try { localStorage.removeItem(APICACHE_KEY); } catch {}
+  const db = await apiDb();
+  if (!db) return;
+  try {
+    await new Promise(res => {
+      const tx = db.transaction(APIDB_STORE, 'readwrite');
+      tx.objectStore(APIDB_STORE).clear();
+      tx.oncomplete = tx.onerror = tx.onabort = () => res();
+    });
+  } catch {}
 }
 
 // ── Repli de visuel pour les sets sans image en FR ────────────────
@@ -7890,8 +8005,9 @@ async function refreshSeries() {
   // chaque carte (syncCardPrice). « Actualiser » ne doit jamais vider les
   // valeurs enregistrées — un hoquet réseau afficherait sinon un coffre à 0 €.
   Object.keys(cache).forEach(k => { if (k.startsWith('/series') || k.startsWith('/sets') || k.startsWith('/cards')) delete cache[k]; });
-  _apiStore = { total: 0, order: [], map: {} };
-  try { localStorage.removeItem(APICACHE_KEY); } catch {}
+  await clearApiCache();
+  // Le catalogue complet doit être rebâti : ses 19 requêtes repartent.
+  _catalog = null; _catalogIndex = null;
   _soldStore = {};
   try { localStorage.removeItem(SOLD_KEY); } catch {}
   Object.keys(fallbackSetCache).forEach(k => delete fallbackSetCache[k]);
