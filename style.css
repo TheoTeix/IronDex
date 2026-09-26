@@ -656,25 +656,22 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 :root[data-mobile="on"] .app-header{
   position:absolute;top:0;left:0;right:0;z-index:var(--z-topbar);
 }
+/* ══════════════════════════════════════════════════════════════════════
+   UNE SEULE CASE, ET LES VUES S'Y SUPERPOSENT
+
+   C'était une bande de QUATRE colonnes qu'on faisait glisser. Deux défauts en
+   découlaient :
+    · avant de la bouger, il fallait invalider le verre des quatre pages — d'où
+      le temps mort avant le mouvement, « ça reste en place puis ça swipe » ;
+    · le compositeur redessinait quatre pages pour en montrer une.
+   Les vues se superposent maintenant dans une case unique, et c'est la
+   chorégraphie de l'ordinateur qui les croise : seules les deux concernées
+   bougent, en transform et opacity. Moins de travail, et le même rendu des
+   deux côtés. */
 :root[data-mobile="on"] .wrap{
   height:100%;max-width:none;margin:0;
-  /* QUATRE colonnes : les trois destinations de la barre du bas, plus le
-     profil — qui n'y figure pas mais vit dans la même bande, atteint par
-     l'avatar de la barre haute. Sans sa case déclarée ici, il s'insérait dans
-     la grille au petit bonheur et déréglait les voisines. */
-  display:grid;grid-template-columns:repeat(4,100%);grid-template-rows:100%;
-  /* Le `transform` est posé en style inline par setPagerTransform() — et NON
-     via une variable CSS : une propriété personnalisée non enregistrée ne
-     déclenche pas de transition sur le transform qui l'utilise, et la bande
-     sautait au lieu de glisser (voir la note dans app.js). */
-  transform:translate3d(0,0,0);
-  /* La courbe des feuilles iOS : départ franc, arrivée posée. La DURÉE est
-     posée par setPagerColumn() et suit la distance — deux pages d'un coup
-     doivent se voir passer par celle du milieu. */
-  transition:transform 340ms cubic-bezier(.32,.72,0,1);
+  display:grid;grid-template-columns:100%;grid-template-rows:100%;
 }
-/* Démarrage, rotation : on se place d'un coup au lieu de glisser depuis 0. */
-:root[data-mobile="on"] .wrap.no-anim{transition:none}
 
 /* ══════════════════════════════════════════════════════════════════════
    CE QUI COÛTE CHER QUAND LA BANDE GLISSE : LE VERRE DÉPOLI
@@ -749,29 +746,21 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* Une colonne par destination. Le détail d'une wishlist PARTAGE la colonne de
    sa liste : y entrer ne fait donc pas glisser la bande, c'est un push iOS à
    l'intérieur de la colonne. */
-:root[data-mobile="on"] #view-home{grid-area:1/1}
-:root[data-mobile="on"] #view-wishlists,
-:root[data-mobile="on"] #view-wishlist-detail{grid-area:1/2}
-:root[data-mobile="on"] #view-invest{grid-area:1/3}
-:root[data-mobile="on"] #view-profile{grid-area:1/4}
+/* Toutes dans la case 1/1 : elles se superposent, donc la sortante et
+   l'entrante se croisent sans que rien ne pousse rien. */
+:root[data-mobile="on"] .view{grid-area:1/1}
 /* LES CLASSEURS N'EXISTENT PAS ICI (demande du 2026-08-26). Le feuilletage 3D
    reste sur Mac ; les cases cochées continuent de compter dans le coffre. */
 :root[data-mobile="on"] #view-binders,
 :root[data-mobile="on"] #view-binder-detail{display:none!important}
 :root[data-mobile="on"] .tabbar .nav-btn[data-view="binders"]{display:none}
 
-/* Les trois colonnes sont affichées EN PERMANENCE — c'est le principe même
-   d'une grande page. `.active` ne sert donc plus qu'à la pile liste/détail. */
-:root[data-mobile="on"] #view-home,
-:root[data-mobile="on"] #view-wishlists,
-:root[data-mobile="on"] #view-invest,
-:root[data-mobile="on"] #view-profile{display:block}
-:root[data-mobile="on"] #view-wishlist-detail{display:none}
-:root[data-mobile="on"] #view-wishlist-detail.active{display:block}
-/* `:not(.exiting)` : le temps que la liste s'efface, elle doit RESTER visible —
-   sinon son animation de sortie ne se voyait jamais (elle passait en
-   display:none à la frame où le détail devenait actif). */
-:root[data-mobile="on"] #pager:has(#view-wishlist-detail.active) #view-wishlists:not(.exiting){display:none}
+/* UNE SEULE PAGE VISIBLE À LA FOIS — plus les quatre en permanence. Trois
+   pages peintes pour rien, c'était le gros du coût. `.exiting` reste affichée
+   le temps de s'effacer, sinon sa sortie ne se verrait jamais. */
+:root[data-mobile="on"] .view{display:none}
+:root[data-mobile="on"] .view.active,
+:root[data-mobile="on"] .view.exiting{display:block}
 /* La vue sortante reste DANS sa case de grille (elle s'y superpose à celle qui
    arrive) au lieu d'être épinglée en `position:fixed` : sous un ancêtre
    transformé, « fixed » n'est plus relatif à l'écran. */
@@ -794,20 +783,20 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   padding:calc(var(--topbar-h,60px) + var(--s4)) var(--gutter)
           calc(var(--tabbar-h,84px) + var(--s4));
 }
-/* Le mouvement, c'est la bande : les trois pages n'ont plus d'animation
-   d'entrée ni de sortie propre. Le détail d'une wishlist, lui, garde son
-   push/pop (il n'est pas dans cette liste). */
-:root[data-mobile="on"] #view-home,
-:root[data-mobile="on"] #view-wishlists,
-:root[data-mobile="on"] #view-invest,
-:root[data-mobile="on"] #view-profile{animation:none}
+/* Les pages retrouvent leur animation propre : c'est elles qui bougent
+   maintenant, la bande ne glisse plus. */
 /* L'accueil est une colonne flex, et il l'est en permanence maintenant.
    `flex:none` sur ses enfants est INDISPENSABLE depuis qu'il défile lui-même :
    dans une colonne flex de hauteur fixe, un enfant se laisse COMPRIMER pour
    tenir dedans (et ceux qui ont `overflow:hidden` — tous les panneaux de verre —
    acceptent de descendre à zéro). Le panneau « Valeur du coffre » se retrouvait
    écrasé sur son seul libellé. */
-:root[data-mobile="on"] #view-home{display:flex;flex-direction:column;gap:26px}
+/* L'accueil est une colonne flex — mais SEULEMENT quand il est à l'écran. Ce
+   sélecteur par identifiant l'imposait en permanence (il battait la règle
+   générique `.view{display:none}` par spécificité), si bien que la page quittée
+   restait affichée sous la nouvelle après la transition. */
+:root[data-mobile="on"] #view-home.active,
+:root[data-mobile="on"] #view-home.exiting{display:flex;flex-direction:column;gap:26px}
 :root[data-mobile="on"] #view-home>*{flex:none}
 
 /* La coulée PRISME dure 1 s : un plein écran repeint pendant soixante frames,
@@ -3904,18 +3893,17 @@ body::before{display:none}
   .cardser-bubble{animation-delay:calc(min(var(--i,0),10) * 22ms)}
   .reveal{transform:none;transition-delay:calc(min(var(--i,0),6) * 30ms)}
   .reveal.in{transform:none}
-  /* Le glissement de page reste (il dit dans quel sens on va) mais court :
-     26 px de course sur 380 ms, c'était une translation qu'on suivait du
-     regard. 14 px sur 260 ms se lisent comme un enchaînement, pas un trajet. */
-  @keyframes v-in-fwd-m{from{opacity:0;transform:translate3d(14px,0,0)}to{opacity:1;transform:none}}
-  @keyframes v-in-bwd-m{from{opacity:0;transform:translate3d(-14px,0,0)}to{opacity:1;transform:none}}
-  @keyframes v-out-fwd-m{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-10px,0,0)}}
-  @keyframes v-out-bwd-m{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(10px,0,0)}}
+  /* PLUS D'ANIMATION DE PAGE PROPRE AU TÉLÉPHONE. Ces réglages — 14 px de
+     course, courbe `ease-out` — dataient de l'époque où c'était la BANDE qui
+     portait le mouvement : la vue n'avait besoin que d'un accent discret
+     par-dessus. Maintenant que la bande ne glisse plus, c'est la vue QUI EST le
+     mouvement, et 14 px n'en sont plus un — on voyait un contenu changer, pas
+     une page arriver.
+     Le téléphone hérite donc des mêmes règles que l'ordinateur : 40 px de
+     course, courbe iOS, 300 ms. Rien à alléger : seules DEUX vues s'animent
+     désormais (contre quatre pages composées avant), et leur verre est coupé
+     le temps du croisement — voir markPagerMoving. */
   .view.entering{animation:v-fade-in var(--dur-1) var(--ease-out) both}
-  .view.enter-forward{animation:v-in-fwd-m var(--dur-2) var(--ease-out) both}
-  .view.enter-backward{animation:v-in-bwd-m var(--dur-2) var(--ease-out) both}
-  .view.exit-forward{animation:v-out-fwd-m var(--dur-exit) var(--ease-in) both}
-  .view.exit-backward{animation:v-out-bwd-m var(--dur-exit) var(--ease-in) both}
 }
 
 /* ═══════════════════════════════════════════════════════════════════

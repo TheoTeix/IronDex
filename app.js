@@ -4720,14 +4720,17 @@ function pagerColumnOf(view) {
 }
 function transitionKind(fromView, toView) {
   if (fromView === toView) return 'none';
-  if (isPhone()) {
-    const a = pagerColumnOf(fromView), b = pagerColumnOf(toView);
-    if (a && b && a !== b) return 'slide';
-    // Même colonne : push/pop iOS entre la liste et son détail.
-    if (toView === 'wishlist-detail') return 'forward';
-    if (fromView === 'wishlist-detail') return 'backward';
-    return 'none';
-  }
+  /* ══ TÉLÉPHONE ET ORDINATEUR SUIVENT DÉSORMAIS LE MÊME CHEMIN ══
+     Le téléphone faisait glisser une BANDE contenant les quatre pages. Deux
+     conséquences : il fallait invalider tout le verre des quatre pages avant
+     de bouger (d'où le temps mort avant le glissement — « ça reste en place
+     puis ça swipe »), et le compositeur redessinait quatre pages là où deux
+     suffisent.
+     La mécanique de l'ordinateur ne déplace QUE les deux vues concernées, en
+     transform et opacity. C'est moins de travail, et c'est le rendu qu'on
+     voulait des deux côtés. Les règles ci-dessous s'appliquent donc partout —
+     la seule particularité du téléphone était le carrousel, qui n'existe
+     plus. */
   if (toView === 'wishlist-detail' && fromView !== 'wishlist-detail') return 'forward';
   if (fromView === 'wishlist-detail' && toView !== 'wishlist-detail') return 'backward';
   if (toView === 'binder-detail' && fromView === 'binders') return 'forward';
@@ -4758,29 +4761,6 @@ function pagerEl() { return document.getElementById('pager'); }
    recalculé sur toute la largeur de l'écran à chaque frame (voir style.css).
    Le drapeau est posé pour la durée exacte de l'animation, plus une marge. */
 let _pagerMoveTimer = 0;
-/* ── NE PEINDRE QUE CE QUI TRAVERSE L'ÉCRAN ──────────────────────────
-   Les quatre colonnes existent en permanence — c'est le principe de la grande
-   page. Mais pendant un pas d'une colonne à l'autre, deux seulement passent
-   devant les yeux : composer les deux autres à chaque frame est du travail
-   pur. `visibility:hidden` les retire du dessin sans toucher à leur mise en
-   page ni à leur position de défilement — elles réapparaissent exactement
-   telles qu'on les avait laissées. */
-let _pagerPaintTimer = 0;
-function paintPagerRange(from, to, ms) {
-  if (_pagerPaintTimer) { clearTimeout(_pagerPaintTimer); _pagerPaintTimer = 0; }
-  PHONE_PAGES.forEach((page, i) => {
-    const el = document.getElementById('view-' + page);
-    if (el) el.style.visibility = (i >= Math.floor(from) && i <= Math.ceil(to)) ? '' : 'hidden';
-  });
-  _pagerPaintTimer = setTimeout(clearPagerPaintRange, ms);
-}
-function clearPagerPaintRange() {
-  if (_pagerPaintTimer) { clearTimeout(_pagerPaintTimer); _pagerPaintTimer = 0; }
-  PHONE_PAGES.forEach(page => {
-    const el = document.getElementById('view-' + page);
-    if (el) el.style.visibility = '';
-  });
-}
 function cancelPagerWarm() {
   if (!_pagerWarmIdle) return;
   if (window.cancelIdleCallback) { try { cancelIdleCallback(_pagerWarmIdle); } catch {} }
@@ -4795,65 +4775,21 @@ function markPagerMoving(ms) {
 function clearPagerMoving() {
   if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
   delete document.documentElement.dataset.pagerMove;
-  clearPagerPaintRange();
 }
 
-/* ── POSITION DE LA BANDE ────────────────────────────────────────────────
-   Le `transform` est écrit DIRECTEMENT, et non via une variable CSS
-   (`translate3d(calc(var(--pg) * -100%),0,0)`). C'était un piège : changer une
-   propriété personnalisée NON ENREGISTRÉE ne déclenche aucune transition sur la
-   propriété qui l'utilise — la valeur calculée du `transform` reste le même flot
-   de jetons `calc(var(--pg)…)` avant et après. Vérifié avec
-   `getAnimations()` : zéro animation, et la page était déjà arrivée à la frame
-   suivante. La bande SAUTAIT au lieu de glisser.
-   En écrivant le pourcentage en dur, la valeur calculée change vraiment : la
-   transition démarre, et elle est portée par le compositeur.
-
-   `_pagerPos` est la source de vérité (la page où l'on est) : plus fiable que
-   relire le style. */
-let _pagerPos = 0;
-function setPagerTransform(pos) {
-  const wrap = pagerEl();
-  if (wrap) wrap.style.transform = `translate3d(${(-pos * 100).toFixed(4)}%,0,0)`;
-  _pagerPos = pos;
-}
-// La DURÉE suit la DISTANCE : sauter deux pages d'un coup doit se VOIR passer
-// par celle du milieu (c'est ce qu'on demande à un carrousel), pas y arriver
-// dans le même temps qu'un pas d'une seule page.
+/* LA BANDE NE GLISSE PLUS — voir transitionKind. Ce qui reste : la mémoire de
+   la page courante, dont se sert le pré-garnissage des voisines. Les styles
+   inline hérités de l'ancien carrousel sont effacés, sinon un `transform` posé
+   avant la mise à jour resterait collé sur le conteneur. */
 function setPagerColumn(view, instant) {
   const wrap = pagerEl();
-  if (!wrap) return;
-  // Sur Mac il n'y a pas de bande : on efface toute trace (utile après une
-  // rotation ou un passage d'une largeur à l'autre).
-  if (!isPhone()) { wrap.style.transform = ''; wrap.style.transitionDuration = ''; _pagerPos = 0; return; }
+  if (!wrap) return 0;
+  wrap.style.transform = '';
+  wrap.style.transitionDuration = '';
   const col = pagerColumnOf(view);
-  if (col == null) return;
-  const target = PHONE_PAGES.indexOf(col);
-  // La durée suit la DISTANCE : un pas d'une page est bref, un saut de deux pages
-  // doit se voir passer par celle du milieu. Plancher à 180 ms pour que même un
-  // tout petit déplacement reste une animation et non un saut.
-  const dist = Math.min(2, Math.abs(target - _pagerPos));
-  /* 400 ms pour un pas d'une page, c'était long : on attendait la fin du
-     glissement au lieu de le suivre. 300 ms suffisent pour lire la direction —
-     c'est la durée retenue sur ordinateur, et un téléphone n'a aucune raison
-     d'être plus lent. Deux pages d'un coup gardent leur supplément : il faut
-     VOIR passer celle du milieu. */
-  const dur = Math.max(200, Math.round(150 + 150 * dist));
-  wrap.style.transitionDuration = dur + 'ms';
-  if (instant) wrap.classList.add('no-anim');
-  else if (dist > 0.001) {
-    markPagerMoving(dur + 90);        // le verre reste coupé jusqu'à l'arrivée
-    // Un garnissage déjà programmé tomberait en plein milieu du geste.
-    cancelPagerWarm();
-    // Seules les colonnes TRAVERSÉES sont peintes : les autres sont hors champ
-    // et n'ont aucune raison d'être composées à chaque frame.
-    paintPagerRange(Math.min(_pagerPos, target), Math.max(_pagerPos, target), dur + 90);
-  }
-  setPagerTransform(target);
-  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); clearPagerMoving(); return 0; }
-  return dist > 0.001 ? dur : 0;
+  _pagerPos = col == null ? _pagerPos : PHONE_PAGES.indexOf(col);
+  return 0;
 }
-
 /* Le GLISSEMENT AU DOIGT entre les pages a été retiré le 2026-08-26, sur
    demande : passer d'une page à l'autre par la barre du bas est plus net et plus
    fluide. Le carrousel, lui, ne change pas — c'est toujours la même bande de
@@ -5024,6 +4960,12 @@ function renderWithTransition(from, to, kind) {
   // sert à rien : la liste et son détail partagent la même case de la grille,
   // ils se superposent déjà tout seuls, et le document ne défile pas.
   if (animated) {
+    /* SUR TÉLÉPHONE, LE VERRE SE TAIT LE TEMPS DU CROISEMENT. Les deux vues
+       se déplacent en transform, et chaque surface de verre qu'elles
+       contiennent serait rééchantillonnée à chaque frame — c'est le coût qui
+       hachait le mouvement. Sur ordinateur il n'y a rien à économiser : le
+       geste y est déjà net, et couper le flou s'y verrait. */
+    if (isPhone()) markPagerMoving((VIEW_TRANSITION_MS[kind] || 320) + 240);
     const unpin = isPhone() ? () => {} : pinView(fromEl);
     // Ses classes d'ENTRÉE sautent d'abord : une vue qui garde `enter-forward`
     // (elle vient d'arriver) ne jouerait jamais sa sortie.
@@ -5048,9 +4990,8 @@ function renderWithTransition(from, to, kind) {
     // Le contenu vient d'être refait juste au-dessus, donc la page qui arrive
     // est à jour AVANT que le glissement commence : une seule frame de travail,
     // puis un translate pur sur le compositeur.
-    // La durée revient du carrousel : tout ce qui n'est pas le glissement lui-même
-    // attend qu'il soit fini (voir plus bas).
-    const slideMs = kind === 'slide' ? setPagerColumn(to) : 0;
+    const slideMs = 0;
+    setPagerColumn(to);
     // `from === to` = on re-rend la vue courante (palette, retour d'une modale) :
     // on ne touche PAS au défilement, sinon la page saute à une position
     // mémorisée périmée alors que l'utilisateur n'a pas changé d'écran.
