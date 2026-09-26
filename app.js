@@ -4869,8 +4869,12 @@ let _viewTransitionTimer = null;
    dans le flux au milieu du geste, plus tard la laisserait inerte par-dessus
    la cible. */
 const VIEW_TRANSITION_MS = { forward: 210, backward: 210, crossfade: 200 };
-const ENTER_CLASSES = ['entering', 'enter-forward', 'enter-backward'];
-const EXIT_CLASSES = ['exiting', 'exit-fade', 'exit-forward', 'exit-backward'];
+/* Les classes d'ÉTAT du croisement (voir style.css). `v-anim` porte la
+   transition ; les `v-from-*` disent d'où arrive celle qui entre, les `v-to-*`
+   où va celle qui part. Une transition étant interruptible, enchaîner les
+   changements de page ne provoque plus de saut. */
+const ENTER_CLASSES = ['v-anim', 'v-from-right', 'v-from-left', 'v-from-fade'];
+const EXIT_CLASSES = ['exiting', 'v-anim', 'v-out', 'v-to-left', 'v-to-right', 'v-to-fade'];
 const VIEW_TRANSITION_CLASSES = [...EXIT_CLASSES, ...ENTER_CLASSES];
 
 /* ── DÉFILEMENT PAR VUE ─────────────────────────────────────────────────
@@ -4932,9 +4936,15 @@ function pinView(el) {
 let _unpinView = null;
 function renderWithTransition(from, to, kind) {
   if (_viewTransitionTimer) { clearTimeout(_viewTransitionTimer); _viewTransitionTimer = null; }
-  if (_unpinView) { _unpinView(); _unpinView = null; }
   const toEl = document.getElementById(`view-${to}`);
   if (!toEl) return;
+  /* LE NETTOYAGE DE LA TRANSITION PRÉCÉDENTE ÉPARGNE LA CIBLE. Il efface les
+     classes d'état — donc, si la cible est justement la vue qui était en train
+     de sortir (on la redemande aussitôt), il la ramenait brutalement au repos
+     juste avant qu'on lui repose un point de départ. Deux sauts coup sur coup,
+     à l'endroit exact où l'on tapote. En l'épargnant, elle garde sa position
+     courante et la transition repart de là. */
+  if (_unpinView) { _unpinView(toEl); _unpinView = null; }
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const fromEl = from !== to ? document.getElementById(`view-${from}`) : null;
@@ -4976,7 +4986,11 @@ function renderWithTransition(from, to, kind) {
     // (elle vient d'arriver) ne jouerait jamais sa sortie.
     fromEl.classList.remove(...ENTER_CLASSES);
     fromEl.classList.add('exiting');
-    _unpinView = () => { unpin(); fromEl.classList.remove('active', ...VIEW_TRANSITION_CLASSES); settle(); };
+    _unpinView = (sauf) => {
+      unpin();
+      if (fromEl !== sauf) fromEl.classList.remove('active', ...VIEW_TRANSITION_CLASSES);
+      settle();
+    };
   }
 
   /* ══ L'ANIMATION DOIT PARTIR SUR LA FRAME DU DOIGT ══
@@ -5026,14 +5040,40 @@ function renderWithTransition(from, to, kind) {
     return;
   }
 
-  const exitClass = kind === 'forward' ? 'exit-forward' : kind === 'backward' ? 'exit-backward' : 'exit-fade';
-  const enterClass = kind === 'forward' ? 'enter-forward' : kind === 'backward' ? 'enter-backward' : 'entering';
-  fromEl.classList.add(exitClass);
+  /* CELLE QUI PART reçoit son état d'arrivée tout de suite : la transition
+     l'y emmène depuis là où elle se trouve — même si elle était en train
+     d'entrer. */
+  const exitClass = kind === 'forward' ? 'v-to-left' : kind === 'backward' ? 'v-to-right' : 'v-to-fade';
+  const enterFrom = kind === 'forward' ? 'v-from-right' : kind === 'backward' ? 'v-from-left' : 'v-from-fade';
+  fromEl.classList.add('v-anim', 'v-out', exitClass);
   // Les autres vues (une transition avortée a pu en laisser une active) sortent
   // du flux immédiatement : seules la sortante épinglée et la cible restent.
   document.querySelectorAll('.view.active').forEach(v => { if (v !== toEl && v !== fromEl) v.classList.remove('active', ...VIEW_TRANSITION_CLASSES); });
-  toEl.classList.remove(...VIEW_TRANSITION_CLASSES);
-  toEl.classList.add(enterClass, 'active');
+  /* CELLE QUI ARRIVE est posée à son point de départ, puis relâchée à la frame
+     suivante : c'est ce relâchement qui déclenche la transition.
+     `getBoundingClientRect()` force le navigateur à prendre acte de l'état de
+     départ AVANT qu'on le retire — sans cette lecture, les deux changements
+     seraient fondus en un seul et rien ne bougerait.
+     Si la vue était DÉJÀ en train d'entrer (on revient sur ses pas), on ne
+     repose pas son point de départ : elle continue depuis où elle en est. */
+  /* SI ELLE BOUGE DÉJÀ, ON NE LA REPLACE PAS. Qu'elle fût en train d'entrer
+     (on revient sur ses pas) ou de sortir (on la redemande aussitôt), elle est
+     quelque part entre les deux : lui reposer son point de départ la ferait
+     sauter là-bas avant de revenir. On retire simplement les états, et la
+     transition la ramène au repos depuis l'endroit exact où elle se trouve.
+     C'est tout l'intérêt d'une transition sur une animation. */
+  const dejaEnMouvement = toEl.classList.contains('v-anim');
+  toEl.classList.remove(...EXIT_CLASSES.filter(c => c !== 'v-anim'));
+  toEl.classList.add('active');
+  if (dejaEnMouvement) {
+    toEl.classList.remove('v-from-right', 'v-from-left', 'v-from-fade');
+  } else {
+    toEl.classList.remove('v-anim');
+    toEl.classList.add(enterFrom);
+    toEl.getBoundingClientRect();
+    toEl.classList.add('v-anim');
+    toEl.classList.remove(enterFrom);
+  }
   // La cible est en place : c'est MAINTENANT que le document a sa bonne hauteur,
   // donc que le défilement peut être rétabli sans être ramené dans les bornes.
   applyViewScroll(to, DEEP_VIEWS.includes(to));

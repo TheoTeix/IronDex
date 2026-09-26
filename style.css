@@ -852,43 +852,49 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    là où l'œil l'avait laissée, même si le défilement change sous elle. */
 .wrap{position:relative}
 .view.exiting{position:fixed;z-index:1;margin:0}
-@keyframes v-fade-in{from{opacity:0}to{opacity:1}}
-@keyframes v-fade-out{from{opacity:1}to{opacity:0}}
-/* LE VOYAGE. 26 px, c'était un tressaillement : trop peu pour se lire comme un
-   déplacement, assez pour qu'on remarque que quelque chose a bougé. À 40 px le
-   geste devient une direction. La vue qui PART va moins loin (24 px) : elle
-   s'efface en 170 ms, l'accompagner aussi loin que l'entrante l'aurait fait
-   traverser l'écran pour rien.
-   Un soupçon d'échelle (.985 → 1) donne la profondeur : la vue arrive vers
-   nous au lieu de simplement glisser à plat. Rien d'autre n'est animé
-   qu'opacity et transform — composé par le GPU, aucun reflow. */
-@keyframes v-in-fwd{from{opacity:0;transform:translate3d(40px,0,0) scale(.985)}to{opacity:1;transform:none}}
-@keyframes v-in-bwd{from{opacity:0;transform:translate3d(-40px,0,0) scale(.985)}to{opacity:1;transform:none}}
-@keyframes v-out-fwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-24px,0,0) scale(.99)}}
-@keyframes v-out-bwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(24px,0,0) scale(.99)}}
-/* ENTRÉES. `.entering` est une CLASSE posée par le JS, et non plus
-   `.view.active:not(.enter-forward):not(.enter-backward)` : ce sélecteur pesait
-   0,4,0 de spécificité, donc il BATTAIT `.view.exit-forward` (0,2,0) — la vue
-   sortante, qui garde `.active` le temps de s'effacer, se voyait appliquer
-   l'animation d'ENTRÉE et aucune sortie ne jouait jamais. D'où le changement de
-   page qui « claquait » au lieu de se croiser. Toutes les règles ci-dessous
-   pèsent désormais pareil : c'est l'ORDRE qui décide, et la sortie est écrite
-   en dernier (si les deux se croisent, c'est elle qui gagne). */
-.view.entering{animation:v-fade-in var(--dur-2) var(--ease-out) both}
-/* 380 ms (`--dur-3`) est la durée d'une MODALE, qui vient de nulle part et
-   demande qu'on la regarde arriver. Un changement d'onglet répond à un clic :
-   il doit être fini avant qu'on se pose la question. 300 ms, courbe iOS. */
-.view.enter-forward{animation:v-in-fwd var(--dur-view) var(--ease-spatial) both}
-.view.enter-backward{animation:v-in-bwd var(--dur-view) var(--ease-spatial) both}
-/* La vue qui arrive passe DEVANT celle qui s'en va : c'est elle qu'on est venu
-   chercher. Sans ça, la sortante (épinglée, z-index 1) restait au-dessus et
-   les deux se mélangeaient en double exposition le temps du fondu. */
-.view.enter-forward,.view.enter-backward,.view.entering{position:relative;z-index:2}
-/* SORTIES */
+/* Les @keyframes de vue sont parties avec elles : voir le bloc ci-dessous,
+   tout passe désormais par des classes d'état et des transitions. */
+/* ══════════════════════════════════════════════════════════════════════
+   DES TRANSITIONS, PAS DES ANIMATIONS — ET C'EST TOUTE LA DIFFÉRENCE
+   QUAND ON ENCHAÎNE LES PAGES
+
+   Une @keyframes REPART DE SON DÉBUT quand on la relance. Enchaîner deux
+   changements de page en moins de 300 ms donnait donc ceci : la vue qui
+   entrait, arrivée disons à mi-course, se voyait poser l'animation de SORTIE —
+   dont la première image est « transform:none ». Elle sautait d'un coup à sa
+   position finale avant de repartir. À chaque interruption, une secousse.
+   C'est exactement ce qu'on voit en tapotant plusieurs onglets d'affilée.
+
+   Une transition, elle, interpole DEPUIS LA VALEUR COURANTE. Interrompue à
+   mi-course, elle repart d'où elle en est — sans saut, quel que soit le
+   nombre de fois où l'on change d'avis. C'est la seule façon d'avoir un
+   enchaînement propre, et c'est pour ça que tout passe ici par des classes
+   d'ÉTAT plutôt que par des keyframes.
+
+   Le repos d'une vue, c'est « opacité 1, aucune transformation » : il n'a donc
+   pas besoin d'être écrit. Seuls les états de DÉPART (pour celle qui arrive)
+   et d'ARRIVÉE (pour celle qui part) le sont.
+   ══════════════════════════════════════════════════════════════════════ */
+.view.v-anim{
+  transition:opacity var(--dur-view) var(--ease-spatial),
+             transform var(--dur-view) var(--ease-spatial);
+}
+/* La sortante s'efface plus vite qu'on n'amène la suivante : elle n'est plus
+   le sujet. */
+.view.v-anim.v-out{transition-duration:var(--dur-exit)}
+/* D'OÙ ARRIVE CELLE QUI ENTRE. Retiré à la frame suivante : elle glisse alors
+   vers son repos. */
+.view.v-from-right{opacity:0;transform:translate3d(40px,0,0) scale(.985)}
+.view.v-from-left{opacity:0;transform:translate3d(-40px,0,0) scale(.985)}
+.view.v-from-fade{opacity:0}
+/* OÙ VA CELLE QUI PART. Posé tout de suite : elle y glisse. */
+.view.v-to-left{opacity:0;transform:translate3d(-24px,0,0) scale(.99)}
+.view.v-to-right{opacity:0;transform:translate3d(24px,0,0) scale(.99)}
+.view.v-to-fade{opacity:0}
+/* La vue qui ARRIVE passe devant celle qui s'en va : c'est elle qu'on est venu
+   chercher. */
+.view.v-anim:not(.v-out){position:relative;z-index:2}
 .view.exiting{display:block;pointer-events:none}
-.view.exit-fade{animation:v-fade-out var(--dur-exit) var(--ease-in) both}
-.view.exit-forward{animation:v-out-fwd var(--dur-exit) var(--ease-in) both}
-.view.exit-backward{animation:v-out-bwd var(--dur-exit) var(--ease-in) both}
 
 /* Bouton retour (fil d'Ariane des vues profondes) */
 .back-btn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 14px 0 10px;
@@ -1146,9 +1152,14 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 /* ── Scène : la carte en 3D ── */
 .hero-stage{position:relative;display:grid;place-items:center;min-height:clamp(260px,34vw,420px);
   perspective:1200px}
-.hero-halo{position:absolute;width:80%;aspect-ratio:1;border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,color-mix(in srgb,var(--acc) 34%,transparent),transparent 66%);
-  filter:blur(46px);transition:background var(--flow)}
+/* Même procédé, même correctif (voir .wishlist-card::after). */
+.hero-halo{position:absolute;width:86%;aspect-ratio:1;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,
+    color-mix(in srgb,var(--acc) 26%,transparent) 0%,
+    color-mix(in srgb,var(--acc) 14%,transparent) 30%,
+    color-mix(in srgb,var(--acc) 5%,transparent) 54%,
+    transparent 78%);
+  transition:background var(--flow)}
 .hero-card{
   position:relative;width:min(78%,290px);aspect-ratio:2.5/3.5;border-radius:16px;overflow:hidden;
   cursor:zoom-in;transform-style:preserve-3d;
@@ -1272,8 +1283,9 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 }
 .milo-teaser:hover{transform:translateY(-3px);box-shadow:var(--e4);border-color:var(--line-2)}
 .milo-teaser:active{transform:translateY(-1px) scale(.997);transition-duration:var(--dur-0)}
-.milo-teaser-aura{position:absolute;top:-30%;left:-6%;width:56%;aspect-ratio:1;z-index:0;pointer-events:none;
-  background:radial-gradient(circle,rgba(99,214,240,.38),transparent 66%);filter:blur(52px)}
+.milo-teaser-aura{position:absolute;top:-12%;left:-6%;width:70%;aspect-ratio:1;z-index:0;pointer-events:none;
+  background:radial-gradient(circle,
+    rgba(99,214,240,.26) 0%,rgba(99,214,240,.14) 30%,rgba(99,214,240,.05) 54%,transparent 78%)}
 .milo-teaser-stage{position:relative;z-index:1;display:grid;place-items:center;perspective:900px}
 .milo-teaser-emblem{width:min(74%,190px);transform-style:preserve-3d;
   transition:transform var(--dur-2) var(--ease-out);filter:drop-shadow(0 20px 44px rgba(0,0,0,.6))}
@@ -2975,10 +2987,12 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
      ça ne bouge pas, et ça dit quand même « cet écran a remplacé l'autre ».
      (Si les transitions de l'app paraissent absentes sur un appareil, c'est
      très probablement ce réglage système qui est actif.) */
-  .view.enter-forward,.view.enter-backward,.view.entering{
-    animation:v-fade-in 190ms linear both!important}
-  .view.exit-forward,.view.exit-backward,.view.exit-fade{
-    animation:v-fade-out 130ms linear both!important}
+  /* On retire le DÉPLACEMENT, on garde le fondu : « mouvement réduit »
+     demande moins de mouvement, pas moins de repères. */
+  .view.v-from-right,.view.v-from-left{transform:none!important}
+  .view.v-to-left,.view.v-to-right{transform:none!important}
+  .view.v-anim{transition-duration:180ms!important}
+  .view.v-anim.v-out{transition-duration:120ms!important}
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3271,11 +3285,26 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .cardser-bubble,.cardtile,.series-item,.recover-item{background:rgba(255,255,255,.075)}
 /* Le halo d'accent des cartes de wishlist passait par ::before (désormais
    occupé par le verre) → il déménage sur ::after. */
+/* ══ LE HALO NE PASSE PLUS PAR UN FLOU — ET C'EST UN CORRECTIF, PAS UN GOÛT ══
+   Il était dessiné puis passé à `filter:blur(40px)`. Or ce halo DÉBORDE de la
+   carte (115 px par le haut, 67 px par la droite, mesuré) et la carte est en
+   `overflow:hidden` avec 22 px d'arrondi. Un flou ÉTALE la couleur jusqu'aux
+   bords de la boîte : il y a donc de la matière exactement là où le découpage
+   opère — et WebKit (iPhone) découpe alors au RECTANGLE et non à l'arrondi.
+   D'où le coin carré, visible sur téléphone et pas sur Chromium.
+   La réponse est celle que le projet a déjà retenue pour l'aurora : un
+   dégradé à retombée longue est doux PAR CONSTRUCTION. Il atteint le
+   transparent bien avant le bord, donc il n'y a plus rien à découper — quel
+   que soit le moteur. Et une surface de moins à flouter à chaque peinture. */
 .wishlist-card::after{
-  content:"";position:absolute;top:-40%;right:-20%;width:60%;aspect-ratio:1;z-index:-1;
+  content:"";position:absolute;top:-10%;right:-8%;width:74%;aspect-ratio:1;z-index:-1;
   pointer-events:none;border-radius:50%;
-  background:radial-gradient(circle,color-mix(in srgb,var(--tc) 26%,transparent),transparent 68%);
-  filter:blur(40px);transition:background var(--flow);
+  background:radial-gradient(circle,
+    color-mix(in srgb,var(--tc) 20%,transparent) 0%,
+    color-mix(in srgb,var(--tc) 11%,transparent) 30%,
+    color-mix(in srgb,var(--tc) 4%,transparent) 54%,
+    transparent 78%);
+  transition:background var(--flow);
 }
 /* Le teaser Milobellus garde son dégradé signature, sur verre. */
 .milo-teaser{
