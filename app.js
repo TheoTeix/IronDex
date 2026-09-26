@@ -4672,8 +4672,13 @@ function render() {
   if (isPhone() && PHONE_HIDDEN.includes(state.view)) state.view = 'home';
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${state.view}`)?.classList.add('active');
-  renderViewContent(state.view);
+  /* LA BANDE EST PLACÉE AVANT D'ÊTRE GARNIE. Elle l'était après : au
+     démarrage sur un autre onglet que le Coffre, on voyait donc le Coffre une
+     frame, puis la bande sautait à la bonne colonne. C'est le « saut au
+     chargement ». La position ne dépend que de `state.view`, connue ici : rien
+     n'oblige à attendre le contenu. */
   setPagerColumn(state.view, true);   // en place d'un coup : on ne glisse pas au démarrage
+  renderViewContent(state.view);
   syncTopbarHeight();
   repositionNavSoon(true);
   // Les deux autres colonnes se garnissent au repos, après la première image.
@@ -4753,6 +4758,35 @@ function pagerEl() { return document.getElementById('pager'); }
    recalculé sur toute la largeur de l'écran à chaque frame (voir style.css).
    Le drapeau est posé pour la durée exacte de l'animation, plus une marge. */
 let _pagerMoveTimer = 0;
+/* ── NE PEINDRE QUE CE QUI TRAVERSE L'ÉCRAN ──────────────────────────
+   Les quatre colonnes existent en permanence — c'est le principe de la grande
+   page. Mais pendant un pas d'une colonne à l'autre, deux seulement passent
+   devant les yeux : composer les deux autres à chaque frame est du travail
+   pur. `visibility:hidden` les retire du dessin sans toucher à leur mise en
+   page ni à leur position de défilement — elles réapparaissent exactement
+   telles qu'on les avait laissées. */
+let _pagerPaintTimer = 0;
+function paintPagerRange(from, to, ms) {
+  if (_pagerPaintTimer) { clearTimeout(_pagerPaintTimer); _pagerPaintTimer = 0; }
+  PHONE_PAGES.forEach((page, i) => {
+    const el = document.getElementById('view-' + page);
+    if (el) el.style.visibility = (i >= Math.floor(from) && i <= Math.ceil(to)) ? '' : 'hidden';
+  });
+  _pagerPaintTimer = setTimeout(clearPagerPaintRange, ms);
+}
+function clearPagerPaintRange() {
+  if (_pagerPaintTimer) { clearTimeout(_pagerPaintTimer); _pagerPaintTimer = 0; }
+  PHONE_PAGES.forEach(page => {
+    const el = document.getElementById('view-' + page);
+    if (el) el.style.visibility = '';
+  });
+}
+function cancelPagerWarm() {
+  if (!_pagerWarmIdle) return;
+  if (window.cancelIdleCallback) { try { cancelIdleCallback(_pagerWarmIdle); } catch {} }
+  clearTimeout(_pagerWarmIdle);
+  _pagerWarmIdle = 0;
+}
 function markPagerMoving(ms) {
   document.documentElement.dataset.pagerMove = '1';
   if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
@@ -4761,6 +4795,7 @@ function markPagerMoving(ms) {
 function clearPagerMoving() {
   if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
   delete document.documentElement.dataset.pagerMove;
+  clearPagerPaintRange();
 }
 
 /* ── POSITION DE LA BANDE ────────────────────────────────────────────────
@@ -4798,12 +4833,25 @@ function setPagerColumn(view, instant) {
   // doit se voir passer par celle du milieu. Plancher à 180 ms pour que même un
   // tout petit déplacement reste une animation et non un saut.
   const dist = Math.min(2, Math.abs(target - _pagerPos));
-  const dur = Math.max(180, Math.round(200 + 200 * dist));
+  /* 400 ms pour un pas d'une page, c'était long : on attendait la fin du
+     glissement au lieu de le suivre. 300 ms suffisent pour lire la direction —
+     c'est la durée retenue sur ordinateur, et un téléphone n'a aucune raison
+     d'être plus lent. Deux pages d'un coup gardent leur supplément : il faut
+     VOIR passer celle du milieu. */
+  const dur = Math.max(200, Math.round(150 + 150 * dist));
   wrap.style.transitionDuration = dur + 'ms';
   if (instant) wrap.classList.add('no-anim');
-  else if (dist > 0.001) markPagerMoving(dur + 90);   // le verre reste coupé jusqu'à l'arrivée
+  else if (dist > 0.001) {
+    markPagerMoving(dur + 90);        // le verre reste coupé jusqu'à l'arrivée
+    // Un garnissage déjà programmé tomberait en plein milieu du geste.
+    cancelPagerWarm();
+    // Seules les colonnes TRAVERSÉES sont peintes : les autres sont hors champ
+    // et n'ont aucune raison d'être composées à chaque frame.
+    paintPagerRange(Math.min(_pagerPos, target), Math.max(_pagerPos, target), dur + 90);
+  }
   setPagerTransform(target);
-  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); clearPagerMoving(); }
+  if (instant) { void wrap.offsetWidth; wrap.classList.remove('no-anim'); clearPagerMoving(); return 0; }
+  return dist > 0.001 ? dur : 0;
 }
 
 /* Le GLISSEMENT AU DOIGT entre les pages a été retiré le 2026-08-26, sur
@@ -5000,14 +5048,23 @@ function renderWithTransition(from, to, kind) {
     // Le contenu vient d'être refait juste au-dessus, donc la page qui arrive
     // est à jour AVANT que le glissement commence : une seule frame de travail,
     // puis un translate pur sur le compositeur.
-    if (kind === 'slide') setPagerColumn(to);
+    // La durée revient du carrousel : tout ce qui n'est pas le glissement lui-même
+    // attend qu'il soit fini (voir plus bas).
+    const slideMs = kind === 'slide' ? setPagerColumn(to) : 0;
     // `from === to` = on re-rend la vue courante (palette, retour d'une modale) :
     // on ne touche PAS au défilement, sinon la page saute à une position
     // mémorisée périmée alors que l'utilisateur n'a pas changé d'écran.
     if (from !== to) applyViewScroll(to, DEEP_VIEWS.includes(to));
     settle();
-    warmPagerPagesSoon();
-    repositionNavSoon();
+    /* GARNIR LES PAGES VOISINES PENDANT LE GLISSEMENT, C'ÉTAIT SE TIRER DANS
+       LE PIED. `requestIdleCallback` cherche un moment creux — or pendant une
+       transition CSS le fil principal EST creux, le compositeur travaillant
+       seul. Le navigateur y plaçait donc volontiers la construction d'une page
+       entière, en plein milieu du geste. On attend maintenant l'arrivée. */
+    warmPagerPagesSoon(slideMs ? slideMs + 120 : 0);
+    // Le repositionnement de la pastille mesure le layout : après le
+    // glissement, pas sur sa première frame.
+    if (slideMs) setTimeout(repositionNavSoon, slideMs + 40); else repositionNavSoon();
     return;
   }
 

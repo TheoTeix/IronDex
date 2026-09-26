@@ -713,6 +713,33 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    elle reprend exactement où elle en était — invisible. */
 :root[data-pager-move] .aurora>i{animation-play-state:paused}
 
+/* ══════════════════════════════════════════════════════════════════════
+   PENDANT QUE LA BANDE GLISSE, LE VERRE NE SE RECALCULE PLUS
+
+   C'ÉTAIT LA CAUSE DU CHANGEMENT DE PAGE HACHÉ SUR TÉLÉPHONE. Un
+   `backdrop-filter` rééchantillonne le fond à chaque frame, et un
+   `filter:url(#lg-*)` fait tourner un filtre SVG. Tant que la surface ne bouge
+   pas, le compositeur garde le résultat en mémoire. Mais ici la bande TRANSLATE
+   : chacune de ces surfaces change de place à chaque frame, donc chacune est
+   redessinée à chaque frame. Mesuré sur une collection VIDE : dix surfaces de
+   verre dans la bande, pour 1 173 nœuds — et bien davantage une fois les
+   cartes chargées.
+
+   Seul l'en-tête et la tab bar étaient traités. Le verre À L'INTÉRIEUR des
+   pages — panneaux, compteurs, états vides — continuait de se recalculer.
+
+   Le temps du glissement, personne ne lit une réfraction : le contenu défile.
+   On coupe donc le flou et le filtre SVG dans toute la bande, en gardant la
+   TEINTE et l'arête spéculaire — la surface garde exactement sa couleur, seul
+   le fond derrière cesse d'être flouté. À l'arrivée, tout revient. */
+:root[data-pager-move] #pager *,
+:root[data-pager-move] #pager *::before{
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+/* Le filtre SVG de réfraction vit sur le `::before` du verre, et lui seul :
+   aucune autre pseudo-couche de la bande n'en porte. */
+:root[data-pager-move] #pager *::before{filter:none!important}
+
 /* Les règles qui n'existaient que pour le glissement au doigt sont parties avec
    lui : le `content-visibility` rendu visible le temps du geste, le
    `will-change` posé pendant, le `touch-action` qui arbitrait entre défilement
