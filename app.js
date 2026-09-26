@@ -4979,11 +4979,23 @@ function renderWithTransition(from, to, kind) {
     _unpinView = () => { unpin(); fromEl.classList.remove('active', ...VIEW_TRANSITION_CLASSES); settle(); };
   }
 
-  // Le corps de la cible n'est REFAIT que s'il a pu changer. Une page du
-  // carrousel déjà garnie et non périmée est réutilisée telle quelle : on ne
-  // met à jour que le titre de la barre haute.
-  const pagerCol = (isPhone() && kind === 'slide') ? pagerColumnOf(to) : null;
-  const reusable = pagerCol && PHONE_PAGES.includes(to) && _pagerMounted.has(to) && !_pagerStale.has(to);
+  /* ══ L'ANIMATION DOIT PARTIR SUR LA FRAME DU DOIGT ══
+     Le corps de la cible n'est REFAIT que s'il a pu changer : une page déjà
+     garnie et non périmée est réutilisée telle quelle, on ne met à jour que le
+     titre de la barre haute.
+
+     CETTE CONDITION ÉTAIT MORTE. Elle exigeait `kind === 'slide'` — le type de
+     transition du carrousel, supprimé avec lui. Elle était donc TOUJOURS
+     fausse : chaque changement d'onglet reconstruisait la page entière avant
+     de poser les classes d'animation, et le pré-garnissage des pages voisines
+     ne servait plus à rien. C'est ce temps de reconstruction qu'on sentait
+     entre le doigt et le début du mouvement.
+     Rendu à sa vraie condition — la page est-elle prête ? — le cas courant
+     (passer d'un onglet à l'autre) ne coûte plus rien du tout sur la frame du
+     tap : il ne reste que les classes à poser, et le compositeur fait le
+     reste. */
+  const reusable = isPhone() && PHONE_PAGES.includes(to)
+    && _pagerMounted.has(to) && !_pagerStale.has(to);
   if (reusable) renderViewChrome(to);
   else renderViewContent(to);
 
