@@ -78,6 +78,7 @@
   --dur-2:260ms;   /* entrée d'élément */
   --dur-3:380ms;   /* transition spatiale (vue, modale) */
   --dur-exit:170ms;/* sortie ≈ 65 % de l'entrée */
+  --dur-view:300ms;/* changement de page : assez pour lire la direction, pas plus */
   --ease-out:cubic-bezier(.16,1,.3,1);        /* entrées, réponses */
   --ease-in:cubic-bezier(.5,0,.9,.4);         /* sorties */
   --ease-in-out:cubic-bezier(.65,0,.35,1);    /* déplacement sur écran */
@@ -804,10 +805,18 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .view.exiting{position:fixed;z-index:1;margin:0}
 @keyframes v-fade-in{from{opacity:0}to{opacity:1}}
 @keyframes v-fade-out{from{opacity:1}to{opacity:0}}
-@keyframes v-in-fwd{from{opacity:0;transform:translate3d(26px,0,0)}to{opacity:1;transform:none}}
-@keyframes v-in-bwd{from{opacity:0;transform:translate3d(-26px,0,0)}to{opacity:1;transform:none}}
-@keyframes v-out-fwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-22px,0,0)}}
-@keyframes v-out-bwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(22px,0,0)}}
+/* LE VOYAGE. 26 px, c'était un tressaillement : trop peu pour se lire comme un
+   déplacement, assez pour qu'on remarque que quelque chose a bougé. À 40 px le
+   geste devient une direction. La vue qui PART va moins loin (24 px) : elle
+   s'efface en 170 ms, l'accompagner aussi loin que l'entrante l'aurait fait
+   traverser l'écran pour rien.
+   Un soupçon d'échelle (.985 → 1) donne la profondeur : la vue arrive vers
+   nous au lieu de simplement glisser à plat. Rien d'autre n'est animé
+   qu'opacity et transform — composé par le GPU, aucun reflow. */
+@keyframes v-in-fwd{from{opacity:0;transform:translate3d(40px,0,0) scale(.985)}to{opacity:1;transform:none}}
+@keyframes v-in-bwd{from{opacity:0;transform:translate3d(-40px,0,0) scale(.985)}to{opacity:1;transform:none}}
+@keyframes v-out-fwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(-24px,0,0) scale(.99)}}
+@keyframes v-out-bwd{from{opacity:1;transform:none}to{opacity:0;transform:translate3d(24px,0,0) scale(.99)}}
 /* ENTRÉES. `.entering` est une CLASSE posée par le JS, et non plus
    `.view.active:not(.enter-forward):not(.enter-backward)` : ce sélecteur pesait
    0,4,0 de spécificité, donc il BATTAIT `.view.exit-forward` (0,2,0) — la vue
@@ -817,8 +826,15 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    pèsent désormais pareil : c'est l'ORDRE qui décide, et la sortie est écrite
    en dernier (si les deux se croisent, c'est elle qui gagne). */
 .view.entering{animation:v-fade-in var(--dur-2) var(--ease-out) both}
-.view.enter-forward{animation:v-in-fwd var(--dur-3) var(--ease-spatial) both}
-.view.enter-backward{animation:v-in-bwd var(--dur-3) var(--ease-spatial) both}
+/* 380 ms (`--dur-3`) est la durée d'une MODALE, qui vient de nulle part et
+   demande qu'on la regarde arriver. Un changement d'onglet répond à un clic :
+   il doit être fini avant qu'on se pose la question. 300 ms, courbe iOS. */
+.view.enter-forward{animation:v-in-fwd var(--dur-view) var(--ease-spatial) both}
+.view.enter-backward{animation:v-in-bwd var(--dur-view) var(--ease-spatial) both}
+/* La vue qui arrive passe DEVANT celle qui s'en va : c'est elle qu'on est venu
+   chercher. Sans ça, la sortante (épinglée, z-index 1) restait au-dessus et
+   les deux se mélangeaient en double exposition le temps du fondu. */
+.view.enter-forward,.view.enter-backward,.view.entering{position:relative;z-index:2}
 /* SORTIES */
 .view.exiting{display:block;pointer-events:none}
 .view.exit-fade{animation:v-fade-out var(--dur-exit) var(--ease-in) both}

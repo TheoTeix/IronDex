@@ -2151,7 +2151,13 @@ async function apiFetch(path) {
       // aucune requête ne part pour une donnée qu'on a déjà sur place.
       await migrateLegacyApiCache();
       const saved = await readApi(path);
-      if (saved !== undefined) { cache[path] = saved; return saved; }
+      if (saved && saved.d !== undefined) {
+        cache[path] = saved.d;
+        // Périmée : on rend quand même la copie locale (rien n'attend), et on
+        // va vérifier derrière — voir revalidateCatalog.
+        if (apiPerishable(path) && Date.now() - (saved.at || 0) > API_LIST_TTL) _apiStale.add(path);
+        return saved.d;
+      }
       // Timeout dur : une requête TCGdex qui ne répond jamais gelait toute la
       // chaîne aval (fiches, cotes… → « chargement infini » sur les détails).
       // Retry automatique : TCGdex renvoie ponctuellement des 5xx / coupe la
@@ -2225,7 +2231,28 @@ function prefetchSet(id) { prefetchApi(`/sets/${id}`); }
    ══════════════════════════════════════════════════════════════════════ */
 const APICACHE_KEY = 'irondex-apicache-v1';
 const APICACHE_MAX_BYTES = 1_600_000, APICACHE_MAX_ENTRY = 60_000;
-const APIDB_NAME = 'irondex-api', APIDB_STORE = 'paths';
+const APIDB_NAME = 'irondex-api', APIDB_STORE = 'entries';
+/* ══════════════════════════════════════════════════════════════════════
+   CE QUI PÉRIME, ET CE QUI NE PÉRIME JAMAIS
+
+   Le cache n'avait AUCUNE expiration : une fois `/series/me` enregistré, le
+   30ᵉ Anniversaire ne pouvait plus apparaître — ni dans la Collection, ni dans
+   le sélecteur du masterset — tant qu'on n'avait pas pensé à cliquer
+   « Actualiser ». Un bloc sort tous les deux ans mais un set tous les deux
+   mois : un catalogue gelé n'était pas tenable.
+
+   Deux natures de données, deux traitements :
+    · les LISTES (`/series`, `/series/{id}`) disent ce qui EXISTE — elles
+      changent, donc elles sont revalidées ;
+    · les CARTES d'un set (`/sets/{id}`) ne changent plus une fois le set
+      publié — elles restent en cache pour de bon.
+
+   Et la revalidation ne fait jamais attendre : on affiche la copie locale tout
+   de suite (2 ms), on va voir derrière si elle a bougé, et on ne redessine que
+   si c'est le cas. 60 Ko une fois par session, invisible.
+   ══════════════════════════════════════════════════════════════════════ */
+const API_LIST_TTL = 6 * 3600e3;                       // six heures
+const apiPerishable = path => /^\/series/.test(String(path));
 let _apiStore = { total: 0, order: [], map: {} };   // repli localStorage seulement
 
 let _apiDbPromise = null;
@@ -2234,9 +2261,13 @@ function apiDb() {
   return (_apiDbPromise = new Promise(res => {
     try {
       if (typeof indexedDB === 'undefined') return res(null);
-      const rq = indexedDB.open(APIDB_NAME, 1);
+      const rq = indexedDB.open(APIDB_NAME, 2);
       rq.onupgradeneeded = () => {
         const db = rq.result;
+        // L'ancien magasin gardait des valeurs SANS date : impossible de savoir
+        // si elles ont périmé. On repart de zéro — c'est un cache, il se
+        // reconstruit seul, et ça remet d'aplomb les catalogues déjà gelés.
+        if (db.objectStoreNames.contains('paths')) db.deleteObjectStore('paths');
         if (!db.objectStoreNames.contains(APIDB_STORE)) db.createObjectStore(APIDB_STORE);
       };
       rq.onsuccess = () => res(rq.result);
@@ -2267,6 +2298,7 @@ function readApi(path) {
 /* REPRISE DE L'ANCIEN CACHE, une seule fois : ce qui a déjà été téléchargé n'a
    aucune raison de l'être une deuxième fois. Puis on le jette — le garder,
    c'était payer sa relecture synchrone à chaque démarrage pour rien. */
+const _apiStale = new Set();   // listes servies depuis le cache mais à revérifier
 let _apiMigration = null;
 function migrateLegacyApiCache() {
   if (_apiMigration) return _apiMigration;
@@ -2313,8 +2345,8 @@ function rememberApi(path, data) {
   if (!/^\/(series|sets)/.test(path)) return;   // structurel uniquement
   apiDb().then(db => {
     if (db) {
-      // UNE entrée, écrite seule : c'est tout l'intérêt du changement.
-      try { db.transaction(APIDB_STORE, 'readwrite').objectStore(APIDB_STORE).put(data, path); } catch {}
+      // UNE entrée, écrite seule — et datée, pour savoir quand la revalider.
+      try { db.transaction(APIDB_STORE, 'readwrite').objectStore(APIDB_STORE).put({ d: data, at: Date.now() }, path); } catch {}
       return;
     }
     // Repli localStorage : on garde le bornage LRU, il protège du quota.
@@ -4695,8 +4727,25 @@ function transitionKind(fromView, toView) {
   if (fromView === 'wishlist-detail' && toView !== 'wishlist-detail') return 'backward';
   if (toView === 'binder-detail' && fromView === 'binders') return 'forward';
   if (fromView === 'binder-detail' && toView === 'binders') return 'backward';
+  // Le profil est une vue PROFONDE : on y entre, on en ressort.
+  if (toView === 'profile') return 'forward';
+  if (fromView === 'profile') return 'backward';
+  /* ══ LA DIRECTION DIT OÙ L'ON VA ══
+     Passer d'un onglet à l'autre se faisait en fondu pur : deux écrans qui se
+     dissolvent l'un dans l'autre, sans rien dire du déplacement. C'est ce qui
+     donnait cette impression de clignotement plutôt que de transition — le
+     mouvement ne portait aucune information, donc il n'y en avait pas.
+     La barre d'onglets a pourtant un ORDRE, et il est visible à l'écran :
+     aller vers la droite fait entrer le contenu par la droite, revenir le fait
+     entrer par la gauche. Même mécanique que le push/pop des vues profondes,
+     déjà en place — il ne manquait que de savoir dans quel sens on va. */
+  const a = navRank(fromView), b = navRank(toView);
+  if (a >= 0 && b >= 0 && a !== b) return b > a ? 'forward' : 'backward';
   return 'crossfade';
 }
+// L'ordre des onglets, tel qu'il est dessiné dans le rail et la tab bar.
+const NAV_ORDER = ['home', 'wishlists', 'invest', 'binders'];
+function navRank(v) { return NAV_ORDER.indexOf(v === 'wishlist-detail' ? 'wishlists' : v); }
 function pagerEl() { return document.getElementById('pager'); }
 
 /* La bande est-elle EN MOUVEMENT ? Le temps qu'elle glisse, le flou des deux
@@ -4831,6 +4880,10 @@ let _viewTransitionTimer = null;
 // Durée après laquelle la vue sortante est désépinglée : celle de sa SORTIE
 // (--dur-exit = 170 ms) plus une marge. Les deux vues se croisant maintenant,
 // ce n'est plus le temps qu'on attend avant de montrer la nouvelle.
+/* Fenêtre pendant laquelle la sortante reste épinglée. Elle doit couvrir la
+   SORTIE (170 ms), pas l'entrée : la désépingler plus tôt la ferait réapparaître
+   dans le flux au milieu du geste, plus tard la laisserait inerte par-dessus
+   la cible. */
 const VIEW_TRANSITION_MS = { forward: 210, backward: 210, crossfade: 200 };
 const ENTER_CLASSES = ['entering', 'enter-forward', 'enter-backward'];
 const EXIT_CLASSES = ['exiting', 'exit-fade', 'exit-forward', 'exit-backward'];
@@ -9590,8 +9643,53 @@ function ensureCatalog(onReady) {
       }));
     }, 6);
     _catalog = out;
-  })().then(() => { _catalogPending = false; if (onReady) onReady(); })
-      .catch(e => { _catalogPending = false; console.warn('[catalogue]', e); });
+  })().then(() => {
+    _catalogPending = false;
+    if (onReady) onReady();
+    revalidateCatalog(onReady);
+  }).catch(e => { _catalogPending = false; console.warn('[catalogue]', e); });
+}
+/* ── ALLER VÉRIFIER DERRIÈRE, SANS FAIRE ATTENDRE ────────────────────
+   La copie locale est déjà à l'écran. Si elle a plus de six heures, on
+   redemande les listes au réseau — 60 Ko — et on ne redessine QUE si le
+   catalogue a réellement changé. C'est ce qui fait qu'un set paru ce matin
+   apparaît tout seul, sans avoir à penser au bouton « Actualiser ».
+   À l'inactivité, pour ne disputer la bande passante à aucun visuel. */
+let _revalidated = false;
+function revalidateCatalog(onReady) {
+  if (_revalidated || !_apiStale.size) return;
+  _revalidated = true;
+  idle(async () => {
+    const before = JSON.stringify((_catalog || []).map(s => s.setId));
+    try {
+      const series = (await apiFetchFresh('/series')).filter(keptSerie);
+      const out = [];
+      await runPool(series.map((s, i) => ({ s, i })), async ({ s, i }) => {
+        const full = await apiFetchFresh('/series/' + s.id).catch(() => null);
+        (full?.sets || []).forEach((x, j) => out.push({
+          setId: String(x.id), setName: x.name || String(x.id), logo: x.logo || null,
+          serieId: String(s.id), serieName: s.name || String(s.id),
+          serieRank: i, rank: j,
+        }));
+      }, 6);
+      if (!out.length) return;
+      _catalog = out; _catalogIndex = null;
+      _apiStale.clear();
+      if (JSON.stringify(out.map(s => s.setId)) === before) return;   // rien de neuf
+      if (onReady) onReady();
+    } catch (e) { console.warn('[catalogue] revalidation', e); }
+  }, 3000);
+}
+// Relit un chemin EN IGNORANT la copie locale, et la remplace.
+async function apiFetchFresh(path) {
+  delete cache[path];
+  delete apiPromises[path];
+  const r = await fetchTimeout(`${API}${path}`, 12000);
+  if (!r.ok) throw new Error(r.status);
+  const d = await r.json();
+  cache[path] = d;
+  rememberApi(path, d);
+  return d;
 }
 /* Les groupes affichés : les miens, PLUS une bulle vide par set du catalogue
    que je n'ai pas encore. Les sous-séries (galerie, Collection Classique)
@@ -9803,7 +9901,7 @@ function seriesRows(setId, g) {
   const rows = new Map();
   for (const c of (cat ? cat.cards : [])) {
     if (!serieCardShown(cat, c.id)) continue;
-    rows.set(String(c.id), { c, p: null, k: c.localId });
+    rows.set(String(c.id), { c, p: null, k: c.localId, id: String(c.id) });
   }
   for (const p of g.cards) {
     const key = p.cardId ? String(p.cardId) : 'own:' + p.id;
@@ -9815,9 +9913,22 @@ function seriesRows(setId, g) {
     // TCGdex). Le second cas reste affiché : aucun réglage ne le gouverne, et
     // le faire disparaître serait une perte sèche.
     if (p.cardId && cat && !serieCardShown(cat, p.cardId)) continue;
-    rows.set(key, { c: null, p, k: p.localId });
+    rows.set(key, { c: null, p, k: p.localId, id: String(p.cardId || '') });
   }
-  return [...rows.values()].sort((a, b) => cmpLocalId(a.k, b.k));
+  /* L'ORDRE : par famille quand le set en définit une (voir
+     SERIE_RARITY_ORDER), par numéro sinon — et par numéro À L'INTÉRIEUR d'une
+     famille, pour qu'elle se parcoure comme une petite liste. Une carte à moi
+     que le catalogue ne connaît pas n'a pas de famille : elle passe en fin de
+     liste plutôt qu'en tête. */
+  const fam = cat && cat.order;
+  return [...rows.values()].sort((a, b) => {
+    if (fam) {
+      const ga = fam.has(a.id) ? fam.get(a.id) : 99;
+      const gb = fam.has(b.id) ? fam.get(b.id) : 99;
+      if (ga !== gb) return ga - gb;
+    }
+    return cmpLocalId(a.k, b.k);
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -10100,15 +10211,22 @@ async function seriesCatalog(setId) {
   const b = await setWithSubsets(setId);
   const vintage = !!b.date && b.date < VINTAGE_BEFORE;
   const drop = vintage ? BULK_RARITIES : BULK_RARITIES.concat(HOLO_RARITIES);
+  /* À QUI APPARTIENT UNE CARTE — et pourquoi le préfixe ne suffit pas.
+     Le filtre `set=` de TCGdex est un « contient » : `set=30th` ramène aussi
+     les cartes de `30th-c`. On écartait les intruses par leur préfixe
+     (`30th-`)… sauf que « 30th-c-001 » COMMENCE par « 30th- ». La Collection
+     Classique se déversait donc dans les requêtes de son set parent.
+     La seule réponse sûre est la liste que le set publie lui-même : on sait
+     exactement quels identifiants sont les siens (voir setWithSubsets). */
+  const own = {};
+  for (const id of b.ids) own[id] = new Set(b.cards.filter(c => c.__set === id).map(c => String(c.id)));
   const skip = new Set();
   const jobs = [];
   for (const id of b.ids) for (const r of drop) jobs.push([id, r]);
   await Promise.all(jobs.map(async ([id, r]) => {
     try {
       const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:' + r)}`);
-      // `set=sv08` attrape AUSSI `sv08.5` : sans le préfixe exact, une série
-      // écarterait les communes de sa voisine.
-      for (const c of list || []) if (String(c.id).startsWith(id + '-')) skip.add(String(c.id));
+      for (const c of list || []) if (own[id].has(String(c.id))) skip.add(String(c.id));
     } catch {}
   }));
   /* LES RARES SONT MISES À PART, pas écartées : c'est la seule famille que
@@ -10125,11 +10243,11 @@ async function seriesCatalog(setId) {
   await Promise.all(b.ids.map(async id => {
     try {
       const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:Rare')}${holoGuard}`);
-      for (const c of list || []) if (String(c.id).startsWith(id + '-')) rare.add(String(c.id));
+      for (const c of list || []) if (own[id].has(String(c.id))) rare.add(String(c.id));
     } catch {}
   }));
   const cards = b.cards.filter(c => !skip.has(String(c.id)));
-  const out = { cards, rare, vintage, setTotal: b.cards.length };
+  const out = { cards, rare, vintage, setTotal: b.cards.length, order: await serieRarityOrder(setId, b, own) };
   /* Les sous-séries que TCGdex n'illustre pas — la Collection Classique du 30ᵉ
      n'a AUCUNE image, dans aucune langue — vont chercher leurs visuels
      ailleurs, une requête par sous-set concerné. Sans ça, réunir les deux sets
@@ -10167,6 +10285,50 @@ function toggleSerieShow(key) {
   state.serieShow[key] = state.serieShow[key] === false;
   save();
   flipGrid(() => renderInvestBody());
+}
+/* ══════════════════════════════════════════════════════════════════════
+   RANGER UN SET PAR FAMILLES PLUTÔT QUE PAR NUMÉROS
+
+   Le numéro est le bon ordre pour un set ordinaire : on parcourt la liste
+   comme sur la feuille officielle. Le 30ᵉ Anniversaire n'en est pas un — c'est
+   plusieurs collections empilées dans une seule numérotation, et les trente
+   Pikachu s'y retrouvaient éparpillés entre les ex et les reprints. On les
+   regroupe donc par FAMILLE, dans l'ordre où un collectionneur les regarde.
+
+   Les familles ne sont pas devinées : TCGdex les nomme, et ce set a même une
+   rareté « Pikachu Rare » qui compte exactement trente cartes.
+   `Sans Rareté` est la Collection Classique, donc les reprints — ils ferment
+   la marche, comme demandé.
+   Les deux familles que la demande ne nommait pas (les 18 rares simples et les
+   2 « Futuristic Rare ») se glissent juste avant les reprints : elles
+   appartiennent au set principal, et les mettre après aurait contredit
+   « les reprints à la fin ».
+
+   La table est vide pour tous les autres sets : eux gardent l'ordre des
+   numéros, et ne paient aucune requête de plus.
+   ══════════════════════════════════════════════════════════════════════ */
+const SERIE_RARITY_ORDER = {
+  '30th': ['Pikachu Rare', 'Double rare', 'Illustration rare',
+           'Illustration spéciale rare', 'Futuristic Rare', 'Rare', 'Sans Rareté'],
+};
+async function serieRarityOrder(setId, b, own) {
+  const wanted = SERIE_RARITY_ORDER[String(setId)];
+  if (!wanted) return null;
+  const rank = new Map();
+  const jobs = [];
+  for (const id of b.ids) wanted.forEach((r, i) => jobs.push([id, r, i]));
+  await Promise.all(jobs.map(async ([id, r, i]) => {
+    try {
+      const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:' + r)}`);
+      for (const c of list || []) {
+        const cid = String(c.id);
+        // Même garde-fou qu'ailleurs : « 30th-c-001 » n'appartient pas à
+        // « 30th » malgré son préfixe.
+        if (own[id].has(cid) && !rank.has(cid)) rank.set(cid, i);
+      }
+    } catch {}
+  }));
+  return rank.size ? rank : null;
 }
 /* Le catalogue arrive APRÈS le premier rendu, volontairement : mes cartes
    s'affichent tout de suite (elles sont déjà en mémoire) et les cases
