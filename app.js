@@ -4939,7 +4939,12 @@ function renderWithTransition(from, to, kind) {
 
   const fromEl = from !== to ? document.getElementById(`view-${from}`) : null;
   const fromIsActive = fromEl && fromEl.classList.contains('active');
-  const animated = kind !== 'none' && kind !== 'slide' && !reduce && fromIsActive;
+  /* MOUVEMENT RÉDUIT NE VEUT PAS DIRE AUCUN REPÈRE. On supprimait purement la
+     transition : l'écran changeait d'un coup, sans rien dire du passage — ce
+     qui se lit comme un bug, pas comme un réglage. La réduction de mouvement
+     demande moins de DÉPLACEMENT, pas moins d'information. La vue continue
+     donc de se croiser, en fondu seul (voir la règle @media dans style.css). */
+  const animated = kind !== 'none' && kind !== 'slide' && fromIsActive;
   if (fromEl && fromIsActive && !isPhone()) _viewScroll[from] = scrollYNow();
 
   // Les scènes 3D de la vue quittée ne sont libérées qu'une fois la sortie

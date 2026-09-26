@@ -21,11 +21,21 @@
 
 :root{
   /* ── Canvas : acier froid, quasi-noir, pour que la carte explose ── */
-  --v-0:#06070A;            /* fond de page */
-  --v-1:#0A0C11;            /* surface */
-  --v-2:#10131A;            /* surface levée */
-  --v-3:#171B24;            /* overlay / modale */
-  --v-4:#1F242F;            /* champ de saisie */
+  /* ══ LE FOND EST CELUI DU LOGO, ET IL EST UNI ══
+     C'était un quasi-noir sur lequel dérivaient trois grandes nappes colorées.
+     Elles coûtaient trois compositions par frame, en permanence, et surtout
+     elles donnaient au verre quelque chose à flouter — donc à RECALCULER dès
+     que la moindre surface bougeait.
+     Le fond est maintenant la couleur de l'icône de l'app (#101636, relevée
+     de son aplat), et il ne bouge plus. Conséquence en cascade : au-dessus
+     d'une couleur uniforme, un `backdrop-filter` ne produit RIEN — flouter du
+     bleu nuit uni rend du bleu nuit uni. Les panneaux ont donc perdu le leur
+     (voir plus bas) : même image à l'écran, sans le coût. */
+  --v-0:#101636;            /* fond de page — couleur du logo */
+  --v-1:#161C3E;            /* surface */
+  --v-2:#1C2248;            /* surface levée */
+  --v-3:#232952;            /* overlay / modale */
+  --v-4:#2B3160;            /* champ de saisie */
   /* Alias hérités (anciennes classes + styles inline dans app.js) */
   --ink:var(--v-0); --ink-2:var(--v-1); --ink-3:var(--v-2); --ink-4:var(--v-3);
   --bg-0:var(--v-0); --bg-1:var(--v-1); --bg-2:var(--v-2); --bg-3:var(--v-3);
@@ -458,6 +468,9 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .nav-btn:hover{color:var(--t1);background:rgba(255,255,255,.05)}
 .nav-btn.active{color:var(--t1);font-weight:700}
 .nav-icon{display:grid;place-items:center;width:22px;height:22px;flex:none;color:currentColor}
+/* Dans le rail, l'illustration partage la ligne avec un libellé : elle a besoin
+   d'un peu plus de place que le tracé qu'elle remplace, pas de beaucoup. */
+.nav-btn:has(.nav-art) .nav-icon{width:26px;height:26px}
 .nav-svg{width:21px;height:21px;stroke-width:1.7}
 .nav-btn.active .nav-icon{color:var(--acc);transition:color var(--flow)}
 .nav-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -522,6 +535,11 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
   border-top:1px solid var(--line);
   backdrop-filter:blur(22px) saturate(150%);
   -webkit-backdrop-filter:blur(22px) saturate(150%);
+  /* LA LUEUR RESTE DANS LA BARRE. Le halo de l'onglet actif est un disque
+     volontairement plus large que le bouton : sans cette coupe, il débordait
+     par le haut et venait éclairer le bas de la page, comme une fuite. La
+     barre est son cadre — il s'y diffuse, il n'en sort pas. */
+  overflow:hidden;
 }
 .tabbar .nav-btn{
   flex:1;flex-direction:column;gap:3px;min-height:54px;padding:6px 4px;
@@ -2949,6 +2967,18 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .foil::after{display:none}
   .refresh-ring span,.cardtile-sync.spinning svg,.spinner{animation:spin 1.4s linear infinite!important}
   :root{transition:none!important}
+  /* LE CHANGEMENT DE PAGE GARDE UN FONDU. La règle générale ci-dessus ramène
+     toutes les animations à 0,01 ms — la page changeait donc d'un coup, sans
+     rien dire du passage, ce qui se lit comme un bug plutôt que comme un
+     réglage. Ce que « mouvement réduit » demande, c'est moins de DÉPLACEMENT :
+     on retire donc le glissement et l'échelle, on garde le fondu. C'est court,
+     ça ne bouge pas, et ça dit quand même « cet écran a remplacé l'autre ».
+     (Si les transitions de l'app paraissent absentes sur un appareil, c'est
+     très probablement ce réglage système qui est actif.) */
+  .view.enter-forward,.view.enter-backward,.view.entering{
+    animation:v-fade-in 190ms linear both!important}
+  .view.exit-forward,.view.exit-backward,.view.exit-fade{
+    animation:v-fade-out 130ms linear both!important}
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3175,12 +3205,18 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   box-shadow:inset 1px 1px 0 -0.5px var(--lg-rim-2);
 }
 .detail-price-box{background:color-mix(in srgb,var(--acc) 13%,rgba(0,0,0,.24))}
+/* ══ LES PANNEAUX N'ONT PLUS DE FLOU — ET ÇA NE SE VOIT PAS ══
+   Un `backdrop-filter` floute ce qu'il y a DERRIÈRE. Derrière un panneau, il
+   n'y a plus que le fond uni : flouter une couleur unie rend exactement la
+   même couleur. Ces surfaces payaient donc un rééchantillonnage du fond, plus
+   un filtre SVG de réfraction, pour produire une image identique.
+   Et le prix n'était pas qu'au repos : dès qu'une surface de verre se DÉPLACE
+   — une page qui entre, une page qui sort — chacune est redessinée à chaque
+   frame. C'est ce qui hachait le changement de page sur iPhone.
+   Ce qui fait le matériau reste : la teinte, l'arête spéculaire, l'ombre. */
 .panel::before,.plate::before,.empty-state::before,.inv-chart-panel::before,
 .inv-table-scroll::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;
-  backdrop-filter:blur(var(--lg-blur)) saturate(var(--lg-sat));
-  -webkit-backdrop-filter:blur(var(--lg-blur)) saturate(var(--lg-sat));
-  filter:url(#lg-soft);
 }
 /* .inv-kpis est une grille dont les gouttières FONT les filets : son verre
    passe par les cellules, sinon la teinte masquerait les séparateurs. */
@@ -3188,8 +3224,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .inv-kpi{background:var(--lg-tint);position:relative;z-index:0}
 .inv-kpi::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
-  backdrop-filter:blur(var(--lg-blur)) saturate(var(--lg-sat));
-  -webkit-backdrop-filter:blur(var(--lg-blur)) saturate(var(--lg-sat));
 }
 .detail-rows .detail-row{background:transparent}
 .empty-state{border-style:dashed;border-color:var(--line-2)}
@@ -3232,8 +3266,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
    spéculaire, sans flou. */
 .wishlist-card::before,.milo-teaser::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;
-  backdrop-filter:blur(12px) saturate(150%);
-  -webkit-backdrop-filter:blur(12px) saturate(150%);
 }
 /* Tuiles répétées : teinte un peu plus dense pour compenser l'absence de flou. */
 .cardser-bubble,.cardtile,.series-item,.recover-item{background:rgba(255,255,255,.075)}
