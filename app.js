@@ -4960,12 +4960,12 @@ function renderWithTransition(from, to, kind) {
   // sert à rien : la liste et son détail partagent la même case de la grille,
   // ils se superposent déjà tout seuls, et le document ne défile pas.
   if (animated) {
-    /* SUR TÉLÉPHONE, LE VERRE SE TAIT LE TEMPS DU CROISEMENT. Les deux vues
-       se déplacent en transform, et chaque surface de verre qu'elles
-       contiennent serait rééchantillonnée à chaque frame — c'est le coût qui
-       hachait le mouvement. Sur ordinateur il n'y a rien à économiser : le
-       geste y est déjà net, et couper le flou s'y verrait. */
-    if (isPhone()) markPagerMoving((VIEW_TRANSITION_MS[kind] || 320) + 240);
+    /* Le drapeau ne sert plus qu'à mettre l'aurora en pause — une animation de
+       fond qui compose trois nappes par frame, et que personne ne regarde
+       pendant qu'une page en remplace une autre. Il ne touche PLUS au verre :
+       couper son flou puis le rendre se voyait, et c'est ce qu'on prenait pour
+       un chargement. */
+    if (isPhone()) markPagerMoving((VIEW_TRANSITION_MS[kind] || 320) + 60);
     const unpin = isPhone() ? () => {} : pinView(fromEl);
     // Ses classes d'ENTRÉE sautent d'abord : une vue qui garde `enter-forward`
     // (elle vient d'arriver) ne jouerait jamais sa sortie.
