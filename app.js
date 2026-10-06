@@ -227,6 +227,11 @@ const ICO = {
 };
 // Icône « + » (héritée) : même glyphe vectoriel que ICO.plus.
 const PLUS = '<span class="ico-plus" aria-hidden="true">' + ICO.plus + '</span>';
+/* Les icônes ILLUSTRÉES des gestes (même famille que la barre d'onglets) :
+   ajouter une carte / sa reverse au masterset, renommer / supprimer une
+   wishlist, y ajouter une carte. Ce sont des tuiles complètes — fond, cadre,
+   pastille — donc le bouton qui les porte s'efface derrière elles (.act-art). */
+const ART = name => `<img class="act-art" src="ico-${name}.png?v=1" alt="" width="128" height="128" decoding="async" draggable="false">`;
 
 const state = {
   view: 'home',
@@ -5532,8 +5537,8 @@ function renderWishlistCard(w) {
       <div class="wishlist-card-header">
         <span class="wl-drag-handle" aria-hidden="true" title="Glisser pour réordonner">${ICO.drag}</span>
         <div class="wishlist-card-name">${esc(w.name)}</div>
-        <button class="title-edit-btn wl-card-rename" title="Renommer" aria-label="Renommer ${esc(w.name)}" onclick="event.stopPropagation();openRenameWishlist('${w.id}')">${ICO.edit}</button>
-        <button class="title-edit-btn wl-card-del" title="Supprimer la wishlist" aria-label="Supprimer ${esc(w.name)}" onclick="event.stopPropagation();confirmDeleteWishlist('${w.id}')">${ICO.trash}</button>
+        <button class="title-edit-btn wl-card-rename" title="Renommer" aria-label="Renommer ${esc(w.name)}" onclick="event.stopPropagation();openRenameWishlist('${w.id}')">${ART('wl-rename')}</button>
+        <button class="title-edit-btn wl-card-del" title="Supprimer la wishlist" aria-label="Supprimer ${esc(w.name)}" onclick="event.stopPropagation();confirmDeleteWishlist('${w.id}')">${ART('wl-delete')}</button>
         <div class="wishlist-card-count">${w.cards.length}</div></div>
       <div class="wishlist-preview">
         ${preview.map((c, k) => c.image
@@ -5579,8 +5584,8 @@ function renderWishlistDetail() {
     <div class="wl-head">
       <button class="cardser-back" onclick="navigate('wishlists')" title="Toutes les wishlists" aria-label="Retour aux wishlists">${ICO.left}</button>
       <h1 class="wl-head-name">${esc(w.name)}</h1>
-      <button class="title-edit-btn wl-head-rename" title="Renommer la wishlist" onclick="openRenameWishlist('${w.id}')" aria-label="Renommer la wishlist">${ICO.edit}</button>
-      <button class="cardser-add" onclick="openCardPicker('wish')" title="Ajouter une carte" aria-label="Ajouter une carte">${ICO.plus}</button>
+      <button class="title-edit-btn wl-head-rename" title="Renommer la wishlist" onclick="openRenameWishlist('${w.id}')" aria-label="Renommer la wishlist">${ART('wl-rename')}</button>
+      <button class="cardser-add wl-head-add" onclick="openCardPicker('wish')" title="Ajouter une carte" aria-label="Ajouter une carte">${ART('wl-add')}</button>
     </div>
     ${w.cards.length ? `<div class="wl-head-progress"><div class="progress-wrap"><span class="progress-label">${owned}/${w.cards.length} · ${pct}% · reste <span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></span><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div></div>` : ''}
     </div>
@@ -10551,16 +10556,6 @@ function refreshSeriesCotes(setId) {
    masterset les réunit, comme partout ailleurs dans l'app (voir pickSet).
    ══════════════════════════════════════════════════════════════════════ */
 const MS_N = 1, MS_R = 2;                    // bits : normale, reverse
-/* Les deux versions d'une carte, en un glyphe chacune : la même carte, nue
-   pour la normale, traversée d'un reflet pour la reverse. Le trait est le
-   même que celui des icônes de l'app (1.9 px, bouts arrondis). */
-const MS_ICO = {
-  n: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.4" stroke="currentColor" stroke-width="1.9"/></svg>',
-  // Le reflet traverse la carte de coin à coin : à 17 px, deux traits courts au
-  // milieu se confondaient avec l'intérieur du cadre. Un trait franc + un
-  // second plus court, c'est la lecture « holographique » d'un coup d'œil.
-  r: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.4" stroke="currentColor" stroke-width="1.9"/><path d="M7.2 18.4 16.9 5.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12.6 18.5 17.3 12.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
-};
 const _msCache = {};                         // setId → { cards, rev, setName, logo, serie, date }
 
 function msEntry(setId) { return (state.mastersets || []).find(m => String(m.setId) === String(setId)); }
@@ -10928,7 +10923,7 @@ function msSlotHTML(m, c, hasRev, i) {
     return `<button type="button" class="ms-tog ${on ? 'on' : ''}" data-var="${variant}"
       aria-pressed="${on}" title="${label} — ${on ? 'obtenue' : 'manquante'}"
       aria-label="${esc(c.name)} version ${label.toLowerCase()} — ${on ? 'obtenue' : 'manquante'}"
-      onclick="event.stopPropagation();${go}">${MS_ICO[variant]}</button>`;
+      onclick="event.stopPropagation();${go}">${ART(variant === 'r' ? 'add-reverse' : 'add-card')}</button>`;
   };
   // La vignette elle-même coche la NORMALE : c'est la plus grande cible, et
   // c'est le geste attendu (« celle-là, je l'ai »). La reverse, elle, ne se

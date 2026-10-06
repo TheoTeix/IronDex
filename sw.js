@@ -12,13 +12,13 @@
  * Supabase, où une réponse périmée serait grave — et où une réponse REJOUÉE
  * depuis un cache serait pire, puisque les requêtes portent un jeton de session.
  */
-const V = 'irondex-v83';
+const V = 'irondex-v84';
 // cm-slugs.js (2,1 Mo) N'EST PLUS pré-caché : le télécharger pendant
 // l'installation du worker, c'est-à-dire pendant le premier démarrage, volait
 // de la bande passante à l'app elle-même. app.js ne le charge plus qu'à la
 // première fiche Cardmarket à résoudre — et la règle « réseau d'abord » plus
 // bas le met alors en cache pour l'hors-ligne, exactement comme avant.
-const SHELL = ['./', './index.html', './app.js?v=ui90', './style.css?v=ui90', './cloud-config.js?v=ui90',
+const SHELL = ['./', './index.html', './app.js?v=ui91', './style.css?v=ui91', './cloud-config.js?v=ui91',
                './manifest.json', './logo.png', './favicon.png'];
 
 // Le client Supabase vient d'un CDN, et il est INDISPENSABLE au démarrage :

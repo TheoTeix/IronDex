@@ -2202,6 +2202,25 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .wl-card-del{color:var(--danger,#ff5c5c);opacity:.72}
 .wl-card-del:hover{opacity:1}
 
+/* ── Icônes illustrées des gestes (ART dans app.js) ──────────────────
+   L'image EST le bouton : une tuile arrondie avec son fond et sa pastille.
+   Le bouton qui la porte perd donc fond, cadre et teinte — sinon on aurait
+   une tuile dans une tuile. Le retour tactile passe par l'échelle de l'image. */
+.act-art{width:100%;height:100%;display:block;object-fit:contain;pointer-events:none;
+  -webkit-user-drag:none;user-select:none;
+  transition:filter var(--dur-1) var(--ease-out),opacity var(--dur-1) var(--ease-out),
+             transform var(--dur-1) var(--ease-out)}
+.title-edit-btn:has(.act-art),.cardser-add:has(.act-art),.ms-tog:has(.act-art){
+  padding:0;background:none;border:0;border-radius:24%}
+.title-edit-btn:has(.act-art){width:30px;height:30px}
+.title-edit-btn:has(.act-art):hover{background:none}
+.wl-head-rename:has(.act-art){width:40px;height:40px;opacity:1}
+@media(hover:hover){
+  .title-edit-btn:hover .act-art,.cardser-add:hover .act-art{transform:scale(1.07)}
+  .cardser-add.wl-head-add:hover{background:none}
+}
+.title-edit-btn:active .act-art,.cardser-add:active .act-art{transform:scale(.9)}
+
 /* ── Bandeau d'une série ouverte (portefeuille › cartes) ──────────────
    Dans une série, on est DANS la série : plus de titre de section, plus de
    texte d'explication, plus de compteurs globaux. Trois objets utiles — d'où
@@ -2325,9 +2344,18 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   border-color:color-mix(in srgb,var(--ok) 48%,transparent)}
 .ms-tog:active{transform:scale(.92)}
 .ms-tog:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* Avec les icônes illustrées : une version manquante est grisée comme la
+   carte elle-même ; obtenue, elle reprend ses couleurs et prend un liseré vert.
+   Même grammaire que la grille — gris = pas encore, couleur = à moi. */
+.ms-tog:has(.act-art){width:34px;height:34px}
+.ms-tog .act-art{filter:grayscale(1) brightness(.75);opacity:.55;border-radius:24%}
+.ms-tog.on .act-art{filter:none;opacity:1;
+  box-shadow:0 0 0 2px var(--ok),0 0 10px color-mix(in srgb,var(--ok) 45%,transparent)}
+.ms-tog:active .act-art{transform:scale(.9)}
 @media(hover:hover){
   .ms-tog:hover{border-color:color-mix(in srgb,var(--ok) 42%,transparent);color:var(--t2)}
   .ms-tog.on:hover{color:var(--ok)}
+  .ms-tog:not(.on):hover .act-art{filter:grayscale(.2);opacity:.9}
 }
 
 /* Grille en train de se réorganiser (voir flipGrid) : l'entrée en cascade est
@@ -3891,6 +3919,7 @@ body::before{display:none}
      sur des tuiles de 104 px. C'est le texte (« NOR… / REVE… » tronqué) qui
      obligeait à les empiler. */
   .ms-tog{width:38px;height:32px}
+  .ms-tog:has(.act-art){width:36px;height:36px}
   /* `minmax(0,1fr)` : deux colonnes qui acceptent VRAIMENT de rétrécir. */
   .cardser-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s3)}
   /* Compteurs du portefeuille : une seule LIGNE, pas une grille de carrés.
