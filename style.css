@@ -2203,15 +2203,16 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .wl-card-del:hover{opacity:1}
 
 /* ── Icônes illustrées des gestes (ART dans app.js) ──────────────────
-   L'image EST le bouton : une tuile arrondie avec son fond et sa pastille.
-   Le bouton qui la porte perd donc fond, cadre et teinte — sinon on aurait
-   une tuile dans une tuile. Le retour tactile passe par l'échelle de l'image. */
+   Des pictogrammes en couleur, détourés (pas de fond) : sur les boutons
+   d'action, l'image EST le bouton — il perd fond, cadre et teinte, et le
+   retour tactile passe par l'échelle de l'image. Les coches du masterset
+   gardent, elles, leur case : c'est elle qui dit « obtenue ». */
 .act-art{width:100%;height:100%;display:block;object-fit:contain;pointer-events:none;
   -webkit-user-drag:none;user-select:none;
   transition:filter var(--dur-1) var(--ease-out),opacity var(--dur-1) var(--ease-out),
              transform var(--dur-1) var(--ease-out)}
-.title-edit-btn:has(.act-art),.cardser-add:has(.act-art),.ms-tog:has(.act-art){
-  padding:0;background:none;border:0;border-radius:24%}
+.title-edit-btn:has(.act-art),.cardser-add:has(.act-art){
+  padding:0;background:none;border:0}
 .title-edit-btn:has(.act-art){width:30px;height:30px}
 .title-edit-btn:has(.act-art):hover{background:none}
 .wl-head-rename:has(.act-art){width:40px;height:40px;opacity:1}
@@ -2345,13 +2346,10 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .ms-tog:active{transform:scale(.92)}
 .ms-tog:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 /* Avec les icônes illustrées : une version manquante est grisée comme la
-   carte elle-même ; obtenue, elle reprend ses couleurs et prend un liseré vert.
+   carte elle-même ; obtenue, elle reprend ses couleurs dans sa case verte.
    Même grammaire que la grille — gris = pas encore, couleur = à moi. */
-.ms-tog:has(.act-art){width:34px;height:34px}
-.ms-tog .act-art{filter:grayscale(1) brightness(.75);opacity:.55;border-radius:24%}
-.ms-tog.on .act-art{filter:none;opacity:1;
-  box-shadow:0 0 0 2px var(--ok),0 0 10px color-mix(in srgb,var(--ok) 45%,transparent)}
-.ms-tog:active .act-art{transform:scale(.9)}
+.ms-tog .act-art{width:22px;height:22px;filter:grayscale(1) brightness(.8);opacity:.5}
+.ms-tog.on .act-art{filter:none;opacity:1}
 @media(hover:hover){
   .ms-tog:hover{border-color:color-mix(in srgb,var(--ok) 42%,transparent);color:var(--t2)}
   .ms-tog.on:hover{color:var(--ok)}
@@ -3919,7 +3917,6 @@ body::before{display:none}
      sur des tuiles de 104 px. C'est le texte (« NOR… / REVE… » tronqué) qui
      obligeait à les empiler. */
   .ms-tog{width:38px;height:32px}
-  .ms-tog:has(.act-art){width:36px;height:36px}
   /* `minmax(0,1fr)` : deux colonnes qui acceptent VRAIMENT de rétrécir. */
   .cardser-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s3)}
   /* Compteurs du portefeuille : une seule LIGNE, pas une grille de carrés.

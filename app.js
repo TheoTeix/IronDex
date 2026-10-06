@@ -231,7 +231,7 @@ const PLUS = '<span class="ico-plus" aria-hidden="true">' + ICO.plus + '</span>'
    ajouter une carte / sa reverse au masterset, renommer / supprimer une
    wishlist, y ajouter une carte. Ce sont des tuiles complètes — fond, cadre,
    pastille — donc le bouton qui les porte s'efface derrière elles (.act-art). */
-const ART = name => `<img class="act-art" src="ico-${name}.png?v=1" alt="" width="128" height="128" decoding="async" draggable="false">`;
+const ART = name => `<img class="act-art" src="ico-${name}.png?v=2" alt="" width="128" height="128" decoding="async" draggable="false">`;
 
 const state = {
   view: 'home',
