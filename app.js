@@ -214,6 +214,7 @@ const ICO = {
   plus:    SVG('<image href="ico-plus.png?v=1" x="1" y="1" width="22" height="22"/>', ' class="ico-badge"'),
   check:   SVG('<path d="M5 12.5 10 17.5 19 7.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'),
   close:   SVG('<image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/>', ' class="ico-badge"'),
+  infoDot: SVG('<image href="ico-info.png?v=1" x="1" y="1" width="22" height="22"/>', ' class="ico-badge"'),
   left:    SVG('<path d="M14.5 5 8 12l6.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
   right:   SVG('<path d="M9.5 5 16 12l-6.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
   search:  SVG('<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>'),
@@ -5614,7 +5615,7 @@ function renderWishCardThumb(c, wid, i) {
   return `
     <div class="card-thumb ${c.owned ? 'owned' : ''}" style="animation-delay:${Math.min(i * 26, 340)}ms" data-card="${c.id}" data-cc="${c.id}">
       <div class="card-thumb-imgwrap">
-        <button class="owned-toggle" onclick="event.stopPropagation();toggleOwned('${wid}','${c.id}')" title="${c.owned ? 'Marquer comme non obtenue' : 'Marquer comme obtenue'}" aria-pressed="${!!c.owned}" aria-label="Obtenue">${ICO.check}</button>
+        <button class="owned-toggle" onclick="event.stopPropagation();toggleOwned('${wid}','${c.id}')" title="${c.owned ? 'Marquer comme non obtenue' : 'Marquer comme obtenue'}" aria-pressed="${!!c.owned}" aria-label="Obtenue">${ICO.plus}</button>
         <span class="owned-pill">Obtenue</span>
         ${c.image ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.setId||'')}','${jss(c.name)}')" alt="${esc(c.name)}" style="cursor:pointer" onclick="openCardDetail('${c.id}')">` : `<div style="cursor:pointer" onclick="openCardDetail('${c.id}')">${noImgHTML(c.localId, c.name, c.setId)}</div>`}
         <button class="remove-btn" onclick="event.stopPropagation();removeFromWishlist('${wid}','${c.id}')" title="Retirer de la wishlist" aria-label="Retirer">${ICO.close}</button>
@@ -10076,7 +10077,7 @@ function investMissingThumbHTML(c, i) {
           onclick="event.stopPropagation();${add}">${ICO.plus || PLUS}</button>
         <button class="cardser-miss-info" title="Voir la fiche"
           aria-label="Voir la fiche de ${esc(c.name)} sans l'ajouter"
-          onclick="event.stopPropagation();${info}">i</button>
+          onclick="event.stopPropagation();${info}">${ICO.infoDot}</button>
       </div>
       <div class="card-thumb-info">
         <div class="card-thumb-name">${esc(c.name)}</div>
