@@ -4441,3 +4441,26 @@ body::before{display:none}
 .detail-qty-sum{width:100%;font-size:12.5px;color:var(--t2);
   font-variant-numeric:tabular-nums}
 .detail-qty-sum:empty{display:none}
+
+/* ── Le « + » d'une carte de wishlist : au CENTRE, comme dans Collection ──
+   Même place, même gabarit et même apparition que .cardser-miss-add : le
+   geste « je l'ai » se fait au même endroit des deux côtés de l'app. Une
+   carte obtenue ne l'affiche qu'au survol (en gris, pour décocher) : sa
+   couleur et la pastille « Obtenue » disent déjà qu'elle est à moi.
+   En fin de feuille : il passe après les placements en coin (y compris
+   celui du téléphone, `.cards-grid .owned-toggle`). */
+.card-thumb .owned-toggle,.cards-grid .card-thumb .owned-toggle{
+  top:50%;left:50%;width:46px;height:46px;border-radius:50%;
+  transform:translate(-50%,-50%) scale(.6);opacity:0;
+  transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out)}
+.card-thumb.owned .owned-toggle{opacity:0}
+@media(hover:hover){
+  .card-thumb:hover .owned-toggle,.card-thumb.owned:hover .owned-toggle{
+    opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+.card-thumb .owned-toggle:focus-visible{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.card-thumb .owned-toggle:active{transform:translate(-50%,-50%) scale(.92)}
+@media(hover:none){
+  .card-thumb .owned-toggle,.cards-grid .card-thumb .owned-toggle{opacity:.6;transform:translate(-50%,-50%) scale(.76)}
+  .card-thumb.owned .owned-toggle{opacity:.35}
+}
