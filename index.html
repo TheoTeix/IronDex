@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui92">
+  <link rel="stylesheet" href="style.css?v=ui93">
   <!-- ══ LA POIGNÉE DE MAIN, PAYÉE D'AVANCE ══════════════════════════
        MESURÉ : le premier visuel de carte coûtait 330 ms, dont 222 ms de
        seule négociation TLS avec assets.tcgdex.net — avant même qu'un octet
@@ -301,7 +301,7 @@
       <input class="palette-input" id="palette-input" type="text" autocomplete="off" spellcheck="false"
              placeholder="Une carte, une wishlist, une commande…" aria-label="Rechercher"
              aria-controls="palette-list" role="combobox" aria-expanded="true">
-      <button class="modal-close" onclick="closePalette()" aria-label="Fermer">✕</button>
+      <button class="modal-close" onclick="closePalette()" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button>
     </div>
     <div class="palette-list" id="palette-list" role="listbox" aria-label="Résultats"></div>
     <div class="palette-foot">
@@ -314,7 +314,7 @@
 
 <!-- ══ Lightbox : visuel de carte en grand ══ -->
 <div class="lightbox" id="photo-lightbox" onclick="closePhotoLightbox()">
-  <button class="lightbox-close" aria-label="Fermer" onclick="event.stopPropagation();closePhotoLightbox()">✕</button>
+  <button class="lightbox-close" aria-label="Fermer" onclick="event.stopPropagation();closePhotoLightbox()"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button>
   <figure class="lightbox-figure" onclick="event.stopPropagation()">
     <img id="lightbox-img" class="lightbox-img" alt="Carte en grand">
     <figcaption class="lightbox-cap" id="lightbox-cap"></figcaption>
@@ -336,7 +336,7 @@
 <!-- ══ Modale : nouvelle wishlist ══ -->
 <div class="modal-overlay" id="modal-create-wishlist" role="dialog" aria-modal="true" aria-labelledby="t-cw">
   <div class="modal" style="max-width:460px">
-    <div class="modal-header"><div class="modal-title" id="t-cw">Nouvelle wishlist</div><button class="modal-close" onclick="closeModal('modal-create-wishlist')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="t-cw">Nouvelle wishlist</div><button class="modal-close" onclick="closeModal('modal-create-wishlist')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body">
       <div class="input-group stagger" style="--i:0;margin-bottom:0">
         <label class="input-label" for="wishlist-name-input">Nom de la wishlist</label>
@@ -354,7 +354,7 @@
 <!-- ══ Modale : nouveau classeur ══ -->
 <div class="modal-overlay" id="modal-create-binder" role="dialog" aria-modal="true" aria-labelledby="t-cb">
   <div class="modal" style="max-width:480px">
-    <div class="modal-header"><div class="modal-title" id="t-cb">Nouveau classeur</div><button class="modal-close" onclick="closeModal('modal-create-binder')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="t-cb">Nouveau classeur</div><button class="modal-close" onclick="closeModal('modal-create-binder')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body">
       <div class="input-group stagger" style="--i:0">
         <label class="input-label" for="binder-name-input">Nom du classeur</label>
@@ -379,7 +379,7 @@
 <!-- ══ Modale : renommer un classeur ══ -->
 <div class="modal-overlay" id="modal-rename-binder" role="dialog" aria-modal="true" aria-labelledby="t-rb">
   <div class="modal" style="max-width:460px">
-    <div class="modal-header"><div class="modal-title" id="t-rb">Renommer le classeur</div><button class="modal-close" onclick="closeModal('modal-rename-binder')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="t-rb">Renommer le classeur</div><button class="modal-close" onclick="closeModal('modal-rename-binder')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body">
       <div class="input-group stagger" style="--i:0;margin-bottom:0">
         <label class="input-label" for="binder-rename-input">Nom</label>
@@ -396,7 +396,7 @@
 <!-- ══ Modale : renommer une wishlist ══ -->
 <div class="modal-overlay" id="modal-rename-wishlist" role="dialog" aria-modal="true" aria-labelledby="t-rw">
   <div class="modal" style="max-width:460px">
-    <div class="modal-header"><div class="modal-title" id="t-rw">Renommer la wishlist</div><button class="modal-close" onclick="closeModal('modal-rename-wishlist')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="t-rw">Renommer la wishlist</div><button class="modal-close" onclick="closeModal('modal-rename-wishlist')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body">
       <input type="hidden" id="rename-wishlist-id">
       <div class="input-group stagger" style="--i:0;margin-bottom:0">
@@ -414,7 +414,7 @@
 <!-- ══ Modale : choisir la pièce maîtresse ══ -->
 <div class="modal-overlay" id="modal-feature-picker" role="dialog" aria-modal="true" aria-labelledby="feature-picker-title">
   <div class="modal" style="max-width:660px">
-    <div class="modal-header"><div class="modal-title" id="feature-picker-title">Pièce maîtresse du coffre</div><button class="modal-close" onclick="closeModal('modal-feature-picker')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="feature-picker-title">Pièce maîtresse du coffre</div><button class="modal-close" onclick="closeModal('modal-feature-picker')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body" id="feature-picker-body" style="min-height:200px"></div>
   </div>
 </div>
@@ -422,7 +422,7 @@
 <!-- ══ Modale : fiche de carte ══ -->
 <div class="modal-overlay detail-layer" id="modal-card-detail" role="dialog" aria-modal="true" aria-label="Détail de la carte">
   <div class="modal detail-modal">
-    <div class="modal-header"><div class="modal-title">Détail de la carte</div><button class="modal-close" onclick="closeModal('modal-card-detail')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title">Détail de la carte</div><button class="modal-close" onclick="closeModal('modal-card-detail')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body" id="detail-body" style="min-height:260px"></div>
   </div>
 </div>
@@ -430,7 +430,7 @@
 <!-- ══ Modale : catalogue (ajout de cartes) ══ -->
 <div class="modal-overlay picker-layer" id="modal-card-picker" role="dialog" aria-modal="true" aria-labelledby="picker-title">
   <div class="modal" style="max-width:820px">
-    <div class="modal-header"><div class="modal-title" id="picker-title">Choisir une carte</div><button class="modal-close" onclick="closeModal('modal-card-picker')" aria-label="Fermer">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="picker-title">Choisir une carte</div><button class="modal-close" onclick="closeModal('modal-card-picker')" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button></div>
     <div class="modal-body" id="picker-body" style="min-height:340px"></div>
     <div class="modal-footer" id="picker-footer" style="display:none">
       <span class="picker-count" id="picker-added-count" style="margin-right:auto">Clique les cartes à ajouter</span>
@@ -467,7 +467,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui92"></script>
-<script src="app.js?v=ui92"></script>
+<script src="cloud-config.js?v=ui93"></script>
+<script src="app.js?v=ui93"></script>
 </body>
 </html>

@@ -1397,6 +1397,28 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .ico-sync>svg,svg.ico-sync{width:15px;height:15px}
 .btn svg{width:17px;height:17px}
 .btn .ico-plus>svg{width:18px;height:18px}
+/* ── Pastilles « + » (rond bleu) et croix (rond rouge) ─────────────────
+   ICO.plus / ICO.close portent `.ico-badge` : une image ronde déjà colorée.
+   Dans un bouton qui n'est QUE ce rond, le cercle du bouton (fond, bordure,
+   halo) ferait un rond dans un rond — il s'efface, et la pastille prend la
+   place. Le !important est assumé : ces boutons ont chacun des :hover teintés
+   ailleurs dans la feuille, qu'on neutralise ici en un seul endroit. */
+svg.ico-badge{overflow:visible}
+:is(.modal-close,.lightbox-close,.remove-btn,.milo-cell-remove,.cardtile-del,.inv-del,.per-x,
+    .cardser-miss-add,.milo-add-plus,.binder-new-plus,.wishlist-add-card .plus,.qty-btn):has(svg.ico-badge){
+  background:none!important;border-color:transparent!important;box-shadow:none!important;
+  -webkit-backdrop-filter:none;backdrop-filter:none}
+:is(.modal-close,.lightbox-close,.remove-btn,.milo-cell-remove,.cardtile-del,.inv-del,.per-x,
+    .cardser-miss-add,.milo-add-plus,.binder-new-plus,.wishlist-add-card .plus,.qty-btn) svg.ico-badge{
+  width:88%;height:88%;filter:drop-shadow(0 2px 5px rgba(0,0,0,.35));
+  transition:transform var(--dur-1) var(--ease-out)}
+@media(hover:hover){
+  :is(.modal-close,.lightbox-close,.remove-btn,.milo-cell-remove,.cardtile-del,.inv-del,.per-x,
+      .cardser-miss-add,.qty-btn):hover svg.ico-badge,
+  .wishlist-add-card:hover .plus svg.ico-badge,.milo-cell.is-add:hover .milo-add-plus svg.ico-badge,
+  .binder-tile-new:hover .binder-new-plus svg.ico-badge{transform:scale(1.08)}
+}
+:is(.modal-close,.lightbox-close,.remove-btn,.milo-cell-remove,.cardtile-del,.inv-del,.per-x,.qty-btn):active svg.ico-badge{transform:scale(.9)}
 .empty-state-icon svg{width:26px;height:26px}
 .val-note svg{width:14px;height:14px;flex:none;margin-top:2px}
 .strip-btn svg{width:18px;height:18px}

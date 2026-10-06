@@ -208,9 +208,12 @@ const ICO = {
   card:    SVG('<rect x="5" y="3.5" width="14" height="17" rx="2.2" stroke="currentColor" stroke-width="1.9"/><path d="M8.5 8h7M8.5 11.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
   sync:    SVG('<path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>'),
   refresh: SVG('<path d="M20 11a8 8 0 1 0-.5 3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>'),
-  plus:    SVG('<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
+  // « + » et croix : les pastilles illustrées (rond bleu, rond rouge), posées
+  // dans un <svg> 24×24 pour que toutes les règles CSS qui dimensionnent les
+  // icônes de l'app continuent de s'appliquer sans en changer une seule.
+  plus:    SVG('<image href="ico-plus.png?v=1" x="1" y="1" width="22" height="22"/>', ' class="ico-badge"'),
   check:   SVG('<path d="M5 12.5 10 17.5 19 7.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'),
-  close:   SVG('<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
+  close:   SVG('<image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/>', ' class="ico-badge"'),
   left:    SVG('<path d="M14.5 5 8 12l6.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
   right:   SVG('<path d="M9.5 5 16 12l-6.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
   search:  SVG('<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>'),
@@ -225,7 +228,7 @@ const ICO = {
   layers:  SVG('<path d="M12 3.6 3.6 8 12 12.4 20.4 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="m3.6 13 8.4 4.4L20.4 13" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" opacity=".6"/>'),
   box:     SVG('<path d="M4 8.2 12 4l8 4.2v7.6L12 20l-8-4.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M4 8.2 12 12.4l8-4.2M12 12.4V20" stroke="currentColor" stroke-width="1.6" opacity=".6"/>'),
 };
-// Icône « + » (héritée) : même glyphe vectoriel que ICO.plus.
+// Icône « + » (héritée) : la même pastille que ICO.plus.
 const PLUS = '<span class="ico-plus" aria-hidden="true">' + ICO.plus + '</span>';
 /* Les icônes ILLUSTRÉES des gestes (même famille que la barre d'onglets) :
    ajouter une carte / sa reverse au masterset, renommer / supprimer une
@@ -10219,7 +10222,7 @@ function cardTileHTML(p) {
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4 11 13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M18 15v3.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
           </a>
           <button class="cardtile-del" onclick="deleteInvestCard('${p.id}')" aria-label="Retirer ${esc(p.name)}" title="Retirer la carte">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            ${ICO.close}
           </button>
         </span>
       </div>
