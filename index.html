@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui96">
+  <link rel="stylesheet" href="style.css?v=ui97">
   <!-- ══ LA POIGNÉE DE MAIN, PAYÉE D'AVANCE ══════════════════════════
        MESURÉ : le premier visuel de carte coûtait 330 ms, dont 222 ms de
        seule négociation TLS avec assets.tcgdex.net — avant même qu'un octet
@@ -190,7 +190,7 @@
     <div class="rail-foot">
       <!-- Recherche de cartes (⌘K) : les miennes puis le catalogue. Voir openPalette(). -->
       <button class="rail-cmd" onclick="openPalette()" aria-label="Rechercher une carte">
-        <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
+        <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=2" x="1" y="1" width="22" height="22"/></svg>
         <span>Rechercher…</span>
         <kbd class="kbd">⌘K</kbd>
       </button>
@@ -216,7 +216,7 @@
       </div>
       <div class="header-actions" id="header-actions">
         <button class="btn btn-ghost btn-sm btn-icon" onclick="openPalette()" title="Rechercher une carte (⌘K)" aria-label="Rechercher une carte">
-          <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
+          <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=2" x="1" y="1" width="22" height="22"/></svg>
         </button>
         <!-- PAS de bouton « Sync » global ici. Recoter les 1 400 cartes d'un
              coup prenait 20 minutes pour REFAIRE ce qui était déjà juste, et
@@ -225,7 +225,7 @@
              (voir syncCardPrice) — une seconde, et c'est celle qu'on regarde. -->
         <button class="btn btn-ghost btn-sm btn-icon btn-refresh" id="btn-refresh" onclick="refreshSeries()"
           title="Chercher les nouvelles séries" aria-label="Chercher les nouvelles séries">
-          <svg class="refresh-ico ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-series.png?v=1" x="1" y="1" width="22" height="22"/></svg>
+          <svg class="refresh-ico ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-series.png?v=2" x="1" y="1" width="22" height="22"/></svg>
         </button>
         <!-- LE COMPTE. Un seul bouton pour deux informations, et c'est
              délibéré : le visage dit À QUI appartient ce qu'on regarde, et
@@ -296,7 +296,7 @@
 <div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Recherche de cartes" onclick="if(event.target===this)closePalette()">
   <div class="palette-box">
     <div class="palette-top">
-      <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
+      <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=2" x="1" y="1" width="22" height="22"/></svg>
       <input class="palette-input" id="palette-input" type="text" autocomplete="off" spellcheck="false"
              placeholder="Nom d'une carte…" aria-label="Rechercher une carte"
              aria-controls="palette-list" role="combobox" aria-expanded="true">
@@ -466,7 +466,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui96"></script>
-<script src="app.js?v=ui96"></script>
+<script src="cloud-config.js?v=ui97"></script>
+<script src="app.js?v=ui97"></script>
 </body>
 </html>

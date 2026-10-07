@@ -4480,7 +4480,9 @@ body::before{display:none}
   .cards-grid .card-thumb>.remove-btn,.card-thumb>.cardser-miss-info{width:26px;height:26px}
 }
 
-/* ── Loupe et « nouvelles séries » : les pastilles turquoise et orange ────
+/* ── Loupe et « nouvelles séries » : pastilles bleu nuit, trait fin ──────
+   Tout en haut, elles restent discrètes : la couleur est réservée aux gestes
+   sur les cartes (+, croix, i).
    Même famille que + / croix / i. Le bouton rond de la barre haute
    s'efface derrière la pastille (sinon : un rond dans un rond). */
 .header-actions .btn-icon:has(svg.ico-badge){background:none!important;border-color:transparent!important;
