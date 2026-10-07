@@ -2311,7 +2311,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 /* Sur téléphone, le bandeau tient trois objets sur 375 px : le retour, le logo
    de la série et ce bouton. L'étiquette part, l'icône reste — et `aria-label`
    dit ce qu'elle fait (voir msHeadHTML / paintMastersetHead). */
-@media(max-width:560px){
+@media (max-width:767px){
   .ms-all span{display:none}
   .ms-all{flex:none;width:42px;height:42px;padding:0;display:grid;place-items:center}
 }
@@ -4464,3 +4464,32 @@ body::before{display:none}
   .card-thumb .owned-toggle,.cards-grid .card-thumb .owned-toggle{opacity:.6;transform:translate(-50%,-50%) scale(.76)}
   .card-thumb.owned .owned-toggle{opacity:.35}
 }
+
+/* ── « i » et croix : à cheval sur le coin haut-droit de la carte ─────────
+   Moitié sur la carte, moitié dehors, comme une pastille de notification :
+   ils ne couvrent plus l'illustration et se lisent comme « à propos de cette
+   carte ». Ils vivent hors de .card-thumb-imgwrap (qui rogne ce qui dépasse,
+   pour ses coins arrondis) et s'accrochent à la carte elle-même. Le centre
+   est posé 3 px à l'intérieur du coin : le coin est arrondi, pile sur l'angle
+   la pastille flotterait à côté de la carte. */
+.card-thumb>.remove-btn,.card-thumb>.cardser-miss-info{
+  top:3px;right:3px;left:auto;width:28px;height:28px;border-radius:50%;z-index:6;
+  transform:translate(50%,-50%)}
+.card-thumb:hover,.card-thumb:focus-within{z-index:2}
+@media (max-width:767px){
+  .cards-grid .card-thumb>.remove-btn,.card-thumb>.cardser-miss-info{width:26px;height:26px}
+}
+
+/* ── Loupe et « nouvelles séries » : les pastilles turquoise et orange ────
+   Même famille que + / croix / i. Le bouton rond de la barre haute
+   s'efface derrière la pastille (sinon : un rond dans un rond). */
+.header-actions .btn-icon:has(svg.ico-badge){background:none!important;border-color:transparent!important;
+  box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
+.header-actions .btn-icon:has(svg.ico-badge)::before,.header-actions .btn-icon:has(svg.ico-badge)::after{display:none}
+.header-actions .btn-icon svg.ico-badge{width:30px;height:30px;filter:drop-shadow(0 2px 5px rgba(0,0,0,.35));
+  transition:transform var(--dur-1) var(--ease-out)}
+@media(hover:hover){.header-actions .btn-icon:hover svg.ico-badge{transform:scale(1.08)}}
+.header-actions .btn-icon:active svg.ico-badge{transform:scale(.9)}
+.btn-refresh.spinning svg.ico-badge.refresh-ico{animation:spin .9s linear infinite}
+.rail-cmd svg.ico-badge{width:20px;height:20px;opacity:1}
+.palette-top svg.ico-badge{width:24px;height:24px}

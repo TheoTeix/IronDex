@@ -4114,10 +4114,9 @@ async function mountSplineScene(canvas, sceneUrl) {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   PALETTE DE COMMANDES (⌘K)
-   L'accélérateur du site : sauter à une vue, retrouver N'IMPORTE QUELLE
-   carte de la collection (wishlists, classeurs, portefeuille) et l'ouvrir,
-   ou lancer une action globale. Entièrement pilotable au clavier.
+   RECHERCHE DE CARTES (⌘K)
+   Retrouver n'importe quelle carte — les miennes, puis le catalogue — et
+   ouvrir sa fiche. Entièrement pilotable au clavier.
    ════════════════════════════════════════════════════════════════ */
 let _palIdx = 0, _palRows = [], _palPrevFocus = null;
 
@@ -4125,29 +4124,32 @@ let _palIdx = 0, _palRows = [], _palPrevFocus = null;
 function palNorm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
-// Actions globales toujours proposées.
-function palCommands() {
-  return [
-    { kind: 'nav', name: 'Le Coffre', sub: 'Valeur, pièce maîtresse', ico: ICO.vault, run: () => navigate('home') },
-    { kind: 'nav', name: 'Wishlists', sub: `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''}`, ico: ICO.heart, run: () => navigate('wishlists') },
-    { kind: 'nav', name: 'Collection', sub: `${state.investCards.length} cartes suivies`, ico: ICO.chart, run: () => navigate('invest') },
-    { kind: 'nav', name: 'Masterset', sub: (state.mastersets || []).length ? `${state.mastersets.length} série${state.mastersets.length > 1 ? 's' : ''} suivie${state.mastersets.length > 1 ? 's' : ''}` : 'Cocher un set en entier, reverses comprises', ico: ICO.layers, run: () => { state.investMode = 'masterset'; state.mastersetOpen = null; navigate('invest'); } },
-    // Les classeurs ne sont pas atteignables sur téléphone : la commande non plus.
-    ...(isPhone() ? [] : [{ kind: 'nav', name: 'Classeurs', sub: 'Binders feuilletables en 3D', ico: ICO.book, run: () => navigate('binders') }]),
-    { kind: 'act', name: 'Récupérer les cotes partagées', sub: `Dernière cote ${agoLabel(priceSyncedAt())} · une carte se recote depuis sa tuile`, ico: ICO.sync, run: () => pullSharedPrices() },
-    { kind: 'act', name: 'Mon compte', sub: vaultOn() ? `${vaultDisplayName()} · synchro et déconnexion` : 'Se connecter', ico: ICO.info, run: () => openAccount() },
-    { kind: 'act', name: 'Chercher de nouvelles séries', sub: 'Actualiser le catalogue', ico: ICO.refresh, run: () => refreshSeries() },
-    /* Le « + » du bandeau d'une série n'existe plus : on ajoute en cliquant une
-       case grisée. Mais une série dont on ne possède AUCUNE carte n'a pas de
-       bulle dans la Collection, donc pas de case grisée à cliquer — sans cette
-       entrée, il n'y aurait plus aucun moyen de commencer un set. */
-    { kind: 'act', name: 'Ajouter une carte', sub: 'Choisir dans le catalogue complet', ico: ICO.plus, run: () => addInvestCard() },
-    { kind: 'act', name: 'Nouvelle wishlist', sub: 'Créer une liste de recherche', ico: ICO.plus, run: () => openCreateWishlist() },
-    { kind: 'act', name: 'Nouveau classeur', sub: 'Créer un binder', ico: ICO.plus, run: () => openCreateBinder() },
-    // Sur téléphone seulement : la question « la page remplit-elle l'écran ? »
-    // ne se pose que là, et elle s'est déjà posée deux fois.
-    ...(isPhone() ? [{ kind: 'act', name: 'Diagnostic écran', sub: 'Vérifier que l\u2019app remplit tout l\u2019écran', ico: ICO.info, run: () => screenDiag() }] : []),
-  ];
+/* LA LOUPE NE CHERCHE QUE DES CARTES. Elle mélangeait vues, actions et
+   cartes : on ouvrait la recherche pour trouver une carte et on tombait sur
+   « Le Coffre », « Nouveau classeur »… Les vues ont leurs onglets, les actions
+   leurs boutons ; ici on tape un nom, on obtient des cartes.
+   Deux sources, dans cet ordre : les MIENNES (wishlists, classeurs,
+   collection — instantané, local), puis le CATALOGUE TCGdex entier (réseau,
+   à partir de 2 lettres, après une courte pause de frappe). Une carte du
+   catalogue ouvre sa fiche, d'où on peut l'ajouter. */
+const _palCat = {};            // requête normalisée → cartes du catalogue (ou null pendant le chargement)
+let _palCatTimer = 0;
+function palCatalogFetch(nq) {
+  clearTimeout(_palCatTimer);
+  if (nq.length < 2 || nq in _palCat) return;
+  _palCatTimer = setTimeout(async () => {
+    _palCat[nq] = null;
+    let list = [];
+    try {
+      // Requête DIRECTE, pas apiFetch : chaque frappe est une requête
+      // différente, et apiFetch les garderait toutes en IndexedDB.
+      const r = await fetchTimeout(`${API}/cards?name=${encodeURIComponent(nq)}&pagination:page=1&pagination:itemsPerPage=40`, 8000);
+      if (r.ok) list = await r.json();
+    } catch {}
+    _palCat[nq] = Array.isArray(list) ? list : [];
+    const inp = document.getElementById('palette-input');
+    if (paletteOpen() && inp && palNorm(inp.value) === nq) renderPalette(inp.value);
+  }, 220);
 }
 /* ── DIAGNOSTIC ÉCRAN ──────────────────────────────────────────────
    Il avait été retiré, puis la bande du bas est revenue et il a fallu deviner.
@@ -4214,38 +4216,53 @@ function renderPalette(q) {
   if (!list) return;
   const nq = palNorm(q);
   const rows = [];
-  const cmds = palCommands().filter(c => !nq || palNorm(c.name + ' ' + c.sub).includes(nq));
-  if (cmds.length) {
-    rows.push({ group: 'Aller à / Actions' });
-    cmds.forEach(c => rows.push(c));
+  if (!nq) {
+    _palRows = [];
+    list.innerHTML = `<div class="pal-empty">Tape le nom d'une carte.<br>Tes cartes d'abord, puis tout le catalogue.</div>`;
+    return;
   }
-  if (nq) {
-    // Score simple : un nom qui COMMENCE par la requête passe devant.
-    const cards = palCards()
-      .map(c => {
-        const n = palNorm(c.name), hay = palNorm(`${c.name} ${c.setName} ${c.localId} ${c.from.join(' ')}`);
-        if (!hay.includes(nq)) return null;
-        return { c, score: n.startsWith(nq) ? 0 : n.includes(nq) ? 1 : 2 };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.score - b.score || String(a.c.name).localeCompare(String(b.c.name)))
-      .slice(0, 40);
-    if (cards.length) {
-      rows.push({ group: `Cartes (${cards.length})` });
-      cards.forEach(({ c }) => {
-        const p = getCachedRawPrice(c.id);
-        rows.push({
-          kind: 'card', name: c.name, sub: [c.setName, c.localId ? '#' + c.localId : '', c.from.join(' · ')].filter(Boolean).join(' · '),
-          img: c.image ? IMG(c.image, 'low') : '', meta: (p && p.raw != null) ? fmt(p.raw) : '',
-          run: () => openCardDetail(c.id),
-        });
+  // Score simple : un nom qui COMMENCE par la requête passe devant.
+  const mine = palCards()
+    .map(c => {
+      const n = palNorm(c.name), hay = palNorm(`${c.name} ${c.setName} ${c.localId} ${c.from.join(' ')}`);
+      if (!hay.includes(nq)) return null;
+      return { c, score: n.startsWith(nq) ? 0 : n.includes(nq) ? 1 : 2 };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score || String(a.c.name).localeCompare(String(b.c.name)))
+    .slice(0, 40);
+  if (mine.length) {
+    rows.push({ group: `Mes cartes (${mine.length})` });
+    mine.forEach(({ c }) => {
+      const p = getCachedRawPrice(c.id);
+      rows.push({
+        kind: 'card', name: c.name, sub: [c.setName, c.localId ? '#' + c.localId : '', c.from.join(' · ')].filter(Boolean).join(' · '),
+        img: c.image ? IMG(c.image, 'low') : '', meta: (p && p.raw != null) ? fmt(p.raw) : '',
+        run: () => openCardDetail(c.id),
       });
+    });
+  }
+  palCatalogFetch(nq);
+  const cat = _palCat[nq];
+  const pending = nq.length >= 2 && !Array.isArray(cat);
+  if (Array.isArray(cat)) {
+    const seen = new Set(mine.map(m => m.c.id));
+    const extra = cat.filter(c => c && c.id && !seen.has(c.id));
+    if (extra.length) {
+      rows.push({ group: `Catalogue (${extra.length})` });
+      extra.forEach(c => rows.push({
+        kind: 'card', name: c.name || c.id, sub: [c.id.replace(/-[^-]+$/, '').toUpperCase(), c.localId ? '#' + c.localId : ''].filter(Boolean).join(' · '),
+        img: c.image ? IMG(c.image, 'low') : '', meta: '',
+        run: () => openCardDetail(c.id),
+      }));
     }
   }
   _palRows = rows.filter(r => !r.group);
   _palIdx = 0;
   if (!_palRows.length) {
-    list.innerHTML = `<div class="pal-empty">Rien pour « ${esc(q)} ».<br>Essaie un nom de carte, de série ou de wishlist.</div>`;
+    list.innerHTML = pending
+      ? `<div class="pal-empty">Recherche dans le catalogue…</div>`
+      : `<div class="pal-empty">Aucune carte pour « ${esc(q)} ».</div>`;
     return;
   }
   let i = -1;
@@ -4260,7 +4277,7 @@ function renderPalette(q) {
       <span class="pal-body"><span class="pal-name">${esc(r.name)}</span>${r.sub ? `<span class="pal-sub">${esc(r.sub)}</span>` : ''}</span>
       ${r.meta ? `<span class="pal-meta">${esc(r.meta)}</span>` : ''}
     </button>`;
-  }).join('');
+  }).join('') + (pending ? `<div class="pal-group">Catalogue…</div>` : '');
 }
 function movePalette(d) {
   if (!_palRows.length) return;
@@ -5618,8 +5635,8 @@ function renderWishCardThumb(c, wid, i) {
         <button class="owned-toggle" onclick="event.stopPropagation();toggleOwned('${wid}','${c.id}')" title="${c.owned ? 'Marquer comme non obtenue' : 'Marquer comme obtenue'}" aria-pressed="${!!c.owned}" aria-label="Obtenue">${ICO.plus}</button>
         <span class="owned-pill">Obtenue</span>
         ${c.image ? `<img ${artAttrs(c.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(c.localId||''))}','${esc(c.setId||'')}','${jss(c.name)}')" alt="${esc(c.name)}" style="cursor:pointer" onclick="openCardDetail('${c.id}')">` : `<div style="cursor:pointer" onclick="openCardDetail('${c.id}')">${noImgHTML(c.localId, c.name, c.setId)}</div>`}
-        <button class="remove-btn" onclick="event.stopPropagation();removeFromWishlist('${wid}','${c.id}')" title="Retirer de la wishlist" aria-label="Retirer">${ICO.close}</button>
       </div>
+      <button class="remove-btn" onclick="event.stopPropagation();removeFromWishlist('${wid}','${c.id}')" title="Retirer de la wishlist" aria-label="Retirer">${ICO.close}</button>
       <div class="card-thumb-info" style="cursor:pointer" onclick="openCardDetail('${c.id}')">
         <div class="card-thumb-name">${esc(c.name)}</div>
         <div class="card-thumb-sub">#${c.localId || '—'}</div>
@@ -10030,8 +10047,8 @@ function investCardThumbHTML(p, i) {
         ${p.image
           ? `<img ${artAttrs(p.image, i)} onload="artOk(this)" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')" alt="${esc(p.name)}" style="cursor:pointer" onclick="${open}">`
           : `<div style="cursor:pointer" onclick="${open}">${noImgHTML(p.localId, p.name, p.setId)}</div>`}
-        <button class="remove-btn" onclick="event.stopPropagation();deleteInvestCard('${p.id}')" title="Retirer de la collection" aria-label="Retirer ${esc(p.name)}">${ICO.close}</button>
       </div>
+      <button class="remove-btn" onclick="event.stopPropagation();deleteInvestCard('${p.id}')" title="Retirer de la collection" aria-label="Retirer ${esc(p.name)}">${ICO.close}</button>
       <div class="card-thumb-info" style="cursor:pointer" onclick="${open}">
         <div class="card-thumb-name">${esc(p.name)}</div>
         <div class="card-thumb-sub">#${p.localId || '—'}</div>
@@ -10075,10 +10092,10 @@ function investMissingThumbHTML(c, i) {
         <button class="cardser-miss-add" tabindex="0" title="Ajouter à ma collection"
           aria-label="Ajouter ${esc(c.name)} à ma collection"
           onclick="event.stopPropagation();${add}">${ICO.plus || PLUS}</button>
-        <button class="cardser-miss-info" title="Voir la fiche"
-          aria-label="Voir la fiche de ${esc(c.name)} sans l'ajouter"
-          onclick="event.stopPropagation();${info}">${ICO.infoDot}</button>
       </div>
+      <button class="cardser-miss-info" title="Voir la fiche"
+        aria-label="Voir la fiche de ${esc(c.name)} sans l'ajouter"
+        onclick="event.stopPropagation();${info}">${ICO.infoDot}</button>
       <div class="card-thumb-info">
         <div class="card-thumb-name">${esc(c.name)}</div>
         <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>

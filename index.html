@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui95">
+  <link rel="stylesheet" href="style.css?v=ui96">
   <!-- ══ LA POIGNÉE DE MAIN, PAYÉE D'AVANCE ══════════════════════════
        MESURÉ : le premier visuel de carte coûtait 330 ms, dont 222 ms de
        seule négociation TLS avec assets.tcgdex.net — avant même qu'un octet
@@ -188,10 +188,9 @@
     </nav>
 
     <div class="rail-foot">
-      <!-- Palette de commandes : sauter à une vue, retrouver n'importe quelle
-           carte de la collection, lancer la synchro. Voir openPalette(). -->
-      <button class="rail-cmd" onclick="openPalette()" aria-label="Rechercher une carte ou une commande">
-        <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      <!-- Recherche de cartes (⌘K) : les miennes puis le catalogue. Voir openPalette(). -->
+      <button class="rail-cmd" onclick="openPalette()" aria-label="Rechercher une carte">
+        <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
         <span>Rechercher…</span>
         <kbd class="kbd">⌘K</kbd>
       </button>
@@ -216,8 +215,8 @@
         <span class="tb-name" id="tb-name">Le Coffre</span>
       </div>
       <div class="header-actions" id="header-actions">
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openPalette()" title="Rechercher (⌘K)" aria-label="Rechercher">
-          <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openPalette()" title="Rechercher une carte (⌘K)" aria-label="Rechercher une carte">
+          <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
         </button>
         <!-- PAS de bouton « Sync » global ici. Recoter les 1 400 cartes d'un
              coup prenait 20 minutes pour REFAIRE ce qui était déjà juste, et
@@ -226,7 +225,7 @@
              (voir syncCardPrice) — une seconde, et c'est celle qu'on regarde. -->
         <button class="btn btn-ghost btn-sm btn-icon btn-refresh" id="btn-refresh" onclick="refreshSeries()"
           title="Chercher les nouvelles séries" aria-label="Chercher les nouvelles séries">
-          <svg class="refresh-ico" viewBox="0 0 24 24" fill="none" width="15" height="15" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="refresh-ico ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-series.png?v=1" x="1" y="1" width="22" height="22"/></svg>
         </button>
         <!-- LE COMPTE. Un seul bouton pour deux informations, et c'est
              délibéré : le visage dit À QUI appartient ce qu'on regarde, et
@@ -293,13 +292,13 @@
 <!-- Les toasts n'attrapent jamais le focus ; aria-live poli pour les lecteurs d'écran. -->
 <div id="toast-container" role="status" aria-live="polite"></div>
 
-<!-- ══ PALETTE DE COMMANDES (⌘K) ══ -->
-<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Recherche et commandes" onclick="if(event.target===this)closePalette()">
+<!-- ══ RECHERCHE DE CARTES (⌘K) ══ -->
+<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Recherche de cartes" onclick="if(event.target===this)closePalette()">
   <div class="palette-box">
     <div class="palette-top">
-      <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.9"/><path d="m20 20-3.4-3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      <svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-search.png?v=1" x="1" y="1" width="22" height="22"/></svg>
       <input class="palette-input" id="palette-input" type="text" autocomplete="off" spellcheck="false"
-             placeholder="Une carte, une wishlist, une commande…" aria-label="Rechercher"
+             placeholder="Nom d'une carte…" aria-label="Rechercher une carte"
              aria-controls="palette-list" role="combobox" aria-expanded="true">
       <button class="modal-close" onclick="closePalette()" aria-label="Fermer"><svg class="ico-badge" viewBox="0 0 24 24" fill="none" aria-hidden="true"><image href="ico-close.png?v=1" x="1" y="1" width="22" height="22"/></svg></button>
     </div>
@@ -467,7 +466,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui95"></script>
-<script src="app.js?v=ui95"></script>
+<script src="cloud-config.js?v=ui96"></script>
+<script src="app.js?v=ui96"></script>
 </body>
 </html>
