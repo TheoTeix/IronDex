@@ -3835,7 +3835,6 @@ async function pullSharedPrices() {
   if (!vaultOn()) { toast('Connecte-toi pour récupérer les cotes', 'error'); return; }
   const got = await vaultPullPrices().catch(() => 0);
   if (!got) { toast('Aucune cote plus récente à récupérer', 'error'); return; }
-  refreshSyncMeta();
   window._vaultCounted = false;
   window._investCountedCards = false;
   renderViewContent(state.view);
@@ -3982,7 +3981,7 @@ function preloadEverything(onProgress) {
     // La toute première ouverture vaut une synchro : on horodate à la fin du
     // chargement complet, pas au premier palier.
     if (finished && !_priceSyncedAt) { _priceSyncedAt = Date.now(); flushPriceCache(); }
-    if (state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); refreshSyncMeta(); }
+    if (state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); }
   });
   return Promise.all(modelJobs);
 }
@@ -3996,7 +3995,10 @@ function fmt(v) {
 // valeurs (coffre, portefeuille). Respecte prefers-reduced-motion.
 function animateCount(el, to, dur = 1000) {
   if (!el) return;
-  const done = () => { el.textContent = to > 0 ? fmt(to) : '0 €'; };
+  // Un jeton par élément : un nouveau décompte (ou un « *** » posé par l'œil
+  // de l'accueil, qui remet le jeton à zéro) arrête l'ancien net.
+  const tok = el._countTok = (el._countTok || 0) + 1;
+  const done = () => { if (el._countTok === tok) el.textContent = to > 0 ? fmt(to) : '0 €'; };
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // Valeur finale immédiate si mouvement réduit, valeur nulle, ou onglet caché
   // (rAF gelé en arrière-plan / rendu headless : on ne laisse jamais « 0 € »).
@@ -4007,6 +4009,7 @@ function animateCount(el, to, dur = 1000) {
   const safety = setTimeout(done, dur + 150); // garantit la valeur finale même si rAF ne progresse pas
   (function tick(now) {
     const p = Math.min(1, (now - start) / dur);
+    if (el._countTok !== tok) { clearTimeout(safety); return; }
     el.textContent = fmtInt(to * ease(p));
     if (p < 1) requestAnimationFrame(tick);
     else { clearTimeout(safety); done(); }
@@ -4569,7 +4572,7 @@ const SOFT_MICRO = '.qty-btn,.cm-link,.buy-chip,.zoom-btn,.owned-toggle,.remove-
 // EXCLUSIONS — ce ne sont pas des « boutons » mais du CONTENU cliquable :
 // des cartes Pokémon. Leur donner un relief de bouton enterrerait le principe
 // produit « la carte est la vedette ». Elles gardent leur verre et leur halo.
-const SOFT_SKIP = '.milo-cell,.card-picker-item,.fp-item,.featured-slab,.home-wl,' +
+const SOFT_SKIP = '.milo-cell,.card-picker-item,.fp-item,.featured-slab,.hfan-card,.hwl-b,.hdoor,' +
                   '.wishlist-card,.cardser-bubble,.binder-tile,.cardtile-art,.pal-item';
 
 // Idempotent et bon marché : marqueur data-soft, une passe de querySelectorAll
@@ -5127,178 +5130,163 @@ function resolveHero() {
   if (top && top.value > 0) return { obj: top, type: 'auto' };
   return null;
 }
-// Étiquette « cotes synchronisées … » + bouton Sync (accueil).
-function syncMetaText(n) {
-  if (!n) return 'Aucune carte suivie pour l’instant';
-  // « Cotes mises à jour il y a 2 h » sous-entendait un LOT recoté d'un coup.
-  // Il n'y en a plus : chaque carte se recote seule, donc ce qu'on peut dire
-  // honnêtement, c'est quand la DERNIÈRE l'a été.
-  return `${n.toLocaleString('fr-FR')} carte${n > 1 ? 's' : ''} suivie${n > 1 ? 's' : ''} · dernière cote ${esc(agoLabel(priceSyncedAt()))}`;
-}
-// Rafraîchit l'étiquette EN PLACE (sans re-render, donc sans animation rejouée).
-function refreshSyncMeta() {
-  const el = document.getElementById('sync-meta-txt');
-  if (el) el.innerHTML = syncMetaText(trackedCardIds().length);
-}
-
 /* ── L'ACCUEIL ──────────────────────────────────────────────────────────
-   Refondu le 2026-08-24 (« c'est moche et les infos dessus incompréhensible »).
+   Refait le 2026-10-08 : « trop complexe, trop "pro" — on veut un truc un peu
+   goofy, enfantin, très simple. Enlève toutes les phrases. »
 
-   CE QUI N'ALLAIT PAS, précisément :
-   · La MÊME information était donnée DEUX FOIS. Le héro affichait « Valeur
-     estimée du coffre » avec une barre de répartition Cartes/Scellé, et un
-     panneau plus bas répétait Cartes / Scellé / Total du coffre en chiffres.
-     Le lecteur cherchait la différence entre les deux — il n'y en avait pas.
-   · Le héro portait DEUX sujets concurrents : la pièce maîtresse (un nom de
-     carte en très grand) et la valeur du coffre (un montant en très grand).
-     Deux titres de même poids sur la même bande, donc aucun n'est le titre.
-   · Une barre empilée à deux segments avec légende colorée demande plus de
-     décodage que deux nombres écrits côte à côte. Elle est remplacée par des
-     cellules libellées : le libellé, le montant, la précision.
-   · « 1264 cartes suivies · cotes il y a 2 h » : deux faits sans rapport
-     agglutinés par un point médian. Séparés.
-
-   LA STRUCTURE EST MAINTENANT : une idée par bande, dans l'ordre où on la
-   veut — combien je possède, ma plus belle carte, mes plus belles cartes,
-   le classeur signature, mes wishlists.
+   UN ÉCRAN QUI SE REGARDE, PAS QUI SE LIT. Plus une seule ligne de texte
+   secondaire (gris translucide) : ce qui reste écrit est en blanc franc et
+   tient en un ou deux mots — le nom de la carte, celui d'une liste, des
+   nombres. Le reste se dit avec des images :
+   · LA SCÈNE — la plus belle carte flotte devant un soleil à sa couleur,
+     piqué d'étincelles. Dessous, une petite pastille : la valeur et un œil
+     pour la masquer (« *** € » — on montre son classeur sans montrer son
+     compte en banque).
+   · TROIS GROS BOUTONS — les portes de l'app, avec les icônes illustrées de
+     la barre d'onglets et un compteur.
+   · MES TRÉSORS — les cartes les mieux cotées, tenues en éventail comme une
+     main de cartes.
+   · LES WISHLISTS — des bulles, chacune un anneau qui se remplit.
+   Tout ce qui bouge est en `transform`/`opacity`, en boucles lentes, et
+   s'arrête net en mouvement réduit. Aucun `backdrop-filter`.
    ─────────────────────────────────────────────────────────────────────── */
+const HOME_HIDE_KEY = 'milodex:hide-value';
+function homeValueHidden() { try { return localStorage.getItem(HOME_HIDE_KEY) === '1'; } catch { return false; } }
+const EYE_SVG = {
+  on:  '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.6 12S6 5.5 12 5.5 21.4 12 21.4 12 18 18.5 12 18.5 2.6 12 2.6 12z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="1.8"/></svg>',
+  off: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.6 12S6 5.5 12 5.5c1.6 0 3 .45 4.2 1.1M21.4 12S18 18.5 12 18.5c-1.6 0-3-.45-4.2-1.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M9.9 14.1a3.1 3.1 0 0 1 4.2-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+};
+function toggleHomeValue() {
+  const hide = !homeValueHidden();
+  try { localStorage.setItem(HOME_HIDE_KEY, hide ? '1' : '0'); } catch {}
+  const btn = document.getElementById('hv-eye');
+  if (btn) {
+    btn.innerHTML = hide ? EYE_SVG.off : EYE_SVG.on;
+    btn.setAttribute('aria-pressed', String(hide));
+    btn.setAttribute('aria-label', hide ? 'Afficher la valeur' : 'Masquer la valeur');
+    btn.title = hide ? 'Afficher la valeur' : 'Masquer la valeur';
+  }
+  document.getElementById('view-home')?.classList.toggle('hv-hidden', hide);
+  computeCollectionValue();
+}
+// Les quatre étincelles autour de la carte : positions fixes (pas de hasard,
+// sinon elles sautent à chaque retour sur l'accueil), délais décalés.
+const HOME_SPARKS = [[8, 18, 1], [86, 12, .7], [92, 62, .9], [4, 70, .6], [74, 88, .5], [22, 92, .75]];
+const SPARK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5c.9 5.6 4.9 9.6 10.5 10.5-5.6.9-9.6 4.9-10.5 10.5C11.1 16.9 7.1 12.9 1.5 12 7.1 11.1 11.1 7.1 12 1.5z" fill="currentColor"/></svg>';
+
 function renderHome() {
   const entries = ownedCardEntries();
-  const strip = entries.filter(e => e.value > 0).slice(0, 10);
-  const copies = entries.reduce((a, e) => a + e.qty, 0);
-  const tracked = trackedCardIds().length;
+  // La plus chère au CENTRE de la main, les suivantes de part et d'autre.
+  const top5 = entries.filter(e => e.value > 0 && e.image).slice(0, 5);
+  const fan = [];
+  top5.forEach((e, i) => { if (i % 2) fan.push(e); else fan.unshift(e); });
+  const hidden = homeValueHidden();
 
   const heroF = resolveHero();
   const featured = heroF ? heroF.obj : null;
-  let heroName = '', heroSet = '', heroPhoto = '', heroId = '', heroCote = '';
+  let heroName = '', heroPhoto = '', heroId = '';
   if (heroF) {
     const o = heroF.obj;
     heroId = String(o.cardId || o.id || '');
     heroName = o.name || '';
-    heroSet = `${o.setName || '—'}${o.localId ? ' · N° ' + String(o.localId) : ''}`;
     heroPhoto = o.image ? IMG(o.image) : '';
-    const r = getCachedRawPrice(heroId);
-    heroCote = (r && r.raw != null) ? fmt(r.raw) : null;
   }
-  const open = heroId ? `openCardDetail('${esc(heroId)}')` : '';
+  const open = heroId ? `openCardDetail('${esc(heroId)}')` : `openFeaturePicker('hero')`;
+  const phone = isPhone();
+  const doors = [
+    { v: 'wishlists', cls: 'hd-wish', art: 'ico-wish.png?v=1', name: 'Wishlists', n: state.wishlists.length },
+    { v: 'invest', cls: 'hd-coll', art: 'ico-collection.png?v=1', name: 'Collection', n: entries.length },
+    ...(phone ? [] : [{ v: 'binders', cls: 'hd-bind', art: '', name: 'Classeurs', n: (state.binders || []).length }]),
+  ];
+  const wls = state.wishlists.slice(-6).reverse();
 
   const el = document.getElementById('view-home');
+  el.classList.toggle('hv-hidden', hidden);
   el.innerHTML = `
-    <!-- ── 1. COMBIEN JE POSSÈDE ─────────────────────────────────────
-         Un seul grand nombre sur la page, et il est ici. Le reste de la
-         bande ne fait que le décomposer. -->
-    <section class="vault reveal" style="--i:0">
-      <div class="vault-top">
-        <span class="vault-k">Valeur du coffre</span>
+    <section class="hstage reveal" style="--i:0">
+      <div class="hstage-halo" aria-hidden="true">
+        <span class="hstage-sun"></span><span class="hstage-glow"></span>
+        ${HOME_SPARKS.map(([x, y, k], i) => `<span class="hspark" style="left:${x}%;top:${y}%;--k:${k};--d:${(i * 0.55).toFixed(2)}s">${SPARK_SVG}</span>`).join('')}
       </div>
-      <div class="vault-total" id="hero-value"><span class="hero-skeleton" id="hero-skel"></span></div>
-      <div class="vault-sub" id="sync-meta-txt">${syncMetaText(tracked)}</div>
+      <div class="hstage-pin">
+        <div class="hstage-card" role="button" tabindex="0" aria-label="${heroF ? 'Voir la fiche de ' + esc(heroName) : 'Choisir ma carte préférée'}"
+          onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${open}}">
+          <span class="hstage-float">
+            ${heroF
+              ? (heroPhoto
+                  ? `<img crossorigin="anonymous" src="${heroPhoto}" alt="${esc(heroName)}" onerror="this.parentNode.innerHTML=''">`
+                  : noImgHTML(featured.localId, heroName, featured.setId))
+              : `<span class="hstage-empty">${ICO.plus}</span>`}
+            <span class="hstage-shine" aria-hidden="true"></span>
+          </span>
+          <span class="hstage-shadow" aria-hidden="true"></span>
+        </div>
+        ${heroF ? `<button class="hstage-swap" onclick="openFeaturePicker('hero')" title="Changer de carte" aria-label="Changer de carte">
+          <img src="ico-series.png?v=2" alt="" width="96" height="96" decoding="async"></button>` : ''}
+      </div>
 
-      <div class="vault-stats">
-        <div class="vstat">
-          <span class="vstat-ico">${ICO.card}</span>
-          <span class="vstat-v" id="hero-cards-val">—</span>
-          <span class="vstat-k">Cartes</span>
-          <span class="vstat-sub">${copies ? copies.toLocaleString('fr-FR') + ' exemplaire' + (copies > 1 ? 's' : '') : 'aucune'}</span>
-        </div>
-        <div class="vstat">
-          <span class="vstat-ico">${ICO.spark}</span>
-          <span class="vstat-v">${state.wishlists.length}</span>
-          <span class="vstat-k">Wishlists</span>
-          <span class="vstat-sub" id="vault-wish-sub">—</span>
-        </div>
+      ${heroF ? `<h1 class="hstage-name">${esc(heroName)}</h1>` : ''}
+      <div class="hvalue">
+        <span class="hvalue-coin" aria-hidden="true">€</span>
+        <span class="hvalue-n" id="hero-value">${hidden ? '*** €' : ''}</span>
+        <button class="hvalue-eye" id="hv-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
+          title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
       </div>
-      <div class="vault-note" id="vault-note"></div>
     </section>
 
-    ${heroF ? `
-    <!-- ── 2. MA PLUS BELLE CARTE ───────────────────────────────────
-         Elle a sa propre bande : c'est le moment d'émotion, il ne partage
-         pas l'affiche avec un tableau de chiffres. -->
-    <section class="showpiece reveal" style="--i:1">
-      <div class="showpiece-art" role="button" tabindex="0"
-        aria-label="Voir la fiche de ${esc(heroName)}" onclick="${open}"
-        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${open}}">
-        ${heroPhoto
-          ? `<img crossorigin="anonymous" src="${heroPhoto}" alt="${esc(heroName)}" onerror="this.parentNode.innerHTML=''">`
-          : noImgHTML(featured.localId, heroName, featured.setId)}
-      </div>
-      <div class="showpiece-copy">
-        <span class="showpiece-k">Pièce maîtresse</span>
-        <h1 class="showpiece-name">${esc(heroName)}</h1>
-        <p class="showpiece-set">${esc(heroSet)}</p>
-        ${heroCote ? `<p class="showpiece-cote"><b>${heroCote}</b><span>cote estimée</span></p>` : ''}
-        <div class="showpiece-act">
-          <button class="btn btn-grade" onclick="${open}">${ICO.zoom}<span>Voir la fiche</span></button>
-          <button class="btn btn-ghost btn-icon" onclick="openFeaturePicker('hero')"
-            title="Choisir une autre pièce maîtresse" aria-label="Choisir une autre pièce maîtresse">${ICO.refresh}</button>
-        </div>
-      </div>
-    </section>` : `
-    <section class="vault-empty reveal" style="--i:1">
-      <span class="empty-state-icon">${ICO.spark}</span>
-      <span class="empty-state-title">Choisis ta pièce maîtresse</span>
-      <span class="empty-state-sub">La carte que tu veux voir en grand chaque fois que tu ouvres le coffre.</span>
-      <button class="btn btn-grade" onclick="openFeaturePicker('hero')">${ICO.spark}<span>Choisir une carte</span></button>
-    </section>`}
+    <nav class="hdoors reveal" style="--i:1" aria-label="Aller à">
+      ${doors.map((d, i) => `
+        <button class="hdoor ${d.cls}" style="--j:${i}" onclick="navigate('${d.v}')">
+          <span class="hdoor-art" aria-hidden="true">${d.art
+            ? `<img src="${d.art}" alt="" width="96" height="96" decoding="async">`
+            : `<svg viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z" fill="#fff" fill-opacity=".18" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 4v16M11 8.5h5.5M11 12h5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>`}</span>
+          <span class="hdoor-name">${d.name}</span>
+          <span class="hdoor-n">${d.n.toLocaleString('fr-FR')}</span>
+        </button>`).join('')}
+    </nav>
 
-    ${strip.length ? `
-    <section class="reveal" style="--i:2">
-      <div class="ed-head">
-        <div>
-          <h2 class="ed-title">Tes cartes les mieux cotées</h2>
-          <div class="ed-sub">${strip.length} carte${strip.length > 1 ? 's' : ''} · la plus chère en premier</div>
-        </div>
-        <div class="strip-nav">
-          <button class="strip-btn" aria-label="Cartes précédentes" onclick="railScroll('featured-rail',-1)">${ICO.left}</button>
-          <button class="strip-btn" aria-label="Cartes suivantes" onclick="railScroll('featured-rail',1)">${ICO.right}</button>
-        </div>
+    ${fan.length ? `
+    <section class="hfan-wrap reveal" style="--i:2">
+      <h2 class="htitle">Mes trésors</h2>
+      <div class="hfan" style="--n:${fan.length}">
+        ${fan.map((e, i) => `
+          <button class="hfan-card" data-cc="${esc(e.id)}" style="--o:${i - (fan.length - 1) / 2};--a:${Math.abs(i - (fan.length - 1) / 2)};--z:${10 - Math.round(Math.abs(i - (fan.length - 1) / 2))}"
+            aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
+            <img crossorigin="anonymous" src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy"
+              onerror="imgFail(this,'${esc(String(e.localId || ''))}','${esc(e.setId || '')}','${jss(e.name)}')">
+            <span class="hfan-tag" data-v="${esc(fmt(e.value))}">${hidden ? '***' : esc(fmt(e.value))}</span>
+          </button>`).join('')}
       </div>
-      <div class="strip"><div class="strip-track" id="featured-rail">${strip.map((e, i) => renderTopCardTile(e, i)).join('')}</div></div>
     </section>` : ''}
 
-    <!-- Le teaser Milobellus a été retiré de l'accueil : les classeurs ont
-         leur onglet, et l'accueil n'a pas à dupliquer une porte d'entrée. -->
-
-    <section class="panel reveal" style="--i:3">
-      <div class="ed-head" style="margin-bottom:var(--s4)">
-        <div>
-          <h2 class="ed-title">Wishlists</h2>
-          <div class="ed-sub">Ce qu'il te reste à trouver</div>
-        </div>
-        ${state.wishlists.length ? `<button class="btn btn-ghost btn-sm" onclick="navigate('wishlists')">
-          <span>Tout voir</span>${ICO.right}</button>` : ''}
+    <section class="hwl-wrap reveal" style="--i:3">
+      <h2 class="htitle">Mes wishlists</h2>
+      <div class="hwl">
+        ${wls.map((w, i) => {
+          const owned = w.cards.filter(c => c.owned).length;
+          const pct = w.cards.length ? owned / w.cards.length : 0;
+          const C = 2 * Math.PI * 26;
+          const cover = w.cards.find(c => c.image);
+          return `<button class="hwl-b stagger" style="--i:${i}" onclick="navigate('wishlist-detail',{activeWishlistId:'${w.id}'})"
+              aria-label="${esc(w.name)} — ${owned} sur ${w.cards.length}">
+            <span class="hwl-ring">
+              <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="26" class="hwl-track"/>
+                <circle cx="32" cy="32" r="26" class="hwl-fill" style="--c:${C.toFixed(1)};stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${(C * (1 - pct)).toFixed(1)}"/></svg>
+              ${cover ? `<img src="${IMG(cover.image, 'low')}" alt="" loading="lazy" onerror="this.remove()">` : `<span class="hwl-ini" aria-hidden="true">${esc((w.name || '?').trim().charAt(0).toUpperCase())}</span>`}
+              ${pct === 1 && w.cards.length ? `<span class="hwl-done" aria-hidden="true">${ICO.check}</span>` : ''}
+            </span>
+            <span class="hwl-name">${esc(w.name)}</span>
+            <span class="hwl-n">${owned}/${w.cards.length}</span>
+          </button>`;
+        }).join('')}
+        <button class="hwl-b hwl-new" onclick="openCreateWishlist()" aria-label="Nouvelle wishlist">
+          <span class="hwl-ring"><span class="hwl-plus">${ICO.plus}</span></span>
+        </button>
       </div>
-      ${state.wishlists.length
-        ? state.wishlists.slice(-6).reverse().map((w, i) => {
-            const owned = w.cards.filter(c => c.owned).length;
-            const pct = w.cards.length ? Math.round(owned / w.cards.length * 100) : 0;
-            return `<button class="home-wl stagger" style="--i:${i}" onclick="navigate('wishlist-detail',{activeWishlistId:'${w.id}'})">
-              <span class="home-wl-top"><span class="home-wl-name">${esc(w.name)}</span><span class="home-wl-pct">${owned}/${w.cards.length} · ${pct}%</span></span>
-              <span class="wl-bar"><span class="wl-bar-fill" style="width:${pct}%"></span></span>
-              <span class="home-wl-foot"><span>Reste à acquérir</span><span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></span>
-            </button>`;
-          }).join('')
-        : `<div class="empty-state" style="padding:32px 20px">
-             <span class="empty-state-icon">${ICO.heart}</span>
-             <span class="empty-state-title" style="font-size:19px">Aucune wishlist</span>
-             <span class="empty-state-sub">Crée une liste et remplis-la depuis le catalogue complet.</span>
-             <button class="btn btn-wish btn-sm" onclick="openCreateWishlist()">${PLUS}<span>Nouvelle wishlist</span></button>
-           </div>`}
     </section>`;
 
   computeCollectionValue();
-  fillWishlistRemaining(state.wishlists);
   hydrateFallbackImages(el);
-  /* Prisme : la pièce maîtresse inonde l'écran de sa couleur.
-     SYNCHRONE quand la couleur est déjà connue. C'était LE « chargement différé
-     d'interface » : `cardColor` renvoie une promesse, donc au retour sur
-     l'accueil l'accent restait celui de la page précédente puis basculait
-     quelques centaines de millisecondes plus tard — et comme il pilote tout
-     (verre teinté, aurora, pastilles, montants), c'est l'écran ENTIER qui
-     semblait se recolorer après coup. La couleur est en cache dès le premier
-     affichage : on la pose donc tout de suite, et on ne repasse par la promesse
-     que la première fois. */
   if (featured) {
     const cached = heroId ? cachedCardColor(heroId) : null;
     if (cached) setRootAccent(cached);
@@ -5307,11 +5295,11 @@ function renderHome() {
   paintCards(el);
   attachReveals(el);
   // Le catalogue Milobellus arrive en asynchrone : dès qu'il est là, les cases
-  // cochées entrent dans la valeur du coffre (et dans le filmstrip).
+  // cochées entrent dans la valeur du coffre (et dans l'éventail).
   if (!_miloSlots && Object.keys(state.milobellus || {}).length) {
     ensureMiloData().then(() => {
       if (state.view !== 'home' || !_miloSlots) return;
-      ensurePrices(trackedCardIds(), n => { if (n && state.view === 'home') { computeCollectionValue(); refreshSyncMeta(); } });
+      ensurePrices(trackedCardIds(), n => { if (n && state.view === 'home') computeCollectionValue(); });
       renderHome();   // _miloSlots est posé → pas de récursion possible ici
     }).catch(() => {});
   }
@@ -5419,31 +5407,17 @@ function computeCollectionValue() {
   // inclurait une valeur qu'aucun écran ne permet plus d'ouvrir serait pire
   // qu'un total plus petit — un chiffre qu'on ne peut pas vérifier.
   const total = cardsV;
-  const skel = document.getElementById('hero-skel'); if (skel) skel.style.display = 'none';
   // Le count-up ne joue qu'une fois par session : ensuite la valeur s'affiche
   // telle quelle (fini l'effet « le prix recharge » à chaque retour à l'accueil).
   const val = document.getElementById('hero-value');
+  const hidden = homeValueHidden();
   if (val) {
-    val.style.display = 'block';
-    if (window._vaultCounted) { val.textContent = total > 0 ? fmt(total) : '0 €'; }
+    if (hidden) { val._countTok = (val._countTok || 0) + 1; val.textContent = '*** €'; }
+    else if (window._vaultCounted) { val.textContent = total > 0 ? fmt(total) : '0 €'; }
     else { window._vaultCounted = true; animateCount(val, total); }
   }
-  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = fmt(v); };
-  set('hero-cards-val', cardsV);
-  // Le « reste à acquérir » toutes wishlists confondues : la seule autre
-  // valeur que l'accueil a besoin de dire.
-  const wishLeft = (state.wishlists || []).reduce((a, w) => a + wishlistRemainingValue(w), 0);
-  const ws = document.getElementById('vault-wish-sub');
-  if (ws) ws.textContent = wishLeft > 0 ? fmt(wishLeft) + ' à trouver' : (state.wishlists.length ? 'tout est trouvé' : 'aucune liste');
-  // Une seule note, et seulement si elle a quelque chose à dire.
-  const note = document.getElementById('vault-note');
-  if (note) {
-    const noPrice = entries.filter(e => e.unit == null).length;
-    note.innerHTML = noPrice
-      ? `${ICO.info}<span>${noPrice} carte${noPrice > 1 ? 's' : ''} sans cote — leur valeur arrive en tâche de fond. Le bouton ⟳ d’une carte refait la sienne tout de suite.</span>`
-      : '';
-    note.hidden = !noPrice;
-  }
+  // Les étiquettes de prix de l'éventail suivent l'œil.
+  document.querySelectorAll('.hfan-tag').forEach(t => { t.textContent = hidden ? '***' : t.dataset.v; });
   return total;
 }
 
@@ -8193,7 +8167,7 @@ async function refreshSeries() {
     repositionNavSoon();
     // Cote les cartes encore inconnues (sans toucher aux cotes enregistrées).
     ensurePrices(trackedCardIds(), n => {
-      if (n && state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); refreshSyncMeta(); }
+      if (n && state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); }
     });
     if (fresh.length) toast(`${fresh.length} nouvelle${fresh.length>1?'s':''} série${fresh.length>1?'s':''} disponible${fresh.length>1?'s':''} !`, 'success');
     else toast('Séries à jour', 'success');
@@ -11330,7 +11304,7 @@ function prefetchCardPrices() {
   ensurePrices(trackedCardIds(), n => {
     if (!n) return;
     if (state.view === 'invest' && state.investMode === 'cards') { const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue()); if (state.investSeriesOpen) refreshSeriesCotes(state.investSeriesOpen); }
-    if (state.view === 'home') { computeCollectionValue(); refreshSyncMeta(); }
+    if (state.view === 'home') computeCollectionValue();
   });
 }
 
@@ -11678,7 +11652,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => positionNavIndicator(true), 450);
     if (vaultOn()) {
       setTimeout(checkForNewSeries, 1400);
-      setTimeout(refreshSyncMeta, 600);       // « cotes il y a … » une fois l'accueil peint
       setTimeout(offerRecoveryIfNeeded, 900); // propose la récupération si des sections sont vides
     }
     bindBackupShortcuts();

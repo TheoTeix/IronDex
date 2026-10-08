@@ -1247,17 +1247,6 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .val-line-total .val-line-v{font-size:19px;color:var(--acc);transition:color var(--flow)}
 .val-note{display:flex;align-items:flex-start;gap:7px;font-size:11.5px;line-height:1.5;color:var(--t3);margin-top:12px}
 
-/* Avancée des wishlists (accueil) */
-.home-wl{display:block;width:100%;text-align:left;padding:13px;border-radius:var(--r);
-  cursor:pointer;transition:background var(--dur-1) var(--ease-out)}
-.home-wl:hover{background:rgba(255,255,255,.045)}
-.home-wl-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:9px}
-.home-wl-name{font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.home-wl-pct{font-size:11.5px;font-weight:600;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
-.home-wl-foot{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:8px;
-  font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
-.home-wl-foot .wl-remaining-val{font-size:12.5px;letter-spacing:0;text-transform:none}
-
 /* Jauge — la largeur est un remplissage de progression (affordance standard),
    pas un effet décoratif : transition de width assumée et bornée. */
 .wl-bar{display:block;height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
@@ -3557,137 +3546,6 @@ body::before{display:none}
 .milo-cell.is-empty,.milo-cell.is-add{box-shadow:none}
 
 /* ═══════════════════════════════════════════════════════════════════
-   ACCUEIL — refonte du 2026-08-24
-   Une idée par bande. Le principe qui commande tout le bloc : il n'y a
-   qu'UN grand nombre sur la page (la valeur du coffre) et il n'est écrit
-   qu'une fois. L'ancien accueil le donnait deux fois — dans le héro avec
-   une barre de répartition, puis dans un panneau en chiffres — et le
-   lecteur cherchait la différence entre les deux.
-   ═══════════════════════════════════════════════════════════════════ */
-
-/* ── 1. LE COFFRE ── */
-.vault{
-  position:relative;z-index:0;
-  border-radius:var(--r-2xl);
-  padding:clamp(22px,2.6vw,34px);
-  background:linear-gradient(168deg,rgba(255,255,255,.062),rgba(255,255,255,.014));
-  border:1px solid var(--line);
-  box-shadow:var(--e2);
-  overflow:hidden;
-}
-/* Une seule nappe d'accent, en fond, pour que la bande ne soit pas grise.
-   Statique : aucune animation, aucun calque composé de plus. */
-.vault::after{
-  content:"";position:absolute;inset:-30% -10% auto -10%;height:150%;z-index:-1;
-  background:radial-gradient(58% 74% at 78% 8%,
-    color-mix(in srgb,var(--acc) 20%,transparent), transparent 70%);
-  pointer-events:none;
-  transition:background var(--flow);
-}
-.vault-top{display:flex;align-items:center;justify-content:space-between;gap:14px}
-.vault-k{
-  font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--t3);
-}
-/* Le montant. `tabular-nums` pour que le chiffre ne danse pas pendant le
-   count-up, et un crénage à peine resserré : San Francisco est déjà crénée
-   pour les grandes tailles, en rajouter la referme trop. */
-.vault-total{
-  margin-top:6px;
-  font-size:clamp(40px,6.6vw,74px);
-  font-weight:800;letter-spacing:-.03em;line-height:1.02;
-  font-variant-numeric:tabular-nums;
-  color:var(--t1);
-}
-.vault-sub{margin-top:8px;font-size:13px;color:var(--t3)}
-
-/* Les trois cellules : un libellé, un montant, une précision. Rien à
-   décoder — c'est ce qui remplace la barre empilée à deux segments. */
-.vault-stats{
-  /* Deux cellules depuis le retrait du scellé (Cartes, Wishlists). auto-fit
-     plutôt qu'un compte figé : la bande se réajustera d'elle-même le jour où
-     on lui rendra une troisième mesure. */
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));
-  margin-top:clamp(20px,2.4vw,28px);
-  border-radius:var(--r-lg);
-  background:rgba(255,255,255,.035);
-  border:1px solid var(--line);
-  overflow:hidden;
-}
-.vstat{
-  display:flex;flex-direction:column;gap:2px;
-  padding:15px clamp(12px,1.4vw,18px);
-  border-left:1px solid var(--line);
-}
-.vstat:first-child{border-left:0}
-.vstat-ico{display:block;color:color-mix(in srgb,var(--acc) 78%,#fff);margin-bottom:5px;
-  transition:color var(--flow)}
-.vstat-ico svg{width:17px;height:17px;display:block}
-.vstat-v{font-size:20px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--t1)}
-.vstat-k{font-size:12.5px;font-weight:600;color:var(--t2)}
-.vstat-sub{font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums}
-
-.vault-note{display:flex;align-items:center;gap:8px;margin-top:14px;
-  font-size:12.5px;color:var(--t3)}
-.vault-note[hidden]{display:none}
-.vault-note svg{width:15px;height:15px;flex:none;opacity:.8}
-
-/* ── 2. LA PIÈCE MAÎTRESSE ── */
-/* Sa propre bande : c'est le moment d'émotion de l'écran, il ne partage pas
-   l'affiche avec un tableau de chiffres. */
-.showpiece{
-  display:grid;grid-template-columns:minmax(150px,232px) 1fr;
-  gap:clamp(20px,3vw,40px);align-items:center;
-  margin-top:clamp(20px,2.6vw,32px);
-  border-radius:var(--r-2xl);
-  padding:clamp(20px,2.6vw,32px);
-  background:linear-gradient(168deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
-  border:1px solid var(--line);
-  box-shadow:var(--e2);
-}
-.showpiece-art{
-  display:block;width:100%;border:0;padding:0;background:none;cursor:pointer;
-  border-radius:14px;
-  transition:transform var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out);
-}
-.showpiece-art img{width:100%;height:auto;display:block;border-radius:14px;
-  box-shadow:0 18px 44px -14px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.07)}
-/* Pas de suivi du pointeur : au survol la carte se rapproche, un point. */
-.showpiece-art:hover{transform:translateY(-4px) scale(1.012)}
-.showpiece-art:active{transform:translateY(-1px) scale(.998);transition-duration:var(--dur-0)}
-.showpiece-k{
-  font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-  color:color-mix(in srgb,var(--acc) 82%,#fff);transition:color var(--flow);
-}
-.showpiece-name{
-  margin-top:8px;
-  font-size:clamp(28px,4.6vw,50px);font-weight:800;letter-spacing:-.032em;line-height:1.04;
-  text-wrap:balance;
-}
-.showpiece-set{margin-top:8px;font-size:14px;color:var(--t2)}
-.showpiece-cote{display:flex;align-items:baseline;gap:9px;margin-top:16px}
-.showpiece-cote b{font-size:27px;font-weight:800;letter-spacing:-.024em;
-  font-variant-numeric:tabular-nums;color:var(--t1)}
-.showpiece-cote span{font-size:12px;color:var(--t3)}
-.showpiece-act{display:flex;align-items:center;gap:10px;margin-top:clamp(18px,2.2vw,26px);flex-wrap:wrap}
-
-.vault-empty{
-  display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;
-  margin-top:clamp(20px,2.6vw,32px);padding:clamp(28px,4vw,46px) 24px;
-  border-radius:var(--r-2xl);border:1px dashed var(--line-2);
-}
-.vault-empty .btn{margin-top:8px}
-
-/* ── Compact ── */
-@media(max-width:760px){
-  .vault-stats{grid-template-columns:1fr}
-  .vstat{border-left:0;border-top:1px solid var(--line)}
-  .vstat:first-child{border-top:0}
-  .showpiece{grid-template-columns:1fr;justify-items:start}
-  .showpiece-art{max-width:min(240px,62vw);margin-inline:auto}
-}
-
-/* ═══════════════════════════════════════════════════════════════════
    LE COMPTE — un visage dans l'en-tête, et l'état de la synchro autour
 
    Le bouton porte DEUX informations sans devenir deux boutons : au centre
@@ -3887,36 +3745,12 @@ body::before{display:none}
   }
   .tabbar .nav-btn.active .nav-badge{background:#FF3B30;color:#fff}
 
-  /* ══ ACCUEIL ═══════════════════════════════════════════════════
-     Le montant est le sujet : il respire. Les trois lignes en dessous sont
-     une liste, pas un tableau — donc pas de cadre, juste des filets. */
-  .vault{padding:22px 20px 18px;border-radius:24px}
-  .vault-k{font-size:10.5px;letter-spacing:.16em}
-  .vault-total{font-size:clamp(36px,10.5vw,46px);letter-spacing:-.035em;line-height:1.02}
-  .vault-sub{font-size:12.5px;margin-top:3px}
-  .vault-stats{display:block;margin-top:20px;border:0;border-radius:0;background:none}
-  .vstat{display:grid;grid-template-columns:26px 1fr auto;align-items:center;
-    column-gap:12px;row-gap:1px;padding:14px 0;border-left:0;
-    border-top:1px solid color-mix(in srgb,var(--line) 62%,transparent)}
-  .vstat:first-child{border-top:0;padding-top:4px}
-  .vstat-ico{grid-column:1;grid-row:1/span 2;margin:0;justify-self:center}
-  .vstat-ico svg{width:19px;height:19px}
-  .vstat-k{grid-column:2;grid-row:1;font-size:14px;font-weight:650;color:var(--t1)}
-  .vstat-sub{grid-column:2;grid-row:2;font-size:11.5px}
-  .vstat-v{grid-column:3;grid-row:1/span 2;font-size:21px;text-align:right;letter-spacing:-.025em}
-  .vault-note{margin-top:16px;padding-top:14px;font-size:12px;line-height:1.45;
-    border-top:1px solid color-mix(in srgb,var(--line) 62%,transparent)}
-
   /* Respiration entre les blocs de l'accueil : un `gap` sur le conteneur, plutôt
      que des marges section par section (elles se compensaient et l'ensemble
      paraissait tassé). */
   /* Le `display:flex` de l'accueil est désormais posé par le bloc CARROUSEL DE
      PAGES (il est visible en permanence, plus seulement quand il est actif). */
   #view-home>*{margin:0}
-
-  /* La pièce maîtresse : la carte prend la largeur, le reste s'efface. */
-  .showpiece{padding:18px 16px 20px;border-radius:24px}
-  .showpiece-art{max-width:300px;margin:0 auto}
 
   /* ══ CLASSEURS : un vrai classeur, pas une vignette ════════════
      Deux colonnes de 150 px donnaient des couvertures de 5 cm de haut. Sur
@@ -4495,3 +4329,189 @@ body::before{display:none}
 .btn-refresh.spinning svg.ico-badge.refresh-ico{animation:spin .9s linear infinite}
 .rail-cmd svg.ico-badge{width:20px;height:20px;opacity:1}
 .palette-top svg.ico-badge{width:24px;height:24px}
+
+/* ══════════════════════════════════════════════════════════════════════
+   L'ACCUEIL « GOOFY » (2026-10-08) — voir renderHome.
+   Une police ARRONDIE (SF Pro Rounded, la même famille que le reste de
+   l'app, dans sa coupe ronde) pour le ton enfantin ; des couleurs pleines ;
+   des volumes qui ont l'air de jouets (filet clair en haut, épaisseur
+   sombre en bas). Aucun texte gris : tout ce qui est écrit est blanc franc.
+   ══════════════════════════════════════════════════════════════════════ */
+#view-home{width:100%;min-width:0;--round:ui-rounded,"SF Pro Rounded","SF Pro Display",var(--disp);
+  --cw:clamp(170px,44vw,232px);max-width:980px;margin-inline:auto}
+
+/* ── La scène ─────────────────────────────────────────────────────────── */
+.hstage{position:relative;z-index:0;display:flex;flex-direction:column;align-items:center;
+  padding:30px 0 6px;text-align:center}
+/* Le halo est centré sur la CARTE (pas sur la page) : soleil, lueur et
+   étincelles restent autour d'elle quelle que soit la largeur. */
+.hstage-halo{position:absolute;z-index:-1;left:50%;top:calc(30px + var(--cw) * .7);
+  width:calc(var(--cw) * 2.6);aspect-ratio:1;transform:translate(-50%,-50%);pointer-events:none}
+.hstage-sun{position:absolute;inset:-12%;border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,color-mix(in srgb,var(--acc) 34%,transparent) 0deg 7deg,transparent 7deg 18deg);
+  -webkit-mask:radial-gradient(circle,#000 0 14%,rgba(0,0,0,.55) 36%,transparent 66%);
+          mask:radial-gradient(circle,#000 0 14%,rgba(0,0,0,.55) 36%,transparent 66%);
+  animation:hsun 120s linear infinite}
+.hstage-glow{position:absolute;inset:14%;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--acc) 55%,transparent) 0,color-mix(in srgb,var(--acc) 18%,transparent) 42%,transparent 70%)}
+@keyframes hsun{to{transform:rotate(1turn)}}
+.hspark{position:absolute;width:calc(10px + 16px * var(--k));aspect-ratio:1;margin:-8px 0 0 -8px;
+  color:color-mix(in srgb,var(--acc) 35%,#fff);
+  animation:hspark 3.2s var(--d) ease-in-out infinite both}
+.hspark svg{display:block;width:100%;height:100%}
+@keyframes hspark{0%,100%{opacity:.15;transform:scale(.45) rotate(0deg)}50%{opacity:1;transform:scale(1) rotate(45deg)}}
+
+.hstage-pin{position:relative;width:var(--cw)}
+.hstage-card{position:relative;width:100%;cursor:pointer;outline:none;
+  transition:transform var(--dur-2) var(--ease-out)}
+.hstage-float{position:relative;display:block;border-radius:5% / 3.6%;overflow:hidden;
+  box-shadow:0 34px 60px -24px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.1);
+  animation:hfloat 5.6s ease-in-out infinite alternate}
+.hstage-float img{display:block;width:100%;height:auto}
+.hstage-float .card-noimg{aspect-ratio:2.5/3.5}
+@keyframes hfloat{from{transform:translateY(-7px) rotate(-2.2deg)}to{transform:translateY(7px) rotate(2.2deg)}}
+/* Un reflet passe de temps en temps sur la carte, comme sur une vraie holo. */
+.hstage-shine{position:absolute;inset:-20% -60%;pointer-events:none;
+  background:linear-gradient(105deg,transparent 42%,rgba(255,255,255,.42) 50%,transparent 58%);
+  transform:translateX(-70%);animation:hshine 6.5s 1.2s ease-in-out infinite}
+@keyframes hshine{0%,62%{transform:translateX(-70%)}86%,100%{transform:translateX(70%)}}
+.hstage-shadow{display:block;width:72%;height:20px;margin:14px auto 0;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(0,0,0,.55),transparent);
+  animation:hshadow 5.6s ease-in-out infinite alternate}
+@keyframes hshadow{from{transform:scaleX(1.06);opacity:.8}to{transform:scaleX(.86);opacity:.55}}
+@media(hover:hover){.hstage-card:hover{transform:scale(1.035)}}
+.hstage-card:active{transform:scale(.97)}
+.hstage-card:focus-visible .hstage-float{outline:3px solid var(--acc);outline-offset:4px}
+/* Pas encore de carte : une case vide qui appelle le « + ». */
+.hstage-empty{display:grid;place-items:center;aspect-ratio:2.5/3.5;border-radius:18px;
+  border:3px dashed rgba(255,255,255,.22);background:rgba(255,255,255,.04)}
+.hstage-empty svg{width:72px;height:72px;animation:hpulse 2.4s ease-in-out infinite}
+@keyframes hpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+
+.hstage-swap{position:absolute;z-index:2;top:-12px;right:-16px;width:42px;height:42px;padding:0;border:0;
+  background:none;cursor:pointer;transition:transform var(--dur-1) var(--ease-out)}
+.hstage-swap img{width:100%;height:100%;filter:drop-shadow(0 3px 6px rgba(0,0,0,.4))}
+@media(hover:hover){.hstage-swap:hover{transform:rotate(-40deg) scale(1.06)}}
+.hstage-swap:active{transform:scale(.9)}
+
+.hstage-name{margin:8px 0 0;font:900 clamp(26px,5.2vw,40px)/1.05 var(--round);letter-spacing:-.01em;
+  color:#fff;text-wrap:balance;text-shadow:0 3px 0 rgba(0,0,0,.22)}
+
+/* La valeur : une petite pastille, plus un panneau. */
+.hvalue{display:inline-flex;align-items:center;gap:9px;margin-top:12px;padding:5px 5px 5px 6px;
+  border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.hvalue-coin{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+  font:900 14px/1 var(--round);color:#7a4a05;
+  background:radial-gradient(circle at 35% 30%,#FFF1B8 0,#FFD45E 38%,#F0A12A 100%);
+  box-shadow:inset 0 -2px 0 rgba(122,74,5,.35),0 2px 6px rgba(0,0,0,.3)}
+.hvalue-n{min-width:3ch;font:800 18px/1 var(--round);color:#fff;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.hvalue-eye{width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;cursor:pointer;
+  color:#fff;background:linear-gradient(160deg,#3a4a9a,#232c66);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 2px 6px rgba(0,0,0,.35);
+  transition:transform var(--dur-1) var(--ease-out)}
+.hvalue-eye svg{width:17px;height:17px}
+@media(hover:hover){.hvalue-eye:hover{transform:scale(1.08)}}
+.hvalue-eye:active{transform:scale(.9)}
+
+/* ── Les portes : trois gros boutons-jouets ──────────────────────────── */
+.hdoors{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:22px}
+.hdoor{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:flex-start;gap:10px;
+  min-height:128px;padding:16px;border:0;border-radius:26px;cursor:pointer;text-align:left;color:#fff;
+  background:linear-gradient(150deg,var(--c1),var(--c2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),inset 0 -5px 0 rgba(0,0,0,.18),0 14px 28px -14px var(--c2);
+  transition:transform var(--dur-2) var(--ease-out)}
+.hdoor::after{content:"";position:absolute;right:-34px;top:-34px;width:110px;height:110px;border-radius:50%;
+  background:rgba(255,255,255,.13);pointer-events:none}
+.hdoor::before{content:"";position:absolute;right:30px;bottom:-26px;width:60px;height:60px;border-radius:50%;
+  background:rgba(255,255,255,.08);pointer-events:none}
+.hd-wish{--c1:#FF7AAE;--c2:#E2407A}
+.hd-coll{--c1:#5B9BFF;--c2:#2F57E6}
+.hd-bind{--c1:#3FDDB0;--c2:#109C74}
+.hdoor-art{width:58px;height:58px;display:grid;place-items:center;border-radius:20px;
+  background:rgba(255,255,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.3);transform:rotate(-7deg);
+  transition:transform var(--dur-2) var(--ease-out)}
+.hdoor-art img{width:46px;height:46px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.25))}
+.hdoor-art svg{width:34px;height:34px}
+.hdoor-name{position:relative;z-index:1;margin-top:auto;font:900 19px/1.1 var(--round);text-shadow:0 2px 0 rgba(0,0,0,.15)}
+.hdoor-n{position:absolute;z-index:1;top:14px;right:14px;min-width:34px;padding:5px 11px;border-radius:999px;
+  font:900 15px/1 var(--round);text-align:center;font-variant-numeric:tabular-nums;
+  background:rgba(0,0,0,.22);box-shadow:inset 0 1px 0 rgba(0,0,0,.15)}
+@media(hover:hover){
+  .hdoor:hover{transform:translateY(-4px) rotate(-1deg)}
+  .hdoor:hover .hdoor-art{transform:rotate(6deg) scale(1.08)}
+}
+.hdoor:active{transform:scale(.96)}
+.hdoor:focus-visible{outline:3px solid #fff;outline-offset:3px}
+
+/* ── Titres de bandes : un mot ou deux, en rond ───────────────────────── */
+.htitle{display:flex;align-items:center;gap:8px;margin:38px 0 14px;font:900 23px/1 var(--round);color:#fff}
+.htitle::before{content:"";width:18px;height:18px;flex:none;background:var(--acc);
+  -webkit-mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1.5c.9 5.6 4.9 9.6 10.5 10.5-5.6.9-9.6 4.9-10.5 10.5C11.1 16.9 7.1 12.9 1.5 12 7.1 11.1 11.1 7.1 12 1.5z"/></svg>') center/contain no-repeat;
+          mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1.5c.9 5.6 4.9 9.6 10.5 10.5-5.6.9-9.6 4.9-10.5 10.5C11.1 16.9 7.1 12.9 1.5 12 7.1 11.1 11.1 7.1 12 1.5z"/></svg>') center/contain no-repeat}
+
+/* ── Mes trésors : une main de cartes en éventail ────────────────────── */
+.hfan{--fw:clamp(98px,21vw,150px);--step:68%;position:relative;height:calc(var(--fw) * 1.4 + 58px);margin-top:4px}
+.hfan-card{position:absolute;left:50%;top:22px;width:var(--fw);padding:0;border:0;background:none;cursor:pointer;
+  z-index:var(--z);transform-origin:50% 120%;
+  transform:translateX(calc(-50% + var(--o) * var(--step))) translateY(calc(var(--a) * 9px)) rotate(calc(var(--o) * 8deg));
+  transition:transform var(--dur-2) var(--ease-out)}
+.hfan-card img{display:block;width:100%;border-radius:7px;
+  box-shadow:0 18px 30px -14px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.1)}
+.hfan-tag{position:absolute;left:50%;bottom:-12px;transform:translateX(-50%) rotate(-5deg);white-space:nowrap;
+  padding:5px 10px;border-radius:999px;font:900 12.5px/1 var(--round);color:#3b2400;font-variant-numeric:tabular-nums;
+  background:linear-gradient(180deg,#FFE27A,#FFB938);box-shadow:inset 0 -2px 0 rgba(122,74,5,.3),0 4px 10px rgba(0,0,0,.35)}
+@media(hover:hover){
+  .hfan-card:hover{z-index:20;transform:translateX(calc(-50% + var(--o) * var(--step))) translateY(-18px) rotate(0deg) scale(1.08)}
+}
+.hfan-card:active{transform:translateX(calc(-50% + var(--o) * var(--step))) translateY(-6px) rotate(0deg) scale(.98)}
+.hfan-card:focus-visible{z-index:20;outline:3px solid var(--acc);outline-offset:4px;border-radius:8px}
+
+/* ── Mes wishlists : des bulles qui se remplissent ───────────────────── */
+/* `contain:inline-size` : sans lui, la largeur de la rangée (qui défile) remontait
+   comme largeur MINIMALE de toute la page et poussait les tuiles hors de l'écran. */
+.hwl{contain:inline-size;display:flex;gap:16px;overflow-x:auto;padding:6px 4px 14px;margin:0 -4px;scrollbar-width:none;scroll-snap-type:x proximity}
+.hwl::-webkit-scrollbar{display:none}
+.hwl-b{flex:none;width:98px;display:flex;flex-direction:column;align-items:center;gap:7px;padding:0;border:0;
+  background:none;cursor:pointer;color:#fff;scroll-snap-align:start}
+.hwl-ring{position:relative;width:86px;height:86px;display:grid;place-items:center;border-radius:50%;
+  background:radial-gradient(circle at 50% 35%,rgba(255,255,255,.1),rgba(255,255,255,.03) 70%);
+  transition:transform var(--dur-2) var(--ease-out)}
+.hwl-ring>svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+.hwl-ini{font:900 32px/1 var(--round);color:var(--rc);text-shadow:0 3px 0 rgba(0,0,0,.25)}
+.hwl-plus{display:grid;place-items:center}
+.hwl-track{fill:none;stroke:rgba(255,255,255,.1);stroke-width:6}
+.hwl-fill{fill:none;stroke:var(--rc);stroke-width:6;stroke-linecap:round;
+  animation:hring 1.1s .2s var(--ease-out) both}
+@keyframes hring{from{stroke-dashoffset:var(--c)}}
+.hwl-b:nth-child(5n+1){--rc:#FF7AAE}.hwl-b:nth-child(5n+2){--rc:#5B9BFF}.hwl-b:nth-child(5n+3){--rc:#3FDDB0}
+.hwl-b:nth-child(5n+4){--rc:#FFB938}.hwl-b:nth-child(5n+5){--rc:#A98BFF}
+.hwl-ring img{width:38px;border-radius:4px;transform:rotate(-8deg);box-shadow:0 6px 12px -4px rgba(0,0,0,.7)}
+.hwl-done{position:absolute;right:0;bottom:2px;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+  color:#fff;background:linear-gradient(160deg,#3FDDB0,#109C74);box-shadow:0 0 0 3px var(--v-0,#0d1230)}
+.hwl-done svg{width:15px;height:15px}
+.hwl-name{max-width:100%;font:800 14px/1.15 var(--round);text-align:center;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hwl-n{padding:3px 9px;border-radius:999px;font:900 12px/1 var(--round);font-variant-numeric:tabular-nums;
+  background:rgba(255,255,255,.1)}
+.hwl-new .hwl-ring{background:none;border:3px dashed rgba(255,255,255,.2)}
+.hwl-plus svg{width:44px;height:44px;filter:drop-shadow(0 3px 6px rgba(0,0,0,.35))}
+@media(hover:hover){.hwl-b:hover .hwl-ring{transform:translateY(-4px) scale(1.05)}.hwl-new:hover .hwl-ring{transform:rotate(90deg)}}
+.hwl-b:active .hwl-ring{transform:scale(.94)}
+.hwl-b:focus-visible .hwl-ring{outline:3px solid var(--acc);outline-offset:3px}
+
+@media (max-width:767px){
+  #view-home{--cw:clamp(160px,50vw,210px)}
+  .hstage{padding-top:18px}
+  .hstage-halo{top:calc(18px + var(--cw) * .7)}
+  .hdoors{grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
+  .hdoor{min-height:116px;border-radius:22px;padding:14px}
+  .hdoor-name{font-size:17px}
+  .htitle{margin-top:30px;font-size:21px}
+  .hfan{--fw:clamp(78px,21vw,110px);--step:54%}
+  .hwl-b{width:84px}.hwl-ring{width:76px;height:76px}
+}
+@media (prefers-reduced-motion:reduce){
+  .hstage-sun,.hspark,.hstage-float,.hstage-shine,.hstage-shadow,.hstage-empty svg,.hwl-fill{animation:none}
+  .hspark{opacity:.7}
+}
