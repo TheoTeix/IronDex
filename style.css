@@ -4397,16 +4397,20 @@ body::before{display:none}
 .hstage-name{margin:8px 0 0;font:900 clamp(26px,5.2vw,40px)/1.05 var(--round);letter-spacing:-.01em;
   color:#fff;text-wrap:balance;text-shadow:0 3px 0 rgba(0,0,0,.22)}
 
-/* La valeur : une petite pastille, plus un panneau. */
-.hvalue{display:inline-flex;align-items:center;gap:9px;margin-top:12px;padding:5px 5px 5px 6px;
-  border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
-.hvalue-coin{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+/* Sous la carte : SA cote, en étiquette dorée (comme dans l'éventail). */
+.hstage-tag{margin-top:12px;padding:7px 14px;border-radius:999px;transform:rotate(-3deg);
+  font:900 16px/1 var(--round);color:#3b2400;font-variant-numeric:tabular-nums;
+  background:linear-gradient(180deg,#FFE27A,#FFB938);box-shadow:inset 0 -3px 0 rgba(122,74,5,.3),0 6px 14px rgba(0,0,0,.35)}
+/* La valeur TOTALE : dans la porte « Collection », jamais sous la carte. */
+.hdoor-cell{position:relative;display:grid}
+.hvalue{position:relative;z-index:1;display:inline-flex;align-items:center;gap:7px;margin-top:-2px;padding:4px 12px 4px 4px;
+  border-radius:999px;background:rgba(0,0,0,.2);box-shadow:inset 0 1px 0 rgba(0,0,0,.15)}
+.hvalue-coin{width:24px;height:24px;display:grid;place-items:center;border-radius:50%;
   font:900 14px/1 var(--round);color:#7a4a05;
   background:radial-gradient(circle at 35% 30%,#FFF1B8 0,#FFD45E 38%,#F0A12A 100%);
   box-shadow:inset 0 -2px 0 rgba(122,74,5,.35),0 2px 6px rgba(0,0,0,.3)}
-.hvalue-n{min-width:3ch;font:800 18px/1 var(--round);color:#fff;font-variant-numeric:tabular-nums;letter-spacing:.01em}
-.hvalue-eye{width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;cursor:pointer;
+.hvalue-n{min-width:3ch;font:900 16px/1 var(--round);color:#fff;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.hvalue-eye{position:absolute;z-index:2;right:14px;bottom:14px;width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;cursor:pointer;
   color:#fff;background:linear-gradient(160deg,#3a4a9a,#232c66);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 2px 6px rgba(0,0,0,.35);
   transition:transform var(--dur-1) var(--ease-out)}

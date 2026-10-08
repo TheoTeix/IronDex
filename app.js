@@ -4591,6 +4591,13 @@ function applySoft(root) {
       // classeur, retrait d'une carte) reste un bouton et reçoit le modelé —
       // un test `closest()` les excluait à tort.
       if (el.matches(SOFT_SKIP)) return;
+      // Un bouton qui n'est QU'UNE pastille illustrée (+, croix, i, loupe…)
+      // n'a pas de matériau à recevoir : la pastille EST le bouton. Et le
+      // `transform:scale()` de `.sb:active` écrasait le centrage des boutons
+      // posés en `translate(-50%,-50%)` : à l'appui, le « + » d'une carte de
+      // wishlist sautait de 23 px, le doigt se relevait à côté, et le clic
+      // n'arrivait jamais au bouton.
+      if (el.querySelector(':scope > svg.ico-badge') && !el.textContent.trim()) return;
       el.dataset.soft = role;
       el.classList.add('sb', role);
       if (el.matches(SOFT_MICRO)) el.classList.add('sb-micro');
@@ -5139,11 +5146,11 @@ function resolveHero() {
    tient en un ou deux mots — le nom de la carte, celui d'une liste, des
    nombres. Le reste se dit avec des images :
    · LA SCÈNE — la plus belle carte flotte devant un soleil à sa couleur,
-     piqué d'étincelles. Dessous, une petite pastille : la valeur et un œil
-     pour la masquer (« *** € » — on montre son classeur sans montrer son
-     compte en banque).
+     piqué d'étincelles. Dessous, SA cote, en étiquette dorée.
    · TROIS GROS BOUTONS — les portes de l'app, avec les icônes illustrées de
-     la barre d'onglets et un compteur.
+     la barre d'onglets et un compteur. La valeur TOTALE vit dans la porte
+     « Collection », avec un œil pour la masquer (« *** € »). Elle était sous
+     la carte et on croyait que la carte valait 25 000 €.
    · MES TRÉSORS — les cartes les mieux cotées, tenues en éventail comme une
      main de cartes.
    · LES WISHLISTS — des bulles, chacune un anneau qui se remplit.
@@ -5184,12 +5191,14 @@ function renderHome() {
 
   const heroF = resolveHero();
   const featured = heroF ? heroF.obj : null;
-  let heroName = '', heroPhoto = '', heroId = '';
+  let heroName = '', heroPhoto = '', heroId = '', heroCote = null;
   if (heroF) {
     const o = heroF.obj;
     heroId = String(o.cardId || o.id || '');
     heroName = o.name || '';
     heroPhoto = o.image ? IMG(o.image) : '';
+    const r = getCachedRawPrice(heroId);
+    heroCote = (r && r.raw != null) ? r.raw : null;
   }
   const open = heroId ? `openCardDetail('${esc(heroId)}')` : `openFeaturePicker('hero')`;
   const phone = isPhone();
@@ -5226,23 +5235,23 @@ function renderHome() {
       </div>
 
       ${heroF ? `<h1 class="hstage-name">${esc(heroName)}</h1>` : ''}
-      <div class="hvalue">
-        <span class="hvalue-coin" aria-hidden="true">€</span>
-        <span class="hvalue-n" id="hero-value">${hidden ? '*** €' : ''}</span>
-        <button class="hvalue-eye" id="hv-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
-          title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
-      </div>
+      ${heroF && heroCote != null ? `<span class="hstage-tag" data-v="${esc(fmt(heroCote))}">${hidden ? '***' : esc(fmt(heroCote))}</span>` : ''}
     </section>
 
     <nav class="hdoors reveal" style="--i:1" aria-label="Aller à">
       ${doors.map((d, i) => `
+        <div class="hdoor-cell">
         <button class="hdoor ${d.cls}" style="--j:${i}" onclick="navigate('${d.v}')">
           <span class="hdoor-art" aria-hidden="true">${d.art
             ? `<img src="${d.art}" alt="" width="96" height="96" decoding="async">`
             : `<svg viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z" fill="#fff" fill-opacity=".18" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 4v16M11 8.5h5.5M11 12h5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>`}</span>
           <span class="hdoor-name">${d.name}</span>
+          ${d.v === 'invest' ? `<span class="hvalue"><span class="hvalue-coin" aria-hidden="true">€</span><span class="hvalue-n" id="hero-value">${hidden ? '*** €' : ''}</span></span>` : ''}
           <span class="hdoor-n">${d.n.toLocaleString('fr-FR')}</span>
-        </button>`).join('')}
+        </button>
+        ${d.v === 'invest' ? `<button class="hvalue-eye" id="hv-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
+          title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>` : ''}
+        </div>`).join('')}
     </nav>
 
     ${fan.length ? `
@@ -5417,7 +5426,7 @@ function computeCollectionValue() {
     else { window._vaultCounted = true; animateCount(val, total); }
   }
   // Les étiquettes de prix de l'éventail suivent l'œil.
-  document.querySelectorAll('.hfan-tag').forEach(t => { t.textContent = hidden ? '***' : t.dataset.v; });
+  document.querySelectorAll('.hfan-tag,.hstage-tag').forEach(t => { t.textContent = hidden ? '***' : t.dataset.v; });
   return total;
 }
 
