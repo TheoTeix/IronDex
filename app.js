@@ -5542,9 +5542,11 @@ function renderWishlistCard(w) {
       <div class="wishlist-card-header">
         <span class="wl-drag-handle" aria-hidden="true" title="Glisser pour réordonner">${ICO.drag}</span>
         <div class="wishlist-card-name">${esc(w.name)}</div>
-        <button class="title-edit-btn wl-card-rename" title="Renommer" aria-label="Renommer ${esc(w.name)}" onclick="event.stopPropagation();openRenameWishlist('${w.id}')">${ART('wl-rename')}</button>
-        <button class="title-edit-btn wl-card-del" title="Supprimer la wishlist" aria-label="Supprimer ${esc(w.name)}" onclick="event.stopPropagation();confirmDeleteWishlist('${w.id}')">${ART('wl-delete')}</button>
         <div class="wishlist-card-count">${w.cards.length}</div></div>
+      <!-- Supprimer : la croix rouge du coin, comme sur les cartes. Renommer se
+           fait depuis la wishlist elle-même (le crayon y est déjà). -->
+      <button class="remove-btn wl-card-x" title="Supprimer la wishlist" aria-label="Supprimer ${esc(w.name)}"
+        onclick="event.stopPropagation();confirmDeleteWishlist('${w.id}')">${ICO.close}</button>
       <div class="wishlist-preview">
         ${preview.map((c, k) => c.image
           ? `<img style="--k:${preview.length - 1 - k}" src="${IMG(c.image,'low')}" onerror="this.style.visibility='hidden'" alt="" loading="lazy">`
@@ -9377,8 +9379,10 @@ function renderInvestBody() {
 /* ══════════════════════════════════════════════════════════════════════
    LE VOLET « VALEUR » — combien vaut ma collection, et quelles cartes la font
 
-   En haut, le total (la même somme que partout : cardsTotalValue), énorme,
-   sur un soleil doré. Dessous, TOUTES les cartes de la Collection, de la plus
+   En haut, le total (la même somme que partout : cardsTotalValue) dans un
+   bandeau sobre. Il y avait un soleil doré derrière : il débordait par-dessus
+   le sélecteur de volet et avalait ses clics (« on ne peut plus aller dans
+   Masterset »). Dessous, TOUTES les cartes de la Collection, de la plus
    chère à la moins chère, chacune avec son étiquette de prix — les trois
    premières portent une médaille. Une carte possédée en plusieurs exemplaires
    n'apparaît qu'une fois, avec sa pastille « ×N » ; son étiquette donne la
@@ -9407,15 +9411,12 @@ function renderValueBody(body) {
   const copies = list.reduce((a, c) => a + c.qty, 0);
   const MEDAL = ['vmedal-1', 'vmedal-2', 'vmedal-3'];
   body.innerHTML = `
-    <section class="vtop reveal" style="--i:0">
-      <span class="vtop-sun" aria-hidden="true"></span>
+    <section class="vtop">
       <span class="vtop-coin" aria-hidden="true">€</span>
       <span class="vtop-n" id="inv-total-value" data-v="${esc(total > 0 ? fmt(total) : '0 €')}">${hidden ? '*** €' : esc(total > 0 ? fmt(total) : '0 €')}</span>
-      <span class="vtop-row">
-        <span class="vpill">${copies.toLocaleString('fr-FR')} carte${copies > 1 ? 's' : ''}</span>
-        <button class="hvalue-eye js-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
-          title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
-      </span>
+      <span class="vpill">${copies.toLocaleString('fr-FR')} carte${copies > 1 ? 's' : ''}</span>
+      <button class="hvalue-eye js-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
+        title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
     </section>
     ${list.length ? `<div class="vgrid">${list.map((c, i) => `
       <button class="vcard" data-cc="${esc(c.id)}" style="--i:${Math.min(i, 14)}" onclick="openCardDetail('${esc(c.id)}')"
