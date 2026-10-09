@@ -2868,13 +2868,11 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 }
 #intro.exit{opacity:0;visibility:hidden;pointer-events:none}
 #intro.exit .intro-hud{transform:scale(1.04);transition:transform 480ms var(--ease-out)}
-.intro-sun{position:absolute;left:50%;top:50%;width:max(130vmin,900px);aspect-ratio:1;border-radius:50%;
-  margin:calc(max(130vmin,900px) / -2) 0 0 calc(max(130vmin,900px) / -2);
-  background:repeating-conic-gradient(rgba(255,196,84,.2) 0deg 7deg,transparent 7deg 18deg);
-  -webkit-mask:radial-gradient(circle,#000 0 10%,rgba(0,0,0,.5) 28%,transparent 52%);
-          mask:radial-gradient(circle,#000 0 10%,rgba(0,0,0,.5) 28%,transparent 52%);
-  animation:intro-sun 50s linear infinite;will-change:transform}
-@keyframes intro-sun{to{transform:rotate(1turn)}}
+/* Une lueur douce et FIXE derrière le logo (il y avait un soleil à rayons
+   qui tournait : trop chargé). Un dégradé immobile ne coûte rien à peindre. */
+.intro-sun{position:absolute;left:50%;top:50%;width:min(560px,120vw);aspect-ratio:1;border-radius:50%;
+  transform:translate(-50%,-56%);pointer-events:none;
+  background:radial-gradient(circle,rgba(255,196,84,.13) 0,rgba(255,196,84,.05) 38%,transparent 66%)}
 .intro-hud{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;
   padding:0 24px;text-align:center}
 .intro-mark{width:84px;height:84px;filter:drop-shadow(0 16px 26px rgba(0,0,0,.55));
@@ -2903,7 +2901,7 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   animation:intro-pop 300ms var(--ease-out)}
 @keyframes intro-pop{50%{transform:scale(1.18)}}
 @media (prefers-reduced-motion:reduce){
-  .intro-sun,.intro-mark,.intro-stripes{animation:none}
+  .intro-mark,.intro-stripes{animation:none}
 }
 
 /* ═══════════════════ OVERLAY DE SYNCHRO ═══════════════════ */
