@@ -1715,6 +1715,9 @@ function openAccountSheet() {
       <button class="btn btn-ghost" onclick="exportData()">Télécharger une copie</button>
       <button class="btn btn-ghost" onclick="accountPublishPrices()">Publier mes cotes</button>
     </div>
+    <div class="cloud-actions">
+      <button class="btn btn-ghost" id="acc-sound" onclick="toggleSound()" aria-pressed="${sfx.enabled()}"><span>${sfx.enabled() ? 'Sons activés' : 'Sons coupés'}</span></button>
+    </div>
     <div class="acc-out">
       <button class="btn btn-ghost" onclick="vaultSignOut(false)">Se déconnecter</button>
       <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
@@ -1867,6 +1870,11 @@ function renderProfile() {
         </div>
       </details>
     </section>
+
+    <!-- Les sons de l'app (chargement, ajouts, retraits…) : voir sfx. -->
+    <div class="pf-signout">
+      <button class="btn btn-ghost" id="acc-sound" onclick="toggleSound()" aria-pressed="${sfx.enabled()}"><span>${sfx.enabled() ? 'Sons activés' : 'Sons coupés'}</span></button>
+    </div>
 
     <!-- ── LA SORTIE ────────────────────────────────────────────────
          Tout en bas, seule sur sa ligne : on ne se déconnecte pas par
@@ -4440,6 +4448,7 @@ function navigate(view, extra = {}) {
   // un écran redimensionné ne doivent pas pouvoir y échouer.
   if (isPhone() && PHONE_HIDDEN.includes(view)) view = 'home';
   const from = state.view;
+  if (from !== view) sfx.play('tick');
   const kind = transitionKind(from, view);
   state.view = view; Object.assign(state, extra);
   // La pastille de nav réagit tout de suite, indépendamment du temps que prend
@@ -5152,6 +5161,7 @@ const EYE_SVG = {
 };
 function toggleHomeValue() {
   const hide = !homeValueHidden();
+  sfx.play(hide ? 'unpop' : 'coin');
   try { localStorage.setItem(HOME_HIDE_KEY, hide ? '1' : '0'); } catch {}
   // L'œil existe à deux endroits (accueil, volet Valeur) : tous suivent.
   const ve = document.getElementById('inv-total-value');
@@ -5644,6 +5654,7 @@ function toggleOwned(wid, cardId) {
   const c = w?.cards.find(x => x.id === cardId);
   if (!c) return;
   c.owned = !c.owned; save();
+  sfx.play(c.owned ? 'pop' : 'unpop');
   document.querySelector(`.card-thumb[data-card="${cardId}"]`)?.classList.toggle('owned', c.owned);
   const owned = w.cards.filter(x => x.owned).length;
   const pct = w.cards.length ? Math.round(owned/w.cards.length*100) : 0;
@@ -5655,6 +5666,7 @@ function removeFromWishlist(wid, cardId) {
   const w = state.wishlists.find(x => x.id === wid);
   if (!w) return;
   w.cards = w.cards.filter(c => c.id !== cardId); save();
+  sfx.play('poof');
   const thumb = document.querySelector(`.card-thumb[data-card="${cardId}"]`);
   if (thumb) { thumb.style.transition = 'opacity .2s, transform .2s'; thumb.style.opacity = '0'; thumb.style.transform = 'scale(.9)'; }
   setTimeout(renderWishlistDetail, 200);
@@ -5804,7 +5816,7 @@ function createWishlist() {
   });
 }
 function confirmDeleteWishlist(id) {
-  if (confirm('Supprimer cette wishlist ?')) { state.wishlists = state.wishlists.filter(w => w.id !== id); save(); navigate('wishlists'); toast('Wishlist supprimée'); }
+  if (confirm('Supprimer cette wishlist ?')) { sfx.play('poof'); state.wishlists = state.wishlists.filter(w => w.id !== id); save(); navigate('wishlists'); toast('Wishlist supprimée'); }
 }
 function openRenameWishlist(id) {
   const w = state.wishlists.find(x => x.id === id);
@@ -6145,6 +6157,7 @@ function filterPickerCards() {
 }
 function searchPicker(q) { state.pickerSearch = q; filterPickerCards(); }
 function pickCard(id, name, image, setName, setId, localId) {
+  sfx.play(state.pickerMode === 'hero' ? 'ding' : 'pop');
   if (state.pickerMode === 'hero') {
     state.heroRef = { type: 'loose', id, cardId: id, name, image, setName, setId, localId };
     save(); closeModal('modal-card-picker');
@@ -6539,6 +6552,7 @@ function removeBinderCard(idx) {
   const b = binderById(state.currentBinder);
   if (!b || !b.cards[idx]) return;
   const name = b.cards[idx].name;
+  sfx.play('poof');
   b.cards[idx] = null;
   trimBinderTail(b);
   save();
@@ -8804,48 +8818,83 @@ function initHero3D() {
      n'est pas prête, 100 % quand elle l'est.
    · La sortie : la barre finit, on laisse 160 ms pour la voir pleine, puis
      l'écran s'efface en fondu pendant que l'app se peint DESSOUS.
-   · Un petit son : un « plop » qui monte à chaque dixième, et un « ding » à la
-     fin (WebAudio, synthétisé : aucun fichier). Les navigateurs interdisent le
-     son avant le premier geste de l'utilisateur : quand c'est le cas, on se
-     tait — et si on touche l'écran pendant le chargement, le son démarre là.
+   · Le son (voir sfx) : un « plop » qui monte à chaque dixième, un « ding » à
+     la fin. Le navigateur l'interdit avant tout geste : la barre attend alors
+     un toucher sur « Entrer » pour finir en musique.
    ─────────────────────────────────────────────────────────────────────── */
-const INTRO_SOUND_KEY = 'milodex:intro-sound';
-function introSound() {
-  let on = true;
-  try { on = localStorage.getItem(INTRO_SOUND_KEY) !== '0'; } catch {}
+/* ══════════════════════════════════════════════════════════════════════
+   LE SON — un seul moteur pour le chargement et pour toute l'app
+   Tout est SYNTHÉTISÉ (WebAudio) : aucun fichier à télécharger, et chaque
+   bruit est réglé pour aller avec les autres (même gamme, même enveloppe).
+
+   LA RÈGLE DES NAVIGATEURS. Aucun son n'est permis avant le premier geste de
+   l'utilisateur sur la page (Safari, Chrome, Firefox). D'où le bouton
+   « Entrer » à la fin du chargement : c'est ce toucher qui débloque le son.
+   Ensuite, chaque geste (pointerup / touchend / click / keydown) relance le
+   contexte s'il s'est rendormi — iOS l'endort quand l'app passe en fond.
+   À savoir : sur iPhone, le bouton silencieux coupe aussi ces sons.
+
+   Coupure : réglage « Sons » de la fiche compte (localStorage milodex:sound).
+   ══════════════════════════════════════════════════════════════════════ */
+const SOUND_KEY = 'milodex:sound';
+const sfx = (() => {
   const AC = window.AudioContext || window.webkitAudioContext;
-  if (!on || !AC) return { step() {}, done() {}, close() {} };
-  let ctx = null;
-  try { ctx = new AC(); } catch { return { step() {}, done() {}, close() {} }; }
-  const master = ctx.createGain(); master.gain.value = 0.16; master.connect(ctx.destination);
-  const unlock = () => { ctx.resume().catch(() => {}); };
-  unlock();
-  addEventListener('pointerdown', unlock, { once: true, capture: true });
-  addEventListener('keydown', unlock, { once: true, capture: true });
-  const live = () => ctx.state === 'running';
-  // Une note courte : attaque de 6 ms, retombée exponentielle.
-  const note = (freq, at, dur, vol, type = 'sine') => {
+  let ctx = null, master = null;
+  const enabled = () => { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch { return true; } };
+  const ensure = () => {
+    if (ctx || !AC) return ctx;
+    try { ctx = new AC(); master = ctx.createGain(); master.gain.value = 0.22; master.connect(ctx.destination); } catch { ctx = null; }
+    return ctx;
+  };
+  const unlock = () => { if (!enabled() || !ensure()) return; if (ctx.state !== 'running') ctx.resume().catch(() => {}); };
+  ['pointerup', 'touchend', 'click', 'keydown'].forEach(t => addEventListener(t, unlock, { capture: true, passive: true }));
+  const live = () => enabled() && ctx && ctx.state === 'running' && !document.hidden;
+  // Une note : attaque de 5 ms, retombée exponentielle, glissé de hauteur.
+  const tone = (f0, f1, at, dur, vol, type = 'sine') => {
     const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type; o.frequency.setValueAtTime(freq, at);
-    o.frequency.exponentialRampToValueAtTime(freq * 1.5, at + dur * 0.6);   // le petit « bloup » qui monte
+    o.type = type; o.frequency.setValueAtTime(f0, at);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, at + dur * 0.7);
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(vol, at + 0.006);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-    o.connect(g); g.connect(master); o.start(at); o.stop(at + dur + 0.02);
+    o.connect(g); g.connect(master); o.start(at); o.stop(at + dur + 0.03);
   };
-  // Gamme pentatonique majeure : quel que soit l'ordre, ça sonne « content ».
+  // Un souffle (bruit filtré) : la carte qui part.
+  const puff = (at, dur, vol) => {
+    const n = Math.floor(ctx.sampleRate * dur), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = buf; f.type = 'lowpass'; f.frequency.setValueAtTime(2400, at); f.frequency.exponentialRampToValueAtTime(300, at + dur);
+    g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    src.connect(f); f.connect(g); g.connect(master); src.start(at); src.stop(at + dur + 0.02);
+  };
+  // Gamme pentatonique majeure : dans n'importe quel ordre, ça sonne gai.
   const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5, 1567.98, 1760];
-  return {
-    step(i) { if (live()) note(SCALE[Math.min(i, SCALE.length - 1)], ctx.currentTime, 0.11, 0.5); },
-    done() {
-      if (!live()) return;
-      const t = ctx.currentTime + 0.02;
-      note(1046.5, t, 0.5, 0.45, 'triangle');
-      note(1567.98, t + 0.07, 0.6, 0.35, 'sine');
-      note(2093, t + 0.14, 0.7, 0.22, 'sine');
-    },
-    close() { setTimeout(() => { try { ctx.close(); } catch {} }, 1200); },
+  const SOUNDS = {
+    plop: i => { const f = SCALE[Math.min(i, SCALE.length - 1)]; tone(f, f * 1.5, ctx.currentTime, 0.11, 0.5); },
+    pop: () => { const t = ctx.currentTime; tone(620, 1180, t, 0.09, 0.45); tone(1240, 2000, t + 0.01, 0.06, 0.12, 'triangle'); },
+    unpop: () => tone(760, 380, ctx.currentTime, 0.1, 0.35),
+    poof: () => { const t = ctx.currentTime; puff(t, 0.22, 0.32); tone(420, 160, t, 0.18, 0.2); },
+    tick: () => tone(1900, 1700, ctx.currentTime, 0.03, 0.12, 'triangle'),
+    coin: () => { const t = ctx.currentTime; tone(987.77, 987.77, t, 0.08, 0.3, 'square'); tone(1318.5, 1318.5, t + 0.07, 0.32, 0.26, 'square'); },
+    ding: () => { const t = ctx.currentTime + 0.01; tone(1046.5, 1046.5, t, 0.5, 0.45, 'triangle'); tone(1567.98, 1567.98, t + 0.07, 0.6, 0.32); tone(2093, 2093, t + 0.14, 0.7, 0.2); },
+    cascade: () => { const t = ctx.currentTime; [5, 6, 7, 8, 9].forEach((k, j) => { const f = SCALE[k]; tone(f, f * 1.5, t + j * 0.055, 0.1, 0.42); }); },
   };
+  const play = (name, arg) => { if (!live()) return; try { SOUNDS[name] && SOUNDS[name](arg); } catch {} };
+  return {
+    play, unlock,
+    supported: () => !!AC,
+    enabled,
+    running: () => !!(ctx && ctx.state === 'running'),
+    setEnabled(on) { try { localStorage.setItem(SOUND_KEY, on ? '1' : '0'); } catch {} if (on) unlock(); },
+  };
+})();
+function toggleSound() {
+  const on = !sfx.enabled();
+  sfx.setEnabled(on);
+  if (on) setTimeout(() => sfx.play('ding'), 60);
+  const b = document.getElementById('acc-sound');
+  if (b) { b.setAttribute('aria-pressed', String(on)); b.querySelector('span').textContent = on ? 'Sons activés' : 'Sons coupés'; }
 }
 
 function runIntro(onReveal) {
@@ -8882,14 +8931,13 @@ function runIntro(onReveal) {
   };
 
   const bar = document.getElementById('intro-bar'), pctEl = document.getElementById('intro-pct');
-  const sound = introSound();
   let p = 0, target = 8, lastPct = -1, lastStep = 0, raf = 0, running = true, finishing = false;
   const paint = () => {
     if (bar) bar.style.transform = `translate3d(${(p - 100).toFixed(3)}%,0,0)`;
     const r = Math.floor(p);
     if (r !== lastPct) { lastPct = r; if (pctEl) pctEl.textContent = r + '%'; }
     const step = Math.floor(p / 10);
-    if (step > lastStep && step < 10) { lastStep = step; sound.step(step - 1); }
+    if (step > lastStep && step < 10) { lastStep = step; sfx.play('plop', step - 1); }
   };
   // Lissage indépendant de la cadence : une image sautée ne fait ni sauter ni
   // ralentir la barre. Plus rapide en fin de course, pour finir franchement.
@@ -8922,7 +8970,7 @@ function runIntro(onReveal) {
   function exit() {
     if (exited) return; exited = true;
     clearInterval(climb); cancelAnimationFrame(raf);
-    sound.done(); sound.close();
+    sfx.play('ding');
     intro?.classList.add('full');
     // On laisse voir la barre PLEINE un instant, puis l'écran s'efface pendant
     // que l'app se peint dessous (le fondu est sur le compositeur : le premier
@@ -8934,6 +8982,26 @@ function runIntro(onReveal) {
     }, reduce ? 60 : 170);
   }
   const finish = () => { finishing = true; target = 100; };
+  /* LE BOUTON « ENTRER ». Si le son est encore verrouillé par le navigateur
+     (aucun geste sur la page), la barre s'arrête juste avant la fin et attend
+     un toucher : c'est lui qui débloque le son. La barre finit alors en
+     cascade de notes, ding, et l'app s'ouvre. Son coupé, non pris en charge,
+     ou déjà débloqué (un geste pendant le chargement) : on entre tout seul. */
+  const enterOrWait = () => {
+    if (!sfx.supported() || !sfx.enabled() || sfx.running()) { finish(); return; }
+    target = Math.max(target, 92);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'intro-enter'; btn.textContent = 'Entrer';
+    const go = () => {
+      btn.disabled = true; sfx.unlock();
+      // resume() est asynchrone : on laisse au contexte le temps de se réveiller.
+      setTimeout(() => { sfx.play('cascade'); intro?.classList.add('entering'); finish(); }, 40);
+    };
+    btn.addEventListener('click', go, { once: true });
+    intro?.querySelector('.intro-hud')?.appendChild(btn);
+    intro?.classList.add('await');
+    requestAnimationFrame(() => btn.focus({ preventScroll: true }));
+  };
 
   // On attend que l'app soit PRÊTE et qu'un minimum de temps soit passé (sans
   // plancher, la barre ferait 0 → 100 % en un clignement). Plafond : 6 s.
@@ -8941,7 +9009,7 @@ function runIntro(onReveal) {
   const t0 = performance.now();
   const ready = window._introReady || Promise.resolve();
   Promise.race([ready, new Promise(r => setTimeout(r, 6000))])
-    .then(() => setTimeout(finish, Math.max(0, MIN_MS - (performance.now() - t0))));
+    .then(() => setTimeout(enterOrWait, Math.max(0, MIN_MS - (performance.now() - t0))));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9078,6 +9146,7 @@ function setInvestMode(mode) {
   mode = INVEST_MODES.includes(mode) ? mode : 'cards';
   if (state.investMode === mode) return;
   state.investMode = mode;
+  sfx.play('tick');
   state.investSeriesOpen = null; state.mastersetOpen = null;
   save();
   renderInvestBody();
@@ -9944,6 +10013,7 @@ function addMissingCard(cardId) {
     toast('Cette carte est déjà à toi', 'error');
     return;
   }
+  sfx.play('pop');
   const p = {
     id: sealedUid(), cardId,
     name: c.name || '', setId: String(c.__set || setId || ''), setName: c.__setName || '',
@@ -10543,6 +10613,7 @@ function removeMasterset(setId) {
   const m = msEntry(setId); if (!m) return;
   const n = msOwnedCount(m);
   if (!confirm(`Retirer « ${m.setName} » du masterset ?${n ? `\n\n${n} case${n > 1 ? 's' : ''} cochée${n > 1 ? 's' : ''} ${n > 1 ? 'seront perdues' : 'sera perdue'}.` : ''}`)) return;
+  sfx.play('poof');
   state.mastersets = state.mastersets.filter(x => x !== m);
   if (String(state.mastersetOpen) === String(setId)) state.mastersetOpen = null;
   save();
@@ -10560,6 +10631,8 @@ function toggleMasterslot(setId, cardId, variant) {
   const next = (m.owned[cardId] | 0) ^ bit;
   if (next) m.owned[cardId] = next; else delete m.owned[cardId];
   save();
+  // Le masterset qui vient d'être COMPLÉTÉ mérite mieux qu'un pop.
+  sfx.play(next & bit ? (m.slots && msOwnedCount(m) >= m.slots ? 'ding' : 'pop') : 'unpop');
   // La vignette et SA coche : la carte reprend ses couleurs dès qu'une des
   // deux versions est cochée, chaque coche ne parle que de la sienne.
   const tile = document.querySelector(`.ms-slot[data-card="${cardId}"]`);
@@ -10850,6 +10923,7 @@ async function addInvestCard(setId) {
 function deleteInvestCard(id) {
   const i = state.investCards.findIndex(x => x.id === id); if (i < 0) return;
   state.investCards.splice(i, 1); save();
+  sfx.play('poof');
   // Retirer UNE carte ne fait pas renaître la série : les voisines se
   // referment sur la place laissée vide.
   flipGrid(() => renderInvestBody());
@@ -10862,6 +10936,7 @@ function bumpCardQty(id, delta) {
   const next = Math.max(1, cardQty(p) + delta);
   if (next === cardQty(p)) return;
   p.qty = next; save();
+  sfx.play(delta > 0 ? 'pop' : 'unpop');
   refreshCardTile(p);
   refreshInvestTotals();
 }

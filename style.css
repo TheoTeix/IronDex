@@ -2900,8 +2900,23 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 #intro.full .intro-pct{color:#3b2400;background:linear-gradient(180deg,#FFE27A,#FFB938);
   animation:intro-pop 300ms var(--ease-out)}
 @keyframes intro-pop{50%{transform:scale(1.18)}}
+/* « Entrer » : apparaît quand l'app est prête mais que le son attend un
+   geste. Il prend la place du pourcentage, et respire doucement. */
+.intro-enter{min-width:170px;min-height:56px;margin-top:4px;padding:0 34px;border:0;border-radius:999px;cursor:pointer;
+  font:900 21px/1 var(--round);color:#3b2400;letter-spacing:.01em;
+  background:linear-gradient(180deg,#FFE27A,#F5A623);
+  box-shadow:inset 0 3px 0 rgba(255,255,255,.55),inset 0 -5px 0 rgba(122,74,5,.32),0 16px 30px -12px rgba(245,166,35,.7);
+  animation:intro-enter-in 380ms var(--ease-out) both,intro-breathe 1.8s 380ms ease-in-out infinite;
+  transition:transform var(--dur-1) var(--ease-out),opacity 200ms var(--ease-out)}
+.intro-enter:active{transform:scale(.94)}
+.intro-enter:focus-visible{outline:3px solid #fff;outline-offset:4px}
+@keyframes intro-enter-in{from{opacity:0;transform:translateY(10px) scale(.9)}to{opacity:1;transform:none}}
+@keyframes intro-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+#intro.await .intro-pct{display:none}
+#intro.entering .intro-enter{animation:none;opacity:0;transform:scale(.9)}
 @media (prefers-reduced-motion:reduce){
   .intro-mark,.intro-stripes{animation:none}
+  .intro-enter{animation:intro-enter-in 1ms both}
 }
 
 /* ═══════════════════ OVERLAY DE SYNCHRO ═══════════════════ */
