@@ -1354,13 +1354,6 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
 .wishlist-preview>.wl-prev-ph{overflow:hidden;display:block}
 .wishlist-preview>.wl-prev-ph .card-noimg{border-radius:0;aspect-ratio:auto;height:100%}
 .wishlist-preview-more{margin-left:24px;font-size:12px;font-weight:700;color:var(--t3)}
-.wl-progress{display:flex;flex-direction:column;gap:7px}
-.wl-progress-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
-.wl-progress-label{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
-.wl-progress-pct{font-size:12.5px;font-weight:800;color:var(--t2);font-variant-numeric:tabular-nums}
-.wl-remaining{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
-  padding-top:var(--s3);border-top:1px solid var(--line)}
-.wl-remaining-label{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
 .wl-remaining-val{font-size:14px;font-weight:800;color:var(--acc);font-variant-numeric:tabular-nums;
   transition:color var(--flow)}
 .wl-remaining-val.loading{color:var(--t3);font-weight:500}
@@ -1537,7 +1530,6 @@ svg.ico-badge{overflow:visible}
   font-size:13px;font-weight:800;color:var(--acc);font-variant-numeric:tabular-nums;
   transition:color var(--flow)}
 .card-value.muted{color:var(--t3);font-weight:500}
-.cv-label{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
 
 /* Visuel absent : placeholder lisible, jamais une image cassée. */
 .card-noimg{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -4519,3 +4511,301 @@ body::before{display:none}
   .hstage-sun,.hspark,.hstage-float,.hstage-shine,.hstage-shadow,.hstage-empty svg,.hwl-fill{animation:none}
   .hspark{opacity:.7}
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   JOUETS — toute l'app dans la langue de l'accueil (2026-10-09)
+   « Je veux que tout soit dans le même style que l'accueil. »
+   Les mêmes ingrédients partout :
+   · la police RONDE (SF Pro Rounded) pour tout ce qui se lit d'un coup d'œil ;
+   · des volumes-jouets : filet clair en haut, épaisseur sombre en bas ;
+   · des couleurs pleines, une palette de cinq (rose, bleu, vert, or, violet) ;
+   · les prix en ÉTIQUETTES DORÉES, les nombres en pastilles ;
+   · pas de texte gris translucide ;
+   · des mouvements qui soulèvent et penchent, jamais qui rebondissent.
+   Ce bloc est en fin de feuille : il habille les composants existants sans
+   toucher à leur mise en page.
+   ══════════════════════════════════════════════════════════════════════ */
+:root{
+  --round:ui-rounded,"SF Pro Rounded","SF Pro Display",var(--disp);
+  --toy-pink:#FF7AAE;--toy-pink-2:#E2407A;
+  --toy-blue:#5B9BFF;--toy-blue-2:#2F57E6;
+  --toy-green:#3FDDB0;--toy-green-2:#109C74;
+  --toy-gold:#FFD25E;--toy-gold-2:#F5A623;
+  --toy-violet:#A98BFF;--toy-violet-2:#6C4DE6;
+  --toy-red:#FF6B7F;--toy-red-2:#D93250;
+  /* Le volume d'un jouet : lumière en haut, épaisseur en bas, ombre portée. */
+  --toy-relief:inset 0 2px 0 rgba(255,255,255,.32),inset 0 -5px 0 rgba(0,0,0,.2);
+  --toy-surface:linear-gradient(165deg,rgba(255,255,255,.085),rgba(255,255,255,.025));
+  --toy-surface-relief:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -4px 0 rgba(0,0,0,.22),0 16px 34px -20px rgba(0,0,0,.85);
+  --star:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1.5c.9 5.6 4.9 9.6 10.5 10.5-5.6.9-9.6 4.9-10.5 10.5C11.1 16.9 7.1 12.9 1.5 12 7.1 11.1 11.1 7.1 12 1.5z"/></svg>');
+}
+
+/* ── Titres : ronds, blancs, une étoile à la couleur de la carte ─────── */
+.page-title,.wl-head-name,.modal-title,.empty-state-title,.ms-listtitle,.bloc-name,.cardser-bar-name,
+.tb-name,.wishlist-card-name,.binder-tile-name,.cardser-name,.card-thumb-name,.fp-group-title,.pal-name{
+  font-family:var(--round)}
+.page-title{display:flex;align-items:center;gap:10px;font-weight:900;letter-spacing:-.01em;color:#fff;
+  font-size:clamp(28px,4vw,40px);text-shadow:0 3px 0 rgba(0,0,0,.22)}
+.page-title::before,.ms-listtitle::before{content:"";flex:none;width:.62em;height:.62em;background:var(--acc);
+  -webkit-mask:var(--star) center/contain no-repeat;mask:var(--star) center/contain no-repeat}
+.page-head-l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.wl-head-name{font-weight:900;color:#fff;letter-spacing:-.01em;text-shadow:0 2px 0 rgba(0,0,0,.2)}
+.ms-listtitle{display:flex;align-items:center;gap:8px;font-weight:900;color:#fff}
+.tb-eyebrow{display:none}
+.tb-name{font-weight:900;font-size:19px;letter-spacing:-.01em}
+
+/* Pastille de nombre (« 3/8 », « 120 cartes ») : blanc franc, jamais gris. */
+.vpill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;
+  font:900 13px/1 var(--round);color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;
+  background:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+
+/* ── Boutons-jouets ──────────────────────────────────────────────────── */
+.btn{font-family:var(--round);font-weight:800;letter-spacing:0;border:0;border-radius:999px;
+  transition:transform var(--dur-1) var(--ease-out),filter var(--dur-1) var(--ease-out)}
+:is(.btn-primary,.btn-grade,.btn-save,.btn-milo),
+:is(.btn-primary,.btn-grade,.btn-save,.btn-milo):hover:not(:disabled){
+  color:#3b2400;background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.5),inset 0 -4px 0 rgba(122,74,5,.32),0 10px 22px -12px var(--toy-gold-2)}
+.btn-wish,.btn-wish:hover:not(:disabled){color:#fff;background:linear-gradient(180deg,var(--toy-pink),var(--toy-pink-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),inset 0 -4px 0 rgba(0,0,0,.2),0 10px 22px -12px var(--toy-pink-2)}
+.btn-danger,.btn-danger:hover:not(:disabled){color:#fff;background:linear-gradient(180deg,var(--toy-red),var(--toy-red-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.3),inset 0 -4px 0 rgba(0,0,0,.22),0 10px 22px -12px var(--toy-red-2)}
+.btn-ghost,.btn-ghost:hover:not(:disabled){color:#fff;border:0;background:rgba(255,255,255,.09);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 -3px 0 rgba(0,0,0,.25)}
+@media(hover:hover){.btn:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.06)}}
+.btn:active:not(:disabled){transform:translateY(1px) scale(.96);filter:brightness(.97)}
+.btn .ico-plus>svg.ico-badge,.btn>svg.ico-badge{width:22px;height:22px;margin-left:-6px}
+.btn-wish .ico-plus>svg.ico-badge,.btn-primary .ico-plus>svg.ico-badge{filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}
+
+/* ── Sélecteur de volet (Cartes · Masterset · Valeur) ───────────────── */
+.inv-switch{padding:6px;border:0;border-radius:999px;background:rgba(0,0,0,.28);
+  box-shadow:inset 0 2px 6px rgba(0,0,0,.4),0 1px 0 rgba(255,255,255,.06)}
+.inv-switch .inv-switch-pill{top:6px;left:6px;width:calc((100% - 12px) / 3);height:calc(100% - 12px);border-radius:999px;
+  background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.5),inset 0 -3px 0 rgba(122,74,5,.3),0 6px 14px -6px var(--toy-gold-2);
+  transition:transform var(--dur-2) var(--ease-out)}
+.inv-switch[data-mode="cards"] .inv-switch-pill{transform:none}
+.inv-switch[data-mode="masterset"] .inv-switch-pill{transform:translateX(100%)}
+.inv-switch[data-mode="value"] .inv-switch-pill{transform:translateX(200%)}
+.inv-switch .inv-switch-btn{width:118px;min-width:0;padding:0 8px;min-height:42px;border:0;background:none;box-shadow:none;
+  font:900 15px/1 var(--round);color:#fff;transition:color var(--dur-2) var(--ease-out)}
+.inv-switch .inv-switch-btn.active{color:#3b2400}
+
+/* ── Compteurs : des tuiles de couleur, comme les portes de l'accueil ── */
+.inv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;
+  background:none;border:0;border-radius:0;box-shadow:none;overflow:visible}
+.inv-kpis .inv-kpi{position:relative;overflow:hidden;gap:6px;padding:16px 18px;border-radius:22px;color:#fff;
+  background:linear-gradient(150deg,var(--c1),var(--c2));box-shadow:var(--toy-relief),0 12px 26px -16px var(--c2)}
+.inv-kpis .inv-kpi::after{content:"";position:absolute;right:-26px;top:-26px;width:80px;height:80px;border-radius:50%;
+  background:rgba(255,255,255,.13);pointer-events:none}
+.inv-kpis .inv-kpi:nth-child(4n+1){--c1:var(--toy-blue);--c2:var(--toy-blue-2)}
+.inv-kpis .inv-kpi:nth-child(4n+2){--c1:var(--toy-pink);--c2:var(--toy-pink-2)}
+.inv-kpis .inv-kpi:nth-child(4n+3){--c1:var(--toy-green);--c2:var(--toy-green-2)}
+.inv-kpis .inv-kpi:nth-child(4n+4){--c1:var(--toy-violet);--c2:var(--toy-violet-2)}
+.inv-kpis .inv-kpi-val{font-family:var(--round);font-weight:900;color:#fff;letter-spacing:-.01em;text-shadow:0 2px 0 rgba(0,0,0,.15)}
+.inv-kpis .inv-kpi-val.pos,.inv-kpis .inv-kpi-val.neg{color:#fff}
+.inv-kpis .inv-kpi-unit{color:#fff;opacity:1}
+.inv-kpis .inv-kpi-lab{font:800 13px/1.1 var(--round);letter-spacing:0;text-transform:none;color:#fff;opacity:1}
+
+/* ── Blocs de séries : des boîtes à jouets qui s'ouvrent ────────────── */
+.bloc{border:0;border-radius:26px;background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+.bloc-head{padding:16px 18px;gap:12px}
+.bloc-chev{width:32px;height:32px;border-radius:50%;color:#3b2400;
+  background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2));box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -2px 0 rgba(122,74,5,.3)}
+.bloc.open .bloc-chev{color:#3b2400}
+.bloc-chev svg{width:17px;height:17px}
+.bloc-name{font-size:18px;font-weight:900;color:#fff}
+.bloc-meta{padding:5px 11px;border-radius:999px;font:900 12px/1 var(--round);color:#fff;background:rgba(255,255,255,.1)}
+
+/* L'étiquette de prix — la même que sur l'accueil, partout où il y a une cote. */
+.bloc-val,.cardser-val,.card-value,.vcard-tag,.cardtile-cote{
+  display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;
+  font:900 13px/1 var(--round);color:#3b2400;font-variant-numeric:tabular-nums;letter-spacing:0;
+  background:linear-gradient(180deg,#FFE27A,#FFB938);box-shadow:inset 0 -2px 0 rgba(122,74,5,.3),0 4px 10px rgba(0,0,0,.3)}
+.card-value{margin-top:8px;transform:rotate(-2deg)}
+.card-value.muted,.vcard-tag-none{color:#fff;font-weight:900;background:rgba(255,255,255,.12);box-shadow:none}
+
+/* ── Bulles de série ─────────────────────────────────────────────────── */
+.cardser-bubble{border:0;border-radius:26px;background:var(--toy-surface);box-shadow:var(--toy-surface-relief);gap:10px}
+@media(hover:hover){
+  .cardser-bubble:hover{transform:translateY(-5px) rotate(-1.2deg);box-shadow:var(--toy-surface-relief),0 0 0 2px color-mix(in srgb,var(--acc) 60%,transparent)}
+}
+.cardser-bubble:active{transform:scale(.97)}
+.cardser-name{font-size:15px;font-weight:800;color:#fff}
+.cardser-count{padding:5px 10px;border-radius:999px;font:900 11.5px/1 var(--round);letter-spacing:0;text-transform:none;
+  color:#fff;background:rgba(255,255,255,.1)}
+.cardser-val{transform:rotate(-3deg)}
+.ms-bubble.done{box-shadow:var(--toy-surface-relief),0 0 0 3px var(--toy-green)}
+
+/* ── Barres de progression : épaisses, rondes, vertes ───────────────── */
+.progress-track,.wl-bar{height:12px;border-radius:999px;background:rgba(0,0,0,.3);box-shadow:inset 0 2px 3px rgba(0,0,0,.35)}
+.progress-fill,.wl-bar-fill{border-radius:999px;background:linear-gradient(180deg,#6CF0C6,var(--toy-green-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.4)}
+.progress-label{font:900 13px/1 var(--round);color:#fff}
+
+/* ── Vignettes de carte : elles se soulèvent et penchent ─────────────── */
+.card-thumb-imgwrap{border-radius:16px}
+@media(hover:hover){
+  .card-thumb:hover .card-thumb-imgwrap{transform:translateY(-6px) rotate(-1.5deg)}
+  .card-thumb:nth-child(2n):hover .card-thumb-imgwrap{transform:translateY(-6px) rotate(1.5deg)}
+}
+.card-thumb-name{font-size:14px;font-weight:800;color:#fff}
+.card-thumb-sub{display:inline-block;margin-top:5px;padding:3px 8px;border-radius:999px;
+  font:900 11px/1 var(--round);color:#fff;background:rgba(255,255,255,.1)}
+.owned-pill{font-family:var(--round);font-weight:900;letter-spacing:.02em;color:#fff;
+  background:linear-gradient(180deg,#6CF0C6,var(--toy-green-2));border:0;box-shadow:inset 0 -2px 0 rgba(0,0,0,.2)}
+
+/* ── Wishlists : des boîtes de couleur ───────────────────────────────── */
+.wishlists-grid{gap:18px}
+.wishlist-card{border:0;border-radius:28px;color:#fff;
+  background:linear-gradient(150deg,var(--c1),var(--c2));box-shadow:var(--toy-relief),0 16px 30px -18px var(--c2);
+  transition:transform var(--dur-2) var(--ease-out)}
+.wishlist-card::after{content:"";position:absolute;right:-40px;top:-40px;width:130px;height:130px;border-radius:50%;
+  background:rgba(255,255,255,.12);pointer-events:none;z-index:0}
+.wishlist-card>*{position:relative;z-index:1}
+.wishlist-card:nth-child(5n+1){--c1:var(--toy-pink);--c2:var(--toy-pink-2)}
+.wishlist-card:nth-child(5n+2){--c1:var(--toy-blue);--c2:var(--toy-blue-2)}
+.wishlist-card:nth-child(5n+3){--c1:var(--toy-green);--c2:var(--toy-green-2)}
+.wishlist-card:nth-child(5n+4){--c1:var(--toy-gold-2);--c2:#D9761A}
+.wishlist-card:nth-child(5n+5){--c1:var(--toy-violet);--c2:var(--toy-violet-2)}
+@media(hover:hover){.wishlist-card:hover{transform:translateY(-5px) rotate(-.8deg)}}
+.wishlist-card:active{transform:scale(.98)}
+.wishlist-card-name{font-size:21px;font-weight:900;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.15)}
+.wishlist-card-count{font:900 14px/1 var(--round);color:#fff;background:rgba(0,0,0,.22);box-shadow:none}
+.wishlist-card .wl-drag-handle{color:#fff;opacity:.8}
+.wishlist-card .title-edit-btn{opacity:1}
+.wishlist-card .wl-card-del{opacity:1}
+.wishlist-preview img,.wishlist-preview>.wl-prev-ph{box-shadow:0 10px 18px -8px rgba(0,0,0,.6)}
+.wishlist-preview-more{color:#fff;font:900 14px/1 var(--round)}
+.wlc-empty{display:flex;gap:10px;align-self:center}
+.wlc-empty i{width:46px;aspect-ratio:2.5/3.5;border-radius:7px;border:3px dashed rgba(255,255,255,.45)}
+.wlc-empty i:nth-child(1){transform:rotate(-8deg)}.wlc-empty i:nth-child(3){transform:rotate(8deg)}
+.wlc-foot{display:flex;align-items:center;gap:10px;margin-top:auto}
+.wlc-foot .vpill{background:rgba(0,0,0,.22)}
+.wlc-foot .wl-bar{flex:1;height:12px;background:rgba(0,0,0,.25)}
+.wlc-foot .wl-bar-fill{background:linear-gradient(180deg,#fff,#ffe9f2)}
+.wlc-left{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 3px;border-radius:999px;background:rgba(0,0,0,.22)}
+.wlc-left .wl-remaining-val,.wlc-left .wl-remaining-val.loading{font:900 13px/1 var(--round);color:#fff}
+.wishlist-add-card{border:3px dashed rgba(255,255,255,.18);border-radius:28px;background:none;
+  font:900 17px/1.1 var(--round);color:#fff;box-shadow:none;transition:transform var(--dur-2) var(--ease-out)}
+.wishlist-add-card .plus{width:64px;height:64px;border:0}
+@media(hover:hover){.wishlist-add-card:hover{transform:translateY(-4px) rotate(1deg);border-color:rgba(255,255,255,.35)}
+  .wishlist-add-card:hover .plus{transform:rotate(90deg)}}
+.wishlist-add-card .plus{transition:transform var(--dur-2) var(--ease-out)}
+.wl-head-progress .progress-wrap{gap:14px}
+
+/* ── Classeurs ───────────────────────────────────────────────────────── */
+.binder-tile-name{font-weight:900;color:#fff}
+.binder-tile-meta{font-family:var(--round);font-weight:800;color:#fff;opacity:.9}
+@media(hover:hover){.binder-tile:hover .binder-tile-cover{transform:translateY(-6px) rotate(-1.5deg)}}
+.binder-tile-new{border:3px dashed rgba(255,255,255,.18);border-radius:18px;font-family:var(--round);font-weight:900;color:#fff}
+.binder-tile-new .binder-new-plus{border:0}
+
+/* ── Fenêtres : rondes, pleines, qui « posent » au lieu de glisser ──── */
+.modal{border:0;border-radius:30px;background:linear-gradient(170deg,#262f6b,#1a2152);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 40px 80px -30px rgba(0,0,0,.9)}
+.modal-header{border-bottom:0;padding:22px 22px 12px}
+.modal-title{font-size:22px;font-weight:900;color:#fff}
+.modal-footer{border-top:0;background:none;padding:12px 22px 22px}
+@keyframes modal-in{from{opacity:0;transform:translate3d(0,24px,0) scale(.94) rotate(-1deg)}to{opacity:1;transform:none}}
+
+/* ── États vides : un soleil derrière la pastille ───────────────────── */
+.empty-state{position:relative;z-index:0;border:0;border-radius:30px;background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+.empty-state-icon{position:relative;width:84px;height:84px;border-radius:50%;border:0;background:none;box-shadow:none;color:#fff}
+.empty-state-icon::before{content:"";position:absolute;inset:-40px;z-index:-1;border-radius:50%;
+  background:repeating-conic-gradient(color-mix(in srgb,var(--acc) 32%,transparent) 0deg 8deg,transparent 8deg 20deg);
+  -webkit-mask:radial-gradient(circle,#000 0 20%,transparent 70%);mask:radial-gradient(circle,#000 0 20%,transparent 70%);
+  animation:hsun 60s linear infinite}
+.empty-state-icon svg{width:46px;height:46px}
+.empty-state-title{font-weight:900;color:#fff}
+.empty-state-sub{color:#fff;font-weight:600;opacity:.92}
+
+/* ── Notifications : une pastille qui arrive ─────────────────────────── */
+.toast{border:0;border-radius:999px;font:800 14.5px/1.3 var(--round);color:#fff;
+  background:linear-gradient(180deg,#2f3a80,#232b66);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 18px 40px -16px rgba(0,0,0,.8)}
+.toast.success{background:linear-gradient(180deg,#3FDDB0,#109C74)}
+.toast.error{background:linear-gradient(180deg,var(--toy-red),var(--toy-red-2))}
+
+/* ══ LE VOLET « VALEUR » ════════════════════════════════════════════════ */
+.vtop{position:relative;z-index:0;display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:34px 0 26px;text-align:center}
+.vtop-sun{position:absolute;z-index:-1;left:50%;top:50%;width:min(620px,130vw);aspect-ratio:1;border-radius:50%;
+  transform:translate(-50%,-50%);
+  background:repeating-conic-gradient(rgba(255,200,80,.26) 0deg 7deg,transparent 7deg 18deg);
+  -webkit-mask:radial-gradient(circle,#000 0 12%,rgba(0,0,0,.5) 34%,transparent 62%);
+          mask:radial-gradient(circle,#000 0 12%,rgba(0,0,0,.5) 34%,transparent 62%);
+  animation:vsun 120s linear infinite}
+@keyframes vsun{to{transform:translate(-50%,-50%) rotate(1turn)}}
+.vtop-coin{width:78px;height:78px;display:grid;place-items:center;border-radius:50%;
+  font:900 40px/1 var(--round);color:#7a4a05;
+  background:radial-gradient(circle at 35% 30%,#FFF4C4 0,#FFD45E 40%,#F0A12A 100%);
+  box-shadow:inset 0 -5px 0 rgba(122,74,5,.35),inset 0 3px 0 rgba(255,255,255,.6),0 14px 30px -10px rgba(240,161,42,.7);
+  animation:vcoin 4.5s ease-in-out infinite}
+@keyframes vcoin{0%,100%{transform:translateY(-4px) rotate(-6deg)}50%{transform:translateY(4px) rotate(6deg)}}
+.vtop-n{font:900 clamp(40px,8vw,68px)/1 var(--round);color:#fff;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+  text-shadow:0 4px 0 rgba(0,0,0,.25)}
+.vtop-row{display:flex;align-items:center;gap:10px}
+.vtop-row .hvalue-eye{position:static}
+
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px 8px;margin-top:8px}
+.vcard{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;padding:14px 12px 4px;border:0;background:none;
+  cursor:pointer;color:#fff;text-align:center;
+  /* content-visibility rogne ce qui dépasse de la boîte (confinement de
+     peinture) : médaille et « ×N » vivent donc DANS le padding. */
+  content-visibility:auto;contain-intrinsic-size:170px 300px;
+  animation:rise var(--dur-2) var(--ease-out) both;animation-delay:calc(var(--i,0) * 30ms)}
+.vcard-art{position:relative;display:block;width:100%;aspect-ratio:2.5/3.5;border-radius:12px;overflow:hidden;
+  background:rgba(255,255,255,.05);box-shadow:0 18px 30px -16px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.08);
+  transition:transform var(--dur-2) var(--ease-out)}
+.vcard-art img{display:block;width:100%;height:100%;object-fit:cover}
+.vcard-art .card-noimg{height:100%}
+@media(hover:hover){
+  .vcard:hover .vcard-art{transform:translateY(-8px) rotate(-2deg) scale(1.03)}
+  .vcard:nth-child(2n):hover .vcard-art{transform:translateY(-8px) rotate(2deg) scale(1.03)}
+}
+.vcard:active .vcard-art{transform:scale(.96)}
+.vcard:focus-visible .vcard-art{outline:3px solid var(--acc);outline-offset:4px}
+.vcard-tag{position:relative;z-index:1;margin-top:-28px;transform:rotate(-4deg);font-size:14px;padding:6px 12px;white-space:nowrap}
+.vcard-name{max-width:100%;margin-top:-4px;font:800 13.5px/1.2 var(--round);color:#fff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vcard-qty{position:absolute;top:4px;left:2px;z-index:2;padding:5px 9px;border-radius:999px;
+  font:900 12px/1 var(--round);color:#fff;background:linear-gradient(180deg,var(--toy-blue),var(--toy-blue-2));
+  box-shadow:inset 0 -2px 0 rgba(0,0,0,.2),0 4px 10px rgba(0,0,0,.35)}
+.vmedal{position:absolute;top:0;right:0;z-index:2;width:40px;height:40px;display:grid;place-items:center;border-radius:50%;
+  font:900 18px/1 var(--round);transform:rotate(10deg);
+  box-shadow:inset 0 -3px 0 rgba(0,0,0,.25),inset 0 2px 0 rgba(255,255,255,.55),0 6px 14px rgba(0,0,0,.45)}
+.vmedal-1{color:#7a4a05;background:radial-gradient(circle at 35% 30%,#FFF4C4,#FFD45E 45%,#E99A1D)}
+.vmedal-2{color:#3b4250;background:radial-gradient(circle at 35% 30%,#fff,#D6DCE6 45%,#9AA4B5)}
+.vmedal-3{color:#4a2410;background:radial-gradient(circle at 35% 30%,#FFD9B8,#E59A5E 45%,#B4642E)}
+
+@media (max-width:767px){
+  .inv-switch .inv-switch-btn{width:98px;font-size:14px}
+  .inv-kpis{grid-template-columns:1fr 1fr;gap:10px}
+  .inv-kpis .inv-kpi{padding:13px 14px;border-radius:18px;align-items:flex-start}
+  .vgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 0}
+  .vcard-tag{font-size:12px;padding:5px 9px}
+  .vmedal{width:32px;height:32px;font-size:15px}
+  .vcard{padding:12px 6px 4px}
+  .wishlist-card-name{font-size:19px}
+}
+@media (prefers-reduced-motion:reduce){
+  .vtop-sun,.vtop-coin,.empty-state-icon::before{animation:none}
+}
+/* Retour : le même rond bleu nuit que l'œil et la loupe. */
+.cardser-back{width:42px;height:42px;border:0;border-radius:50%;color:#fff;
+  background:linear-gradient(160deg,#3a4a9a,#232c66);box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 4px 10px rgba(0,0,0,.35)}
+@media(hover:hover){.cardser-back:hover{background:linear-gradient(160deg,#4558b0,#2a3478);transform:translateX(-2px)}}
+.cardser-back svg{width:20px;height:20px}
+.cardser-bar-meta{font-family:var(--round);font-weight:800;color:#fff}
+/* Classeurs : un titre comme les autres pages, des couvertures de couleur. */
+.binders-head-toy{text-align:left;margin-bottom:22px}
+.binder-shelf>.binder-tile:not(.binder-tile-milo):nth-child(4n+2) .binder-tile-cover{--c1:var(--toy-pink);--c2:var(--toy-pink-2)}
+.binder-shelf>.binder-tile:not(.binder-tile-milo):nth-child(4n+3) .binder-tile-cover{--c1:var(--toy-blue);--c2:var(--toy-blue-2)}
+.binder-shelf>.binder-tile:not(.binder-tile-milo):nth-child(4n+4) .binder-tile-cover{--c1:var(--toy-green);--c2:var(--toy-green-2)}
+.binder-shelf>.binder-tile:not(.binder-tile-milo):nth-child(4n+1) .binder-tile-cover{--c1:var(--toy-violet);--c2:var(--toy-violet-2)}
+.binder-shelf>.binder-tile:not(.binder-tile-milo) .binder-tile-cover{
+  background:radial-gradient(120% 80% at 30% 8%,rgba(255,255,255,.22),transparent 60%),linear-gradient(155deg,var(--c1),var(--c2));
+  box-shadow:0 22px 44px -18px var(--c2),inset 0 2px 0 rgba(255,255,255,.3),inset 0 -8px 0 rgba(0,0,0,.18)}
+.binder-shelf>.binder-tile:not(.binder-tile-milo) .binder-tile-name{text-shadow:0 2px 0 rgba(0,0,0,.2)}
+.binder-tile-tag{font-family:var(--round);font-weight:900;color:#3b2400;border:0;
+  background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2))}

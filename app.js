@@ -247,7 +247,7 @@ const state = {
   sealed: [],                 // produits scellés : { id, cat, name, buyPrice, values:{ 'AAAA-MM': valeur } }
   sealedPeriods: [],          // colonnes de valeur (semestres) : ['2026-07','2026-12', …]
   investCards: [],            // cartes suivies : { id, cardId, name, setId, setName, logo, number, localId, rarity, type, qty, image, buyPrice }
-  investMode: 'cards',        // volet actif de la Collection : 'cards' | 'masterset'
+  investMode: 'cards',        // volet actif de la Collection : 'cards' | 'masterset' | 'value'
   serieShow: { rare: true },  // ce qu'on affiche dans une série ouverte (voir SERIE_FILTERS)
   investSeriesOpen: null,     // set ouvert dans le volet Cartes (détail) — runtime
   mastersets: [],             // mastersets suivis : { setId, setName, logo, serieId, serieName, date, slots, owned:{ cardId: 1|2|3 } }
@@ -841,7 +841,7 @@ function applyLoaded(d) {
     owned: (m.owned && typeof m.owned === 'object') ? m.owned : {},
   }));
   state.mastersetOpen = null;
-  state.investMode = d.investMode === 'masterset' ? 'masterset' : 'cards';
+  state.investMode = ['masterset', 'value'].includes(d.investMode) ? d.investMode : 'cards';
   // Un réglage absent (sauvegarde d'avant ce filtre) vaut « tout affiché » :
   // on ne fait jamais disparaître des cartes à cause d'une donnée manquante.
   state.serieShow = { rare: (d.serieShow?.rare) !== false };
@@ -4551,17 +4551,17 @@ function ensureSoftButtonAssets() {
 // et la couleur de la lueur — jamais une couleur de fond ou de texte.
 const SOFT_ROLES = [
   // Danger : toujours visuellement séparé des actions normales.
-  ['.btn-danger,.inv-del,.per-x,.cardtile-del,.milo-cell-remove,.remove-btn,.binder-act-danger', 'sb-danger'],
-  // Primaire : un seul par écran (cf. principes produit).
-  ['.btn-primary,.btn-grade,.btn-wish,.btn-milo,.btn-save', 'sb-primary'],
+  // Les `.btn` ne reçoivent PLUS ce matériau : depuis l'accueil « goofy »
+  // ce sont des boutons-jouets dessinés dans style.css (bloc JOUETS).
+  ['.inv-del,.per-x,.cardtile-del,.milo-cell-remove,.remove-btn,.binder-act-danger', 'sb-danger'],
   // Onglets de nav : nus au repos (voir .sb-nav).
   ['.nav-btn', 'sb-nav'],
   // Tout le reste : le modelé neutre.
-  ['.btn,.btn-ghost,.btn-cm,.btn-quiet,.btn-import,.back-btn,.picker-back,.strip-btn,' +
-   '.hg-change,.rail-cmd,.inv-add,.seg-btn,.inv-switch-btn,.qty-btn,.cm-link,.buy-chip,' +
+  ['.btn-icon,.back-btn,.picker-back,.strip-btn,' +
+   '.hg-change,.rail-cmd,.inv-add,.seg-btn,.qty-btn,.cm-link,.buy-chip,' +
    '.cardtile-sync,' +
    '.modal-close,.title-edit-btn,.binder-act,.toast-action,.zoom-btn,.owned-toggle,' +
-   '.milo-nav-btn,.binder-add-page,.wishlist-add-card,.binder-tile-new,.fp-auto', 'sb-steel'],
+   '.milo-nav-btn,.fp-auto', 'sb-steel'],
 ];
 // CALIBRE DENSE — les micro-contrôles se comptent par centaines sur une vue.
 // Quatre ombres floutées à 26 px de haut, c'est du temps de peinture pour un
@@ -5166,13 +5166,16 @@ const EYE_SVG = {
 function toggleHomeValue() {
   const hide = !homeValueHidden();
   try { localStorage.setItem(HOME_HIDE_KEY, hide ? '1' : '0'); } catch {}
-  const btn = document.getElementById('hv-eye');
-  if (btn) {
+  // L'œil existe à deux endroits (accueil, volet Valeur) : tous suivent.
+  const ve = document.getElementById('inv-total-value');
+  if (ve) ve.textContent = hide ? '*** €' : ve.dataset.v;
+  document.querySelectorAll('.vcard-tag[data-v]').forEach(t => { t.textContent = hide ? '***' : t.dataset.v; });
+  document.querySelectorAll('#hv-eye,.js-eye').forEach(btn => {
     btn.innerHTML = hide ? EYE_SVG.off : EYE_SVG.on;
     btn.setAttribute('aria-pressed', String(hide));
     btn.setAttribute('aria-label', hide ? 'Afficher la valeur' : 'Masquer la valeur');
     btn.title = hide ? 'Afficher la valeur' : 'Masquer la valeur';
-  }
+  });
   document.getElementById('view-home')?.classList.toggle('hv-hidden', hide);
   computeCollectionValue();
 }
@@ -5465,11 +5468,9 @@ function renderWishlists() {
   const nOwned = state.wishlists.reduce((a, w) => a + w.cards.filter(c => c.owned).length, 0);
   el.innerHTML = `
     <div class="page-header">
-      <div>
+      <div class="page-head-l">
         <h1 class="page-title">Wishlists</h1>
-        <p class="ed-sub">${state.wishlists.length
-          ? `${state.wishlists.length} liste${state.wishlists.length > 1 ? 's' : ''} · ${nOwned}/${nCards} carte${nCards > 1 ? 's' : ''} obtenue${nOwned > 1 ? 's' : ''}`
-          : 'Traque les cartes qui te manquent, série par série.'}</p>
+        ${nCards ? `<span class="vpill">${nOwned}/${nCards}</span>` : ''}
       </div>
       ${state.wishlists.length ? `<button class="btn btn-wish" onclick="openCreateWishlist()">${PLUS}<span>Nouvelle wishlist</span></button>` : ''}
     </div>
@@ -5549,11 +5550,13 @@ function renderWishlistCard(w) {
           ? `<img style="--k:${preview.length - 1 - k}" src="${IMG(c.image,'low')}" onerror="this.style.visibility='hidden'" alt="" loading="lazy">`
           : `<span class="wl-prev-ph" style="--k:${preview.length - 1 - k}">${noImgHTML(c.localId, c.name, c.setId)}</span>`).join('')}
         ${extra > 0 ? `<div class="wishlist-preview-more">+${extra}</div>` : ''}
-        ${w.cards.length === 0 ? '<span class="dim" style="font-size:12.5px;align-self:center">Wishlist vide</span>' : ''}
+        ${w.cards.length === 0 ? '<span class="wlc-empty" aria-hidden="true"><i></i><i></i><i></i></span>' : ''}
       </div>
-      <div class="wl-progress"><div class="wl-progress-top"><span class="wl-progress-label">Avancée</span><span class="wl-progress-pct">${pct}%</span></div>
-        <div class="wl-bar"><div class="wl-bar-fill" style="width:${pct}%"></div></div></div>
-      <div class="wl-remaining"><span class="wl-remaining-label">Reste à acquérir</span><span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></div>
+      <div class="wlc-foot">
+        <span class="vpill">${owned}/${w.cards.length}</span>
+        <span class="wl-bar"><span class="wl-bar-fill" style="width:${pct}%"></span></span>
+        <span class="wlc-left" title="Reste à acquérir"><span class="hvalue-coin" aria-hidden="true">€</span><span class="wl-remaining-val loading" data-remaining="${w.id}">…</span></span>
+      </div>
     </div>`;
 }
 
@@ -5622,7 +5625,7 @@ function renderWishCardThumb(c, wid, i) {
       <button class="remove-btn" onclick="event.stopPropagation();removeFromWishlist('${wid}','${c.id}')" title="Retirer de la wishlist" aria-label="Retirer">${ICO.close}</button>
       <div class="card-thumb-info" style="cursor:pointer" onclick="openCardDetail('${c.id}')">
         <div class="card-thumb-name">${esc(c.name)}</div>
-        <div class="card-thumb-sub">#${c.localId || '—'}</div>
+        ${c.localId ? `<div class="card-thumb-sub">#${esc(String(c.localId))}</div>` : ''}
         <div class="cv-skeleton" data-value="${c.id}"></div>
       </div>
     </div>`;
@@ -5638,8 +5641,10 @@ function paintCardValues(ids) {
     const p = getCachedRawPrice(id);
     if (p === undefined) return;   // jamais cotée : on garde le squelette
     document.querySelectorAll(`[data-value="${id}"]`).forEach(el => {
-      if (p && p.raw != null) { el.className = 'card-value'; el.innerHTML = `<span class="cv-label">loose</span> ${fmt(p.raw)}`; }
-      else { el.className = 'card-value muted'; el.innerHTML = `<span class="cv-label">loose</span> non coté`; }
+      // Une étiquette de prix, comme sur l'accueil : le montant seul. « loose »
+      // était un mot de jargon en gris sous chaque carte.
+      if (p && p.raw != null) { el.className = 'card-value'; el.textContent = fmt(p.raw); }
+      else { el.className = 'card-value muted'; el.textContent = '?'; }
     });
   };
   list.forEach(paint);
@@ -6454,9 +6459,8 @@ function renderBinders() {
   }).join('');
   el.innerHTML = `
     <section class="binders-view">
-      <header class="binders-head">
-        <h1 class="milo-word binders-word" data-text="Binder">Binder</h1>
-        <p class="binders-sub">Tes classeurs, feuilletables en 3D — page par page, comme un vrai.</p>
+      <header class="binders-head binders-head-toy">
+        <h1 class="page-title">Classeurs</h1>
       </header>
       <div class="binder-shelf">
         <article class="binder-tile binder-tile-milo spot" style="--i:0" role="button" tabindex="0"
@@ -9263,8 +9267,10 @@ function investBadge() {}
    par collectionSnapshot(), exactement comme `gradedCards` avant eux : aucune
    interface ne les touche plus, mais rien n'est détruit et les 37 produits
    restent dans le compte, récupérables par « Télécharger une copie ». */
+const INVEST_MODES = ['cards', 'masterset', 'value'];
+function investModeNow() { return INVEST_MODES.includes(state.investMode) ? state.investMode : 'cards'; }
 function renderInvest() {
-  if (state.investMode !== 'masterset') state.investMode = 'cards';
+  state.investMode = investModeNow();
   state.investSeriesOpen = null;   // entrer dans la section ramène toujours à la grille des séries
   state.mastersetOpen = null;
   document.getElementById('view-invest').innerHTML = investSwitchHTML() + '<div id="inv-mode-body"></div>';
@@ -9277,29 +9283,29 @@ function renderInvest() {
    dans un masterset : là on est DANS quelque chose, la sortie est la flèche
    de retour. Voir `#view-invest[data-series-open]` dans style.css. */
 function investSwitchHTML() {
-  const m = state.investMode === 'masterset' ? 'masterset' : 'cards';
-  const tab = (id, label) => `<button class="inv-switch-btn ${m === id ? 'active' : ''}" role="tab"
+  const m = investModeNow();
+  const tab = (id, label) => `<button class="inv-switch-btn ${m === id ? 'active' : ''}" role="tab" data-mode="${id}"
       aria-selected="${m === id}" onclick="setInvestMode('${id}')">${label}</button>`;
   return `<div class="inv-switch-wrap">
     <div class="inv-switch" id="inv-switch" data-mode="${m}" role="tablist" aria-label="Volet de la Collection">
       <span class="inv-switch-pill" aria-hidden="true"></span>
-      ${tab('cards', 'Cartes')}${tab('masterset', 'Masterset')}
+      ${tab('cards', 'Cartes')}${tab('masterset', 'Masterset')}${tab('value', 'Valeur')}
     </div></div>`;
 }
 // La bascule est ANIMÉE : on déplace la pastille et on repeint le volet, on ne
 // reconstruit pas la barre (sans quoi la pastille sauterait au lieu de glisser).
 function paintInvestSwitch() {
   const sw = document.getElementById('inv-switch'); if (!sw) return;
-  const m = state.investMode === 'masterset' ? 'masterset' : 'cards';
+  const m = investModeNow();
   sw.dataset.mode = m;
-  sw.querySelectorAll('.inv-switch-btn').forEach((b, i) => {
-    const on = (i === 0) === (m === 'cards');
+  sw.querySelectorAll('.inv-switch-btn').forEach(b => {
+    const on = b.dataset.mode === m;
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', String(on));
   });
 }
 function setInvestMode(mode) {
-  mode = mode === 'masterset' ? 'masterset' : 'cards';
+  mode = INVEST_MODES.includes(mode) ? mode : 'cards';
   if (state.investMode === mode) return;
   state.investMode = mode;
   state.investSeriesOpen = null; state.mastersetOpen = null;
@@ -9320,6 +9326,7 @@ function renderInvestBody() {
   // rendu du volet : les deux moteurs ignorent les nœuds déjà équipés.
   setTimeout(() => { attachSpotlights(body); attachReveals(body); }, 0);
   if (state.investMode === 'masterset') { renderMastersetBody(body); return; }
+  if (state.investMode === 'value') { renderValueBody(body); return; }
   {
     body.innerHTML = investCardsBodyHTML();
     attachArtUpgrade(body);
@@ -9367,6 +9374,72 @@ function renderInvestBody() {
     if (!window._investCountedCards && state.investCards.length) { window._investCountedCards = true; animateCount(document.getElementById('inv-kpi-value'), cardsTotalValue()); }
   }
 }
+/* ══════════════════════════════════════════════════════════════════════
+   LE VOLET « VALEUR » — combien vaut ma collection, et quelles cartes la font
+
+   En haut, le total (la même somme que partout : cardsTotalValue), énorme,
+   sur un soleil doré. Dessous, TOUTES les cartes de la Collection, de la plus
+   chère à la moins chère, chacune avec son étiquette de prix — les trois
+   premières portent une médaille. Une carte possédée en plusieurs exemplaires
+   n'apparaît qu'une fois, avec sa pastille « ×N » ; son étiquette donne la
+   cote À L'UNITÉ (c'est elle qui classe), le total la compte N fois.
+   Les cartes encore sans cote ferment la marche.
+   1 400 vignettes : `content-visibility:auto` (voir .vcard) ne peint que
+   celles qui sont à l'écran, et les visuels sont en `low`, chargés au besoin.
+   L'œil est le MÊME que celui de l'accueil : masquer ici masque là-bas.
+   ══════════════════════════════════════════════════════════════════════ */
+function valueCardsList() {
+  const by = new Map();
+  for (const p of state.investCards || []) {
+    if (!p.cardId) continue;
+    const e = by.get(p.cardId);
+    if (e) { e.qty += cardQty(p); if (!e.image && p.image) e.image = p.image; continue; }
+    by.set(p.cardId, { id: p.cardId, name: p.name || p.cardId, image: p.image || '', setId: p.setId || '',
+      localId: p.localId || '', qty: cardQty(p), cote: cardCote(p) });
+  }
+  return [...by.values()].sort((a, b) =>
+    (b.cote ?? -1) - (a.cote ?? -1) || String(a.name).localeCompare(String(b.name)));
+}
+function renderValueBody(body) {
+  const list = valueCardsList();
+  const hidden = homeValueHidden();
+  const total = cardsTotalValue();
+  const copies = list.reduce((a, c) => a + c.qty, 0);
+  const MEDAL = ['vmedal-1', 'vmedal-2', 'vmedal-3'];
+  body.innerHTML = `
+    <section class="vtop reveal" style="--i:0">
+      <span class="vtop-sun" aria-hidden="true"></span>
+      <span class="vtop-coin" aria-hidden="true">€</span>
+      <span class="vtop-n" id="inv-total-value" data-v="${esc(total > 0 ? fmt(total) : '0 €')}">${hidden ? '*** €' : esc(total > 0 ? fmt(total) : '0 €')}</span>
+      <span class="vtop-row">
+        <span class="vpill">${copies.toLocaleString('fr-FR')} carte${copies > 1 ? 's' : ''}</span>
+        <button class="hvalue-eye js-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
+          title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
+      </span>
+    </section>
+    ${list.length ? `<div class="vgrid">${list.map((c, i) => `
+      <button class="vcard" data-cc="${esc(c.id)}" style="--i:${Math.min(i, 14)}" onclick="openCardDetail('${esc(c.id)}')"
+        aria-label="${esc(c.name)}${c.cote != null ? ' — ' + esc(fmt(c.cote)) : ''}">
+        <span class="vcard-art">${c.image
+          ? `<img src="${IMG(c.image, 'low')}" alt="" loading="lazy" decoding="async"
+              onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.setId)}','${jss(c.name)}')">`
+          : noImgHTML(c.localId, c.name, c.setId)}</span>
+        ${i < 3 && c.cote != null ? `<span class="vmedal ${MEDAL[i]}" aria-hidden="true">${i + 1}</span>` : ''}
+        ${c.qty > 1 ? `<span class="vcard-qty">×${c.qty}</span>` : ''}
+        ${c.cote != null ? `<span class="vcard-tag" data-v="${esc(fmt(c.cote))}">${hidden ? '***' : esc(fmt(c.cote))}</span>` : `<span class="vcard-tag vcard-tag-none">?</span>`}
+        <span class="vcard-name">${esc(c.name)}</span>
+      </button>`).join('')}</div>`
+    : `<div class="empty-state"><div class="empty-state-icon">${ICO.plus}</div><div class="empty-state-title">Pas encore de carte</div>
+        <button class="btn btn-primary" onclick="setInvestMode('cards')"><span>Ouvrir une série</span></button></div>`}`;
+  hydrateFallbackImages(body);
+  paintCards(body);
+  // Les cartes jamais cotées le sont en arrière-plan ; prefetchCardPrices
+  // re-rend ce volet quand elles arrivent.
+  // Une seule fois par session : chaque palier re-rend le volet, et relancer
+  // la recherche à chaque rendu redemanderait sans fin les cartes introuvables.
+  if (!window._valuePrefetched && list.some(c => c.cote == null)) { window._valuePrefetched = true; prefetchCardPrices(); }
+}
+
 function investKpisHTML(t) {
   const pos = t.pnl >= 0;
   return `<div class="inv-kpis">
@@ -9830,7 +9903,7 @@ function cardsBlocsHTML(groups) {
         <span class="bloc-chev" aria-hidden="true">${CHEV}</span>
         <span class="bloc-name">${esc(b.name)}</span>
         <span class="bloc-meta">${b.series.filter(g => g.count).length} / ${b.series.length} série${b.series.length > 1 ? 's' : ''} · ${b.count} carte${b.count > 1 ? 's' : ''}</span>
-        <span class="bloc-val">${fmt(b.value)}</span>
+        ${b.value > 0 ? `<span class="bloc-val">${fmt(b.value)}</span>` : ''}
       </button>
       <div class="bloc-body"${open ? '' : ' hidden'}>${cardsSeriesGridHTML(b.series)}</div>
     </section>`;
@@ -9880,8 +9953,8 @@ function cardsSeriesGridHTML(groups) {
     <button class="cardser-bubble" onmouseenter="prefetchSeriesArt('${esc(g.setId)}');prefetchSeriesCatalog('${esc(g.setId)}')" onclick="openInvestSeries('${esc(g.setId)}')">
       <div class="cardser-logo">${logoSrc(g.setId, g.logo) ? `<img src="${logoSrc(g.setId, g.logo)}" alt="${esc(g.setName)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'cardser-fallback',textContent:'◆'}))">` : `<div class="cardser-fallback">◆</div>`}</div>
       <div class="cardser-name">${esc(g.setName)}</div>
-      <div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}${g.date ? ` · ${esc(g.date.slice(0, 4))}` : ''}</div>
-      <div class="cardser-val">${fmt(g.value)}</div>
+      ${g.count ? `<div class="cardser-count">${g.count} carte${g.count > 1 ? 's' : ''}</div>` : ''}
+      ${g.value > 0 ? `<div class="cardser-val">${fmt(g.value)}</div>` : ''}
     </button>`).join('')}</div>`;
 }
 // `groups` est passé par l'appelant quand il l'a déjà : regrouper 1 300 cartes
@@ -10034,7 +10107,7 @@ function investCardThumbHTML(p, i) {
       <button class="remove-btn" onclick="event.stopPropagation();deleteInvestCard('${p.id}')" title="Retirer de la collection" aria-label="Retirer ${esc(p.name)}">${ICO.close}</button>
       <div class="card-thumb-info" style="cursor:pointer" onclick="${open}">
         <div class="card-thumb-name">${esc(p.name)}</div>
-        <div class="card-thumb-sub">#${p.localId || '—'}</div>
+        ${p.localId ? `<div class="card-thumb-sub">#${esc(String(p.localId))}</div>` : ''}
         <div class="cv-skeleton" data-value="${esc(cid)}"></div>
       </div>
     </div>`;
@@ -10081,7 +10154,7 @@ function investMissingThumbHTML(c, i) {
         onclick="event.stopPropagation();${info}">${ICO.infoDot}</button>
       <div class="card-thumb-info">
         <div class="card-thumb-name">${esc(c.name)}</div>
-        <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>
+        ${c.localId ? `<div class="card-thumb-sub">#${esc(String(c.localId))}</div>` : ''}
       </div>
     </div>`;
 }
@@ -10946,7 +11019,7 @@ function msSlotHTML(m, c, hasRev, i) {
     </div>
     <div class="card-thumb-info">
       <div class="card-thumb-name">${esc(c.name)}</div>
-      <div class="card-thumb-sub">#${esc(String(c.localId || '—'))}</div>
+      ${c.localId ? `<div class="card-thumb-sub">#${esc(String(c.localId))}</div>` : ''}
     </div>
     <div class="ms-togs ${hasRev ? '' : 'solo'}">${tog('n', 'Normale', hasN)}${hasRev ? tog('r', 'Reverse', hasR) : ''}</div>
   </div>`;
@@ -11312,6 +11385,7 @@ async function repairUnknownSets(onDone) {
 function prefetchCardPrices() {
   ensurePrices(trackedCardIds(), n => {
     if (!n) return;
+    if (state.view === 'invest' && state.investMode === 'value') renderInvestBody();
     if (state.view === 'invest' && state.investMode === 'cards') { const v = document.getElementById('inv-kpi-value'); if (v) v.textContent = fmt(cardsTotalValue()); if (state.investSeriesOpen) refreshSeriesCotes(state.investSeriesOpen); }
     if (state.view === 'home') computeCollectionValue();
   });
