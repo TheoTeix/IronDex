@@ -409,9 +409,13 @@ textarea.input{min-height:96px;padding:12px 14px;line-height:1.5;resize:vertical
    ═══════════════════════════════════════════════════════════════════ */
 .app{position:relative;z-index:1;display:flex;min-height:100svh}
 /* Révélation de l'app à la fin de l'intro (runIntro pose ces classes). */
-@keyframes arrive{from{opacity:0;transform:scale(.988)}to{opacity:1;transform:none}}
+/* L'arrivée : un fondu et un glissement de 10 px. Plus de `scale` : agrandir
+   l'app entière oblige le navigateur à re-rastériser TOUT l'écran à chaque
+   image — c'était le dernier sursaut du chargement. Une translation, elle, se
+   compose sans rien redessiner. */
+@keyframes arrive{from{opacity:0;transform:translate3d(0,10px,0)}to{opacity:1;transform:none}}
 .app.booting{opacity:0}
-.app.arrive{animation:arrive 720ms var(--ease-out) both}
+.app.arrive{animation:arrive 520ms var(--ease-out) both}
 
 /* ── RAIL (desktop) ── */
 .rail{
@@ -2852,44 +2856,55 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   transition:color var(--flow)}
 .fp-loose .fp-auto-mark svg{display:block}
 
-/* ═══════════════════ INTRO (chargement) ═══════════════════ */
+/* ═══════════════════ INTRO (chargement) ═══════════════════
+   Voir runIntro. Règle d'or : rien ici n'anime autre chose que transform et
+   opacity — le compositeur fait tourner le soleil et glisser la barre même
+   pendant que le fil principal prépare l'app. */
 #intro{
-  position:fixed;inset:0;z-index:var(--z-intro);display:grid;place-items:center;
+  --round:ui-rounded,"SF Pro Rounded","SF Pro Display",-apple-system,BlinkMacSystemFont,sans-serif;
+  position:fixed;inset:0;z-index:var(--z-intro);display:grid;place-items:center;overflow:hidden;
   background:var(--v-0);
-  transition:opacity 620ms var(--ease-out),visibility 620ms;
+  transition:opacity 480ms var(--ease-out),visibility 480ms;
 }
 #intro.exit{opacity:0;visibility:hidden;pointer-events:none}
-@keyframes bloom{0%{opacity:0}30%{opacity:.9}100%{opacity:0}}
-.intro-flash.bloom{animation:bloom 640ms var(--ease-out) both}
-#intro-canvas{position:absolute;inset:0;width:100%;height:100%}
-.intro-vignette{position:absolute;inset:0;pointer-events:none;
-  background:radial-gradient(70% 60% at 50% 46%,transparent 34%,rgba(3,4,6,.86) 100%)}
-.intro-strike{position:absolute;left:50%;top:0;width:2px;height:0;translate:-50% 0;pointer-events:none;
-  background:linear-gradient(180deg,transparent,var(--acc),transparent);opacity:0}
-.intro-flash{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0}
-.intro-hud{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:14px;
+#intro.exit .intro-hud{transform:scale(1.04);transition:transform 480ms var(--ease-out)}
+.intro-sun{position:absolute;left:50%;top:50%;width:max(130vmin,900px);aspect-ratio:1;border-radius:50%;
+  margin:calc(max(130vmin,900px) / -2) 0 0 calc(max(130vmin,900px) / -2);
+  background:repeating-conic-gradient(rgba(255,196,84,.2) 0deg 7deg,transparent 7deg 18deg);
+  -webkit-mask:radial-gradient(circle,#000 0 10%,rgba(0,0,0,.5) 28%,transparent 52%);
+          mask:radial-gradient(circle,#000 0 10%,rgba(0,0,0,.5) 28%,transparent 52%);
+  animation:intro-sun 50s linear infinite;will-change:transform}
+@keyframes intro-sun{to{transform:rotate(1turn)}}
+.intro-hud{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;
   padding:0 24px;text-align:center}
-/* Même raison que .brand-mark : à 62 px, un rayon CSS de 19 px coupait dans la
-   tuile (sa propre courbure vaut ≈9 px à cette taille). L'ombre reste, mais
-   posée sur l'image elle-même pour qu'elle suive la forme et non un carré. */
-.intro-mark{width:62px;height:62px;filter:drop-shadow(0 14px 30px rgba(0,0,0,.55))}
+.intro-mark{width:84px;height:84px;filter:drop-shadow(0 16px 26px rgba(0,0,0,.55));
+  animation:intro-bob 2.6s ease-in-out infinite alternate;will-change:transform}
 .intro-mark img{width:100%;height:100%;object-fit:contain}
-.intro-logo{font-size:clamp(38px,7vw,64px);font-weight:900;letter-spacing:-.045em;line-height:1}
-.intro-logo span{color:var(--acc);transition:color var(--flow)}
-.intro-tag{font-size:11px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--t3)}
-.intro-bar-wrap{width:min(280px,64vw);height:3px;border-radius:99px;background:rgba(255,255,255,.1);
-  overflow:hidden;margin-top:8px}
-/* Remplissage de progression. La barre occupe TOUTE la largeur et c'est un
-   `transform:scaleX()` (posé par runIntro à chaque image) qui dit où elle en
-   est : le compositeur s'en charge seul, sans mise en page ni repeinture.
-   L'ancienne version animait `width` avec une transition CSS réécrite toutes
-   les 90 ms — jamais terminée, et un layout du document par image. C'était la
-   saccade du chargement.
-   Pas de `transition` ici : l'interpolation est faite en JS (rAF), une
-   transition par-dessus ne ferait que la retarder. */
-.intro-bar{height:100%;width:100%;border-radius:99px;background:var(--acc);
-  transform:scaleX(0);transform-origin:0 50%;will-change:transform}
-.intro-pct{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--t3);font-variant-numeric:tabular-nums}
+@keyframes intro-bob{from{transform:translateY(-5px) rotate(-6deg)}to{transform:translateY(5px) rotate(6deg)}}
+.intro-logo{font:900 clamp(40px,8vw,62px)/1 var(--round);letter-spacing:-.01em;color:#fff;text-shadow:0 4px 0 rgba(0,0,0,.25)}
+.intro-logo span{color:var(--acc)}
+/* La barre-jouet : une gouttière creusée, un remplissage vert bombé qui GLISSE
+   (translateX — un scaleX écraserait les rayures quand la barre est courte),
+   des rayures qui défilent, un reflet en haut. */
+.intro-track{position:relative;width:min(300px,72vw);height:22px;margin-top:10px;padding:4px;border-radius:999px;
+  overflow:hidden;background:rgba(0,0,0,.35);box-shadow:inset 0 3px 5px rgba(0,0,0,.45),0 1px 0 rgba(255,255,255,.07)}
+.intro-bar{position:relative;height:100%;width:100%;border-radius:999px;overflow:hidden;
+  background:linear-gradient(180deg,#7CF5CF,#18B486);
+  box-shadow:inset 0 3px 0 rgba(255,255,255,.45),inset 0 -3px 0 rgba(0,0,0,.18);
+  transform:translate3d(-100%,0,0);will-change:transform}
+.intro-stripes{position:absolute;top:0;bottom:0;left:-40px;right:0;
+  background:repeating-linear-gradient(-45deg,rgba(255,255,255,.22) 0 8px,transparent 8px 16px);
+  animation:intro-stripes .6s linear infinite;will-change:transform}
+@keyframes intro-stripes{to{transform:translateX(22.6px)}}
+.intro-pct{min-width:64px;padding:6px 12px;border-radius:999px;font:900 15px/1 var(--round);color:#fff;
+  font-variant-numeric:tabular-nums;background:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+/* Pleine : un petit « pop » de la pastille au moment du ding. */
+#intro.full .intro-pct{color:#3b2400;background:linear-gradient(180deg,#FFE27A,#FFB938);
+  animation:intro-pop 300ms var(--ease-out)}
+@keyframes intro-pop{50%{transform:scale(1.18)}}
+@media (prefers-reduced-motion:reduce){
+  .intro-sun,.intro-mark,.intro-stripes{animation:none}
+}
 
 /* ═══════════════════ OVERLAY DE SYNCHRO ═══════════════════ */
 .refresh-overlay{

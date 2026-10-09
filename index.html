@@ -44,7 +44,7 @@
   <title>MiloDex</title>
   <link rel="icon" type="image/png" href="favicon.png?v=milo2">
   <link rel="apple-touch-icon" href="favicon.png?v=milo2">
-  <link rel="stylesheet" href="style.css?v=ui101">
+  <link rel="stylesheet" href="style.css?v=ui102">
   <!-- ══ LA POIGNÉE DE MAIN, PAYÉE D'AVANCE ══════════════════════════
        MESURÉ : le premier visuel de carte coûtait 330 ms, dont 222 ms de
        seule négociation TLS avec assets.tcgdex.net — avant même qu'un octet
@@ -127,19 +127,17 @@
   </defs>
 </svg>
 
-<!-- ══ INTRO : chargement réel (modèles 3D) puis révélation ══ -->
+<!-- ══ INTRO : le chargement, dans la langue de l'app (voir runIntro) ══
+     Tout ce qui bouge ici est en transform/opacity : le compositeur l'anime
+     seul, même pendant que le fil principal prépare l'app. -->
 <div id="intro">
-  <canvas id="intro-canvas"></canvas>
-  <div class="intro-strike" id="intro-strike"></div>
-  <div class="intro-vignette"></div>
+  <div class="intro-sun" aria-hidden="true"></div>
   <div class="intro-hud">
     <span class="intro-mark" aria-hidden="true"><img src="logo.png?v=milo2" alt=""></span>
     <div class="intro-logo">Milo<span>Dex</span></div>
-    <div class="intro-tag">Le coffre</div>
-    <div class="intro-bar-wrap"><div class="intro-bar" id="intro-bar"></div></div>
+    <div class="intro-track" aria-hidden="true"><div class="intro-bar" id="intro-bar"><i class="intro-stripes"></i></div></div>
     <div class="intro-pct" id="intro-pct" role="status" aria-live="polite">0%</div>
   </div>
-  <div class="intro-flash" id="intro-flash"></div>
 </div>
 
 <!-- ══ AURORA — la matière que le verre réfracte ══
@@ -466,7 +464,7 @@
 <!-- Coordonnées du projet Supabase. Chargé AVANT app.js : le premier geste
      du démarrage est de relire la session, et il lui faut ces deux clés.
      La clé « anon » est publiable — voir l'en-tête de cloud-config.js. -->
-<script src="cloud-config.js?v=ui101"></script>
-<script src="app.js?v=ui101"></script>
+<script src="cloud-config.js?v=ui102"></script>
+<script src="app.js?v=ui102"></script>
 </body>
 </html>

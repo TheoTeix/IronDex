@@ -3960,21 +3960,9 @@ function refreshInvestTotals() {
 // Précharge TOUT ce dont l'app a besoin (modèles 3D, puis les cotes encore
 // inconnues) et rapporte la progression réelle (0→1). Chaque tâche a un délai
 // de sécurité pour ne jamais bloquer le loader.
-function preloadEverything(onProgress) {
-  // Sur téléphone il n'y a AUCUN modèle à attendre : la barre part directement
-  // à 100 % au lieu de faire patienter sur 9 Mo qui ne seront pas affichés.
-  const phone = isPhone();
-  const total = phone ? 1 : 2;
-  let done = 0;
-  const bump = () => { done++; if (onProgress) onProgress(done / total); };
-  const withTimeout = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), new Promise(r => setTimeout(r, ms))]);
-  const modelJobs = phone ? [Promise.resolve().then(bump)] : [
-    withTimeout(loadModelSource('milotic', window.MILOTIC_GLB_BASE64, 'milotic.glb'), 15000).then(bump),
-    withTimeout(loadModelSource('giratina', window.GIRATINA_GLB_BASE64, 'giratina.glb'), 15000).then(bump),
-  ];
-  // Les cotes ENREGISTRÉES s'affichent déjà : on ne demande au réseau que
-  // celles qu'on n'a jamais eues, en arrière-plan, puis on met à jour EN
-  // PLACE (aucun re-render, donc aucune animation rejouée).
+// Les cartes jamais cotées le sont en arrière-plan juste après l'arrivée de
+// l'app (avant, c'était l'intro 3D qui le lançait, et seulement sur ordinateur).
+function bootPrices() {
   const ids = trackedCardIds();
   ensurePrices(ids, (n, finished) => {
     if (!n) return;
@@ -3983,7 +3971,6 @@ function preloadEverything(onProgress) {
     if (finished && !_priceSyncedAt) { _priceSyncedAt = Date.now(); flushPriceCache(); }
     if (state.view === 'home') { computeCollectionValue(); fillWishlistRemaining(state.wishlists); }
   });
-  return Promise.all(modelJobs);
 }
 function fmt(v) {
   if (v == null) return '—';
@@ -8791,389 +8778,170 @@ function initHero3D() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   INTRO CINÉMATIQUE
-   Milotic + Giratina émergent des abysses pendant le chargement,
-   puis « warp + flash » vers l'accueil.
+   INTRO — le chargement (voir runIntro)
    ═══════════════════════════════════════════════════════════════════ */
-function b64ToArrayBuffer(b64) {
-  const bin = atob(b64); const len = bin.length; const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
+/* ── LE CHARGEMENT ──────────────────────────────────────────────────────
+   Refait le 2026-10-09 : « dans le même style que l'app, et fluide — très
+   souvent il saute, saccade, sursaute ».
+
+   POURQUOI ÇA SAUTAIT. Sur ordinateur, le chargement était une scène WebGL
+   (Milobellus + Giratina, 9 Mo de modèles à décoder, 520 particules, des
+   éclairs) qui tournait pendant que le fil principal faisait AUSSI tout le
+   démarrage : relire IndexedDB, interroger le dépôt, décoder ces mêmes
+   modèles, puis peindre l'app. Chaque gros morceau de travail volait une ou
+   plusieurs images à la scène — d'où les à-coups. Et l'arrivée de l'app
+   agrandissait `.app` entière (scale), ce qui oblige le navigateur à
+   re-rastériser tout l'écran au pire moment.
+
+   CE QUI CHANGE.
+   · Plus de 3D : un soleil, le logo qui se balance, une barre-jouet. Tout est
+     en `transform`/`opacity`, c'est-à-dire animé par le COMPOSITEUR : même
+     quand le fil principal est occupé, le soleil tourne et la barre glisse.
+   · Le remplissage est un `translateX` (pas un `scaleX`) : les rayures de la
+     barre ne s'écrasent pas quand elle est courte.
+   · La progression est lissée par images (dt), elle ne peut que monter, et
+     elle suit le vrai démarrage (`_introReady`) — 92 % au plus tant que l'app
+     n'est pas prête, 100 % quand elle l'est.
+   · La sortie : la barre finit, on laisse 160 ms pour la voir pleine, puis
+     l'écran s'efface en fondu pendant que l'app se peint DESSOUS.
+   · Un petit son : un « plop » qui monte à chaque dixième, et un « ding » à la
+     fin (WebAudio, synthétisé : aucun fichier). Les navigateurs interdisent le
+     son avant le premier geste de l'utilisateur : quand c'est le cas, on se
+     tait — et si on touche l'écran pendant le chargement, le son démarre là.
+   ─────────────────────────────────────────────────────────────────────── */
+const INTRO_SOUND_KEY = 'milodex:intro-sound';
+function introSound() {
+  let on = true;
+  try { on = localStorage.getItem(INTRO_SOUND_KEY) !== '0'; } catch {}
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!on || !AC) return { step() {}, done() {}, close() {} };
+  let ctx = null;
+  try { ctx = new AC(); } catch { return { step() {}, done() {}, close() {} }; }
+  const master = ctx.createGain(); master.gain.value = 0.16; master.connect(ctx.destination);
+  const unlock = () => { ctx.resume().catch(() => {}); };
+  unlock();
+  addEventListener('pointerdown', unlock, { once: true, capture: true });
+  addEventListener('keydown', unlock, { once: true, capture: true });
+  const live = () => ctx.state === 'running';
+  // Une note courte : attaque de 6 ms, retombée exponentielle.
+  const note = (freq, at, dur, vol, type = 'sine') => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, at);
+    o.frequency.exponentialRampToValueAtTime(freq * 1.5, at + dur * 0.6);   // le petit « bloup » qui monte
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    o.connect(g); g.connect(master); o.start(at); o.stop(at + dur + 0.02);
+  };
+  // Gamme pentatonique majeure : quel que soit l'ordre, ça sonne « content ».
+  const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5, 1567.98, 1760];
+  return {
+    step(i) { if (live()) note(SCALE[Math.min(i, SCALE.length - 1)], ctx.currentTime, 0.11, 0.5); },
+    done() {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.02;
+      note(1046.5, t, 0.5, 0.45, 'triangle');
+      note(1567.98, t + 0.07, 0.6, 0.35, 'sine');
+      note(2093, t + 0.14, 0.7, 0.22, 'sine');
+    },
+    close() { setTimeout(() => { try { ctx.close(); } catch {} }, 1200); },
+  };
 }
+
 function runIntro(onReveal) {
   const intro = document.getElementById('intro');
   // La coque s'appelle .app (rail + cadre + tab bar). Garde-fou : si elle
   // manquait, l'intro ne doit JAMAIS bloquer le démarrage de l'app.
   const shell = document.querySelector('.app');
   shell?.classList.add('booting');
+  const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-  // Sur téléphone on prend la MÊME sortie que « mouvement réduit » : un court
-  // fondu de marque. L'intro 3D coûte un contexte WebGL et le clonage des deux
-  // modèles (9 Mo) pour deux secondes d'écran — sur mobile, ce n'est pas un
-  // moment premium, c'est une attente.
-  const reduce = isPhone() || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const canvas = document.getElementById('intro-canvas');
-  const THREE = window.THREE;
-
-  // Révèle l'app une seule fois (avec garde-fou anti-échec)
-  let revealed = false;
   /* ── ON PEINT D'ABORD, ON ANIME ENSUITE ─────────────────────────────
-     Avant : on retirait `booting`, on posait `arrive` (720 ms d'animation),
-     PUIS on appelait onReveal() — c'est-à-dire le premier render() complet de
-     l'app. L'animation démarrait donc, et la frame suivante était mangée par
-     plusieurs dizaines de millisecondes de JavaScript : le fondu d'arrivée
-     sautait systématiquement ses premières images.
-     Maintenant onReveal() tourne pendant que `.app` est encore à opacity:0
-     (l'élément est en page, donc toutes les mesures — position de la pastille
-     de nav, hauteur des barres — restent valables), et l'animation ne part
-     qu'à la frame d'après, sur un fil principal libre. */
-  const reveal = () => {
-    if (revealed) return; revealed = true;
-    try { onReveal && onReveal(); } catch (e) { console.warn(e); }
-    // Deux images d'attente pour que le fil principal soit libre quand
-    // l'animation part… ET un filet de sécurité : requestAnimationFrame ne
-    // tourne PAS dans un onglet en arrière-plan, et l'app resterait alors
-    // invisible pour toujours. `startArrive` est idempotent, le premier des
-    // deux qui arrive gagne.
-    requestAnimationFrame(() => requestAnimationFrame(startArrive));
-    setTimeout(startArrive, 120);
-  };
-  let arrived = false;
+     onReveal() (le premier render complet) tourne pendant que `.app` est
+     encore à opacity:0 — l'élément est en page, donc toutes les mesures
+     restent valables — et l'arrivée ne part qu'à l'image d'après, sur un fil
+     principal libre. */
+  let revealed = false, arrived = false;
   const startArrive = () => {
     if (arrived) return; arrived = true;
     shell?.classList.remove('booting'); shell?.classList.add('arrive');
-    // La classe est RETIRÉE dès l'animation finie, et ce n'est pas cosmétique :
-    // `animation-fill-mode:both` garde la propriété `transform` sous contrôle de
-    // l'animation, donc `.app` reste une « containing block » — et TOUT ce qui
-    // est en position:fixed dedans (la tab bar du téléphone, le rail du desktop)
-    // se met à défiler avec la page au lieu de rester collé à l'écran.
+    // La classe est RETIRÉE dès l'animation finie : `animation-fill-mode:both`
+    // garderait `.app` comme « containing block », et tout ce qui est en
+    // position:fixed dedans (tab bar, rail) se mettrait à défiler.
     const done = () => shell?.classList.remove('arrive');
     shell?.addEventListener('animationend', done, { once: true });
-    setTimeout(done, 900);   // filet si l'événement ne vient pas (reduced-motion)
+    setTimeout(done, 900);
   };
-  const teardown = () => { try { intro && intro.remove(); } catch {} };
+  const reveal = () => {
+    if (revealed) return; revealed = true;
+    try { onReveal && onReveal(); } catch (e) { console.warn(e); }
+    // rAF ne tourne pas dans un onglet en arrière-plan : le minuteur garantit
+    // que l'app apparaît quand même. Le premier des deux gagne.
+    requestAnimationFrame(() => requestAnimationFrame(startArrive));
+    setTimeout(startArrive, 120);
+  };
 
-  // Repli : pas de 3D (téléphone, mouvement réduit, WebGL indisponible) →
-  // fondu de marque. La BARRE DE PROGRESSION vit ici aussi : sur ce chemin elle
-  // restait figée à 0 % puis l'app apparaissait d'un coup, ce qui donnait
-  // l'impression d'un chargement cassé. Elle suit maintenant les vraies étapes
-  // du démarrage (catalogue relu, cotes prêtes, premier rendu).
-  if (reduce || !canvas || !THREE) {
-    /* ── LA BARRE, EN 60 IMAGES PAR SECONDE ──────────────────────────────
-       Version d'avant : `setInterval(…, 90)` écrivait `style.width` en
-       pourcentage, et le CSS mettait une `transition:width 220ms` par-dessus.
-       Trois problèmes cumulés, et c'est exactement ce qu'on voyait :
-        · 11 écritures par seconde pour animer quelque chose de continu ;
-        · chaque transition de 220 ms était ÉCRASÉE 90 ms après son départ,
-          donc jamais terminée — la barre repartait sans cesse ;
-        · `width` se calcule en MISE EN PAGE : chaque image repassait par le
-          layout du document au moment précis où le démarrage a besoin du fil
-          principal.
-       Maintenant : une seule animation pilotée par requestAnimationFrame, sur
-       `transform:scaleX()` — c'est-à-dire sur le compositeur, sans layout ni
-       repeinture. Le pourcentage écrit à côté ne change qu'à l'entier près,
-       donc au plus une écriture de texte par point de progression. */
-    const bar0 = document.getElementById('intro-bar'), pct0 = document.getElementById('intro-pct');
-    let p = 6, target = 6, lastPct = -1, raf = 0, running = true;
-    const paint = () => {
-      if (bar0) bar0.style.transform = `scaleX(${(p / 100).toFixed(4)})`;
-      const r = Math.round(p);
-      if (r !== lastPct) { lastPct = r; if (pct0) pct0.textContent = r + '%'; }
-    };
-    // Montée continue et honnête : on avance vers 92 % pendant le vrai travail
-    // (lecture IndexedDB, relecture du dépôt, préparation du rendu), et on
-    // termine à 100 % au moment où l'app se révèle. `dt` normalise la vitesse :
-    // une image sautée n'a plus d'effet sur la progression.
-    let prev = performance.now(), lastFrame = prev;
-    const loop = now => {
-      if (!running) return;
-      const dt = Math.min(64, now - prev); prev = now; lastFrame = now;
-      p += (target - p) * (1 - Math.pow(0.0025, dt / 1000));
-      paint();
-      raf = requestAnimationFrame(loop);
-    };
+  const bar = document.getElementById('intro-bar'), pctEl = document.getElementById('intro-pct');
+  const sound = introSound();
+  let p = 0, target = 8, lastPct = -1, lastStep = 0, raf = 0, running = true, finishing = false;
+  const paint = () => {
+    if (bar) bar.style.transform = `translate3d(${(p - 100).toFixed(3)}%,0,0)`;
+    const r = Math.floor(p);
+    if (r !== lastPct) { lastPct = r; if (pctEl) pctEl.textContent = r + '%'; }
+    const step = Math.floor(p / 10);
+    if (step > lastStep && step < 10) { lastStep = step; sound.step(step - 1); }
+  };
+  // Lissage indépendant de la cadence : une image sautée ne fait ni sauter ni
+  // ralentir la barre. Plus rapide en fin de course, pour finir franchement.
+  let prev = performance.now(), lastFrame = prev;
+  const loop = now => {
+    if (!running) return;
+    const dt = Math.min(50, now - prev); prev = now; lastFrame = now;
+    const k = finishing ? 0.000001 : 0.02;
+    p = Math.min(100, p + (target - p) * (1 - Math.pow(k, dt / 1000)));
+    if (finishing && p > 99.6) p = 100;
     paint();
+    if (finishing && p >= 100) { running = false; exit(); return; }
     raf = requestAnimationFrame(loop);
-    const climb = setInterval(() => {
-      target = Math.min(92, target + (92 - target) * 0.3 + 2);
-      // FILET : requestAnimationFrame ne tourne pas dans un onglet en
-      // arrière-plan. Sans ceci, la barre resterait plantée à 6 % puis
-      // sauterait à 100 % au retour. On la fait avancer d'ici, au rythme de ce
-      // minuteur, dès que plus aucune image n'est arrivée.
-      if (performance.now() - lastFrame > 250) { p += (target - p) * 0.35; paint(); }
-    }, 140);
-    const set0 = v => { target = p = v; paint(); };
-    const done = () => {
-      clearInterval(climb); running = false; cancelAnimationFrame(raf); set0(100);
-      const flash = document.getElementById('intro-flash');
-      if (flash) flash.classList.add('bloom');
-      setTimeout(() => { intro && intro.classList.add('exit'); reveal(); }, 220);
-      setTimeout(teardown, 1000);
-    };
-    // On attend deux choses : que l'app soit PRÊTE (`_introReady`, résolu par le
-    // démarrage) et qu'un minimum de temps se soit écoulé. Sans ce plancher, la
-    // barre passerait de 6 à 100 % en un tiers de seconde — un clignotement,
-    // pas un chargement. Plafond à 4 s pour ne jamais retenir l'utilisateur.
-    const MIN_MS = reduce ? 500 : 950;
-    const t0 = performance.now();
-    const wait = window._introReady || Promise.resolve();
-    Promise.race([wait, new Promise(r => setTimeout(r, 4000))])
-      .then(() => setTimeout(done, Math.max(0, MIN_MS - (performance.now() - t0))));
-    return;
-  }
-
-  // ── Scène (abysses profonds, très sombre — révélé par les éclairs) ──
-  let W = innerWidth, H = innerHeight;
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x02070f, 0.0092);
-  const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 3000);
-  camera.position.set(0, 6, 340);
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-  renderer.setSize(W, H);
-  renderer.outputEncoding = THREE.sRGBEncoding;
-
-  const ambient = new THREE.AmbientLight(0x241a0a, 0.34); scene.add(ambient);
-  // Clé chaude (dorée) pour se marier au fond jaune et accrocher le métal ;
-  // le contre-jour violet + les éclairs cyan gardent le contraste électrique.
-  const key = new THREE.DirectionalLight(0xffce7a, 1.5); key.position.set(-1, 1, 1); scene.add(key);
-  const rim = new THREE.DirectionalLight(0xb488ff, 0.9); rim.position.set(1, .5, -1); scene.add(rim);
-  const glow = new THREE.PointLight(0x6fe0ff, 1.4, 700); glow.position.set(0, 30, 120); scene.add(glow);
-  const flashLight = new THREE.DirectionalLight(0xeafcff, 0); flashLight.position.set(0.2, 0.4, 1); scene.add(flashLight);
-  const boltLight = new THREE.PointLight(0xdff4ff, 0, 900); boltLight.position.set(0, 40, 40); scene.add(boltLight);
-
-  // Texture radiale douce (halos + particules)
-  function radialTex() {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    const g = c.getContext('2d').createRadialGradient(64, 64, 0, 64, 64, 64);
-    g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.35, 'rgba(255,255,255,.5)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    const ctx = c.getContext('2d'); ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-    const t = new THREE.Texture(c); t.needsUpdate = true; return t;
-  }
-  const dotTex = radialTex();
-
-  const halos = [];
-  function makeHalo(color, size, pos, op) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false }));
-    s.scale.set(size, size, 1); s.position.copy(pos); scene.add(s);
-    halos.push({ s, baseOp: op, ph: Math.random() * 6.28, spd: 0.5 + Math.random() * 0.6 });
-    return s;
-  }
-
-  // Champ de particules (neige marine → warp à la sortie)
-  const PN = 520; const pPos = new Float32Array(PN * 3); const pVel = [];
-  for (let i = 0; i < PN; i++) {
-    pPos[i*3] = (Math.random()-.5)*520; pPos[i*3+1] = (Math.random()-.5)*360; pPos[i*3+2] = (Math.random()-.5)*700 - 60;
-    pVel.push(6 + Math.random()*10);
-  }
-  const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-  const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ map: dotTex, color: 0x9fe6ff, size: 3.4, transparent: true, opacity: .7, blending: THREE.AdditiveBlending, depthWrite: false }));
-  scene.add(particles);
-
-  // ── Rais océaniques (god rays descendants) ──
-  const rays = new THREE.Group();
-  for (let i = 0; i < 9; i++) {
-    const geo = new THREE.PlaneGeometry(26 + Math.random() * 34, 620);
-    const mat = new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0x7fd8ff : 0x3aa8e8, transparent: true, opacity: 0.05 + Math.random() * 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
-    const p = new THREE.Mesh(geo, mat);
-    p.position.set(-260 + i * 62 + Math.random() * 30, 120, -180 - Math.random() * 120);
-    p.rotation.z = 0.16 + Math.random() * 0.12;
-    p.userData = { baseOp: mat.opacity, ph: Math.random() * 6.28, spd: 0.3 + Math.random() * 0.5 };
-    rays.add(p);
-  }
-  // Rais de lumière (rectangles translucides) retirés à la demande — non ajoutés à la scène.
-
-  // ── Éclairs (bolts zigzag) : géométries préparées, révélées par éclats ──
-  function makeBolt() {
-    const pts = []; let x = 0, y = 300;
-    while (y > -300) { pts.push(new THREE.Vector3(x, y, 0)); x += (Math.random() - 0.5) * 46; y -= 24 + Math.random() * 26; }
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color: 0xdff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-    const line = new THREE.Line(geo, mat);
-    line.visible = false; scene.add(line);
-    return line;
-  }
-  const bolts = [makeBolt(), makeBolt(), makeBolt(), makeBolt()];
-  let boltEnergy = 0, activeBolt = null;
-  function strike(big) {
-    activeBolt = bolts[(Math.random() * bolts.length) | 0];
-    activeBolt.position.set(-220 + Math.random() * 440, 0, -140 - Math.random() * 160);
-    activeBolt.scale.set(0.6 + Math.random() * 0.9, 1, 1);
-    activeBolt.rotation.z = (Math.random() - 0.5) * 0.5;
-    activeBolt.visible = true;
-    boltEnergy = big ? 1.0 : 0.7;
-    flashLight.intensity = big ? 7.5 : 4.8;
-    boltLight.intensity = big ? 6 : 3.5;
-    boltLight.position.set(activeBolt.position.x, 30, 60);
-    if (strikeEl) strikeEl.style.opacity = big ? '0.65' : '0.4';
-  }
-
-  const MODELS = [
-    { key: 'milotic', b64: window.MILOTIC_GLB_BASE64, file: 'milotic.glb',
-      // Sombres + très métalliques + quasi pas d'émissif → révélés par les
-      // lumières/éclairs de la scène (vraie réaction à la lumière).
-      material: { color: 0x1b4d74, emissive: 0x071c2b, emissiveIntensity: 0.12, metalness: 0.9, roughness: 0.34 },
-      // Milobellus DEVANT : grand, proche (z élevé), mouvement doux.
-      targetSize: 176, pos: { x: 48, y: -6, z: 55 }, rotY: -0.5, spin: 0.07, floatAmp: 5, floatSpd: 0.5,
-      halo: 0x2fb0ff, haloCore: 0xbff2ff, haloSize: 265 },
-    { key: 'giratina', b64: window.GIRATINA_GLB_BASE64, file: 'giratina.glb',
-      material: { color: 0x392a58, emissive: 0x270e3a, emissiveIntensity: 0.16, metalness: 0.58, roughness: 0.42 },
-      // Giratina DERRIÈRE : repoussé dans la profondeur (z très négatif), lent.
-      targetSize: 196, pos: { x: -74, y: 24, z: -80 }, rotY: 0.8, spin: -0.05, floatAmp: 6, floatSpd: 0.38,
-      halo: 0x8a3fd0, haloCore: 0xe0a8ff, haloSize: 380 },
-  ];
-  const built = [];
-  let modelsReady = 0;
-  function setup(root, cfg) {
-    root.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ ...cfg.material, flatShading: false, transparent: true, opacity: 1 }); } });
-    const box = new THREE.Box3().setFromObject(root); const c = box.getCenter(new THREE.Vector3()); const sz = box.getSize(new THREE.Vector3());
-    root.position.sub(c);
-    const scl = cfg.targetSize / (Math.max(sz.x, sz.y, sz.z) || 1);
-    const g = new THREE.Group(); g.scale.setScalar(scl); g.position.set(cfg.pos.x, cfg.pos.y, cfg.pos.z); g.rotation.y = cfg.rotY; g.add(root); scene.add(g);
-    // Trois halos superposés : large diffus, médian, cœur intense — pulsent + s'embrasent aux éclairs
-    makeHalo(cfg.halo, cfg.haloSize * 1.35, new THREE.Vector3(cfg.pos.x, cfg.pos.y + 8, cfg.pos.z - 80), 0.16);
-    makeHalo(cfg.halo, cfg.haloSize, new THREE.Vector3(cfg.pos.x, cfg.pos.y + 6, cfg.pos.z - 60), 0.34);
-    makeHalo(cfg.haloCore, cfg.haloSize * .55, new THREE.Vector3(cfg.pos.x, cfg.pos.y + 2, cfg.pos.z - 44), 0.6);
-    const mats = []; g.traverse(o => { if (o.isMesh && o.material) mats.push(o.material); });
-    built.push({ g, cfg, mats }); modelsReady++;
-  }
-  if (THREE.GLTFLoader) {
-    // Réutilise le cache partagé (clone) : parse unique, réutilisé par le hero
-    for (const cfg of MODELS) {
-      getModelClone(cfg.key, cfg.b64, cfg.file).then(root => setup(root, cfg)).catch(() => {});
-    }
-  }
-
-  // ── HUD progress ──
-  const bar = document.getElementById('intro-bar'); const pct = document.getElementById('intro-pct');
-  const flashEl = document.getElementById('intro-flash');
-  const strikeEl = document.getElementById('intro-strike');
-  let progress = 0;
-  // Même convention que le chemin sans 3D : `scaleX`, pas `width` (voir la note
-  // dans style.css). Ici on est déjà dans une boucle rAF, donc rien à ajouter.
-  let _pctLast = -1;
-  const setProg = v => {
-    progress = v;
-    if (bar) bar.style.transform = `scaleX(${(v / 100).toFixed(4)})`;
-    const r = Math.round(v);
-    if (r !== _pctLast) { _pctLast = r; if (pct) pct.textContent = r + '%'; }
   };
+  paint();
+  raf = requestAnimationFrame(loop);
+  // La cible avance toute seule vers 92 % pendant le vrai travail, de moins en
+  // moins vite : on ne voit jamais la barre stagner, ni arriver au bout avant
+  // l'app.
+  const climb = setInterval(() => {
+    if (!finishing) target = Math.min(92, target + (92 - target) * 0.16 + 1.2);
+    // FILET : onglet en arrière-plan → plus d'images ; on avance d'ici.
+    if (performance.now() - lastFrame > 250) {
+      p += (target - p) * 0.5; if (finishing) p = 100; paint();
+      if (finishing && p >= 100 && running) { running = false; exit(); }
+    }
+  }, 120);
 
+  let exited = false;
+  function exit() {
+    if (exited) return; exited = true;
+    clearInterval(climb); cancelAnimationFrame(raf);
+    sound.done(); sound.close();
+    intro?.classList.add('full');
+    // On laisse voir la barre PLEINE un instant, puis l'écran s'efface pendant
+    // que l'app se peint dessous (le fondu est sur le compositeur : le premier
+    // rendu ne peut pas le faire saccader).
+    setTimeout(() => {
+      intro?.classList.add('exit');
+      requestAnimationFrame(reveal); setTimeout(reveal, 60);
+      setTimeout(() => { try { intro && intro.remove(); } catch {} }, 700);
+    }, reduce ? 60 : 170);
+  }
+  const finish = () => { finishing = true; target = 100; };
+
+  // On attend que l'app soit PRÊTE et qu'un minimum de temps soit passé (sans
+  // plancher, la barre ferait 0 → 100 % en un clignement). Plafond : 6 s.
+  const MIN_MS = reduce ? 400 : 1100;
   const t0 = performance.now();
-  // Le chargement est RÉEL : on précharge les modèles 3D (les cotes, elles, sont
-  // relues du disque et complétées en fond). La barre suit la progression ; on ne
-  // révèle l'app qu'une fois tout prêt (min. d'affichage pour l'esthétique,
-  // plafond de sécurité pour ne jamais rester bloqué sur un réseau lent).
-  // Le minimum laisse l'intro exister (marque) sans retenir l'utilisateur ;
-  // le plafond couvre un réseau lent sans jamais bloquer indéfiniment.
-  const MIN_MS = 1500, MAX_MS = 12000;
-  let preloadFrac = 0, preloadDone = false;
-  preloadEverything(f => { preloadFrac = Math.max(preloadFrac, f); })
-    .then(() => { preloadDone = true; })
-    .catch(() => { preloadDone = true; });
-  let exiting = false, warp = 0, nextFlash = 1.0;
-  // Sorties de secours par timers : le tick rAF est gelé quand l'onglet est en
-  // arrière-plan — sans ceci, l'intro resterait affichée indéfiniment.
-  const exitWhenReady = () => {
-    if (exiting) return;
-    if (preloadDone) { const wait = Math.max(0, MIN_MS - (performance.now() - t0)); setTimeout(() => beginExit(), wait); }
-    else setTimeout(exitWhenReady, 250);
-  };
-  setTimeout(exitWhenReady, MIN_MS);
-  setTimeout(() => beginExit(), MAX_MS);
-
-  function beginExit() {
-    if (exiting) return; exiting = true;
-    setProg(100);
-    flashEl && flashEl.classList.add('bloom');
-    // Révèle l'app au pic du flash, puis dissout l'intro
-    setTimeout(reveal, 330);
-    setTimeout(() => { intro && intro.classList.add('exit'); }, 340);
-    setTimeout(() => { cancelAnimationFrame(raf); try { renderer.dispose(); } catch {} removeEventListener('resize', onResize); teardown(); }, 1150);
-  }
-
-  function onResize() { W = innerWidth; H = innerHeight; camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H); }
-  addEventListener('resize', onResize);
-
-  const clock = new THREE.Clock(); let raf = 0;
-  function tick() {
-    const t = clock.getElapsedTime();
-    const elapsed = performance.now() - t0;
-
-    // Progression : suit le préchargement réel (modèles + cotes). On garde une
-    // petite marge tant que ce n'est pas 100 % fini pour que la barre ne colle
-    // pas à 100 avant la vraie fin.
-    if (!exiting) {
-      const target = preloadDone ? 100 : Math.min(96, preloadFrac * 100);
-      if (target > progress) setProg(progress + (target - progress) * 0.14);
-      // Sortie : tout est prêt ET le minimum d'affichage est écoulé — ou plafond.
-      if ((preloadDone && elapsed >= MIN_MS) || elapsed >= MAX_MS) beginExit();
-    }
-
-    // ⚡ Éclairs : plus fréquents, parfois en rafale double
-    if (t > nextFlash && !exiting) {
-      strike(Math.random() < 0.45);
-      if (Math.random() < 0.35) setTimeout(() => { if (!exiting) strike(false); }, 90 + Math.random() * 110); // double flash
-      nextFlash = t + 0.55 + Math.random() * 1.15;
-    }
-    // Décroissances
-    flashLight.intensity *= 0.86;
-    boltLight.intensity *= 0.8;
-    boltEnergy *= 0.82;
-    if (strikeEl) { const cur = parseFloat(strikeEl.style.opacity || '0'); strikeEl.style.opacity = (cur * 0.78) + ''; }
-    ambient.intensity = 0.32 + flashLight.intensity * 0.05;
-    // Éclat visible du bolt actif (scintillement pendant l'éclair)
-    if (activeBolt) {
-      activeBolt.material.opacity = boltEnergy * (0.6 + Math.random() * 0.4);
-      if (boltEnergy < 0.04) { activeBolt.visible = false; activeBolt = null; }
-    }
-
-    // Rais océaniques : respiration lente + embrasement aux éclairs
-    for (const r of rays.children) {
-      const u = r.userData;
-      r.material.opacity = u.baseOp * (0.65 + 0.35 * Math.sin(t * u.spd + u.ph)) + flashLight.intensity * 0.02;
-    }
-    // Halos : pulsation douce + flare synchronisé aux éclairs
-    for (const h of halos) {
-      h.s.material.opacity = h.baseOp * (0.7 + 0.3 * Math.sin(t * h.spd + h.ph)) + flashLight.intensity * 0.05;
-    }
-
-    // Modèles : rotation + flottement ; à la sortie, ils dérivent doucement et
-    // se DISSOLVENT dans le flash (fondu d'opacité) plutôt que de foncer vers la
-    // caméra — cela évite l'à-coup de remplissage (grands triangles) qui faisait
-    // « buguer » la toute fin de l'intro, tout en restant spectaculaire.
-    for (const m of built) {
-      m.g.rotation.y = m.cfg.rotY + t * m.cfg.spin;
-      m.g.position.y = m.cfg.pos.y + Math.sin(t * m.cfg.floatSpd) * m.cfg.floatAmp;
-      if (exiting) {
-        m.g.position.z += 3.4;                         // dérive avant douce et linéaire
-        m.g.rotation.y += warp * 0.02;                // léger tourbillon
-        for (const mm of m.mats) mm.opacity = Math.max(0, mm.opacity - 0.05);
-      }
-    }
-
-    // Particules : dérive vers la caméra ; warp = accélération à la sortie (bornée)
-    if (exiting) warp = Math.min(warp + 0.035, 1.3);
-    const arr = pGeo.attributes.position.array;
-    for (let i = 0; i < PN; i++) {
-      arr[i*3+2] += pVel[i] * (0.15 + warp * 2.2);
-      if (arr[i*3+2] > 320) { arr[i*3+2] = -700; }
-    }
-    pGeo.attributes.position.needsUpdate = true;
-    particles.material.size = 3.4 + warp * 7;
-    particles.material.opacity = 0.7 + warp * 0.3;
-
-    // Caméra : plongée lente pendant le chargement, poussée maîtrisée à la sortie
-    const targetZ = exiting ? 78 : 190 - Math.min(elapsed / MIN_MS, 1) * 150;
-    camera.position.z += (targetZ - camera.position.z) * (exiting ? 0.10 : 0.03);
-    camera.position.x += (Math.sin(t * 0.3) * 10 - camera.position.x) * 0.02;
-    camera.lookAt(0, 4, 0);
-
-    renderer.render(scene, camera);
-    raf = requestAnimationFrame(tick);
-  }
-  tick();
+  const ready = window._introReady || Promise.resolve();
+  Promise.race([ready, new Promise(r => setTimeout(r, 6000))])
+    .then(() => setTimeout(finish, Math.max(0, MIN_MS - (performance.now() - t0))));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -11710,20 +11478,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Le dépôt a eu tout ce temps pour répondre ; on lui laisse la fin du délai
   // pour que l'app arrive vraiment à jour, sans jamais dépasser 3 s.
   await Promise.race([cloudReady, new Promise(r => setTimeout(r, 3000))]).catch(() => {});
-  if (!isPhone()) await Promise.race([three, new Promise(r => setTimeout(r, 1800))]).catch(() => {});
-  // ARRIVÉE TARDIVE. Si le CDN a dépassé le plafond ci-dessus, l'intro est
-  // partie sans 3D et le premier rendu de l'accueil a trouvé un THREE absent :
-  // son canvas resterait vide jusqu'au prochain changement de vue. On rebranche
-  // donc la scène quand la bibliothèque finit par arriver. initHero3D est
-  // réentrant (une scène déjà construite est simplement réveillée), l'appel est
-  // sans risque.
-  three.then(ok => {
-    if (!ok || isPhone()) return;
-    setTimeout(() => { if (state.view === 'home') { try { initHero3D(); } catch (e) { console.warn('hero 3D tardif', e); } } }, 1200);
-  });
-  warmupModels();  // parse les GLB au plus tôt → cache chaud avant la fin de l'intro
+  // Plus d'attente de THREE ici : le chargement n'a plus de 3D. La
+  // bibliothèque arrive en arrière-plan pour les classeurs, et leurs modèles
+  // (9 Mo) sont décodés APRÈS l'arrivée de l'app, quand le navigateur est
+  // inactif — les décoder pendant le chargement, c'était lui voler des images.
   runIntro(() => {
     render();
+    bootPrices();
+    const whenIdle = window.requestIdleCallback || (f => setTimeout(f, 1));
+    setTimeout(() => whenIdle(() => three.then(ok => { if (ok) warmupModels(); }), { timeout: 4000 }), 2500);
     // LA PORTE ARRIVE AVEC L'APP, pas avant. L'afficher pendant l'intro
     // reviendrait à interrompre une animation par une modale ; l'afficher trop
     // tard laisserait entrevoir un coffre vide. Elle entre donc au moment
