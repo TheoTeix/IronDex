@@ -1287,6 +1287,9 @@ async function vaultPull(opts) {
   await idbSet(dbKey(), collectionSnapshot()).catch(() => {});
   markPushPending(false);
   vaultPaintStatus('ok');
+  // Le compte a pu arriver APRÈS le rattrapage du démarrage (qui n'avait alors
+  // rien à lire) : on le tente ici aussi. Il ne tourne qu'une fois par appareil.
+  setTimeout(syncWishOwnedToCollection, 0);
   if (!opts.boot) {
     repaintAll();
     if (!opts.quiet) toast('Collection mise à jour depuis ton compte', 'success');
@@ -5677,11 +5680,84 @@ function paintCardValues(ids) {
   list.forEach(paint);
   ensurePrices(list, n => { if (n) list.forEach(paint); });
 }
+/* ══════════════════════════════════════════════════════════════════════
+   WISHLIST → COLLECTION (2026-10-12)
+   « Quand on coche une carte de wishlist, elle s'ajoute dans la collection,
+   dans son set, avec son prix — sans doublon. »
+   · Cocher : la carte entre dans la Collection (même forme qu'un ajout depuis
+     la grille d'une série, voir addMissingCard), SAUF si elle y est déjà —
+     on compare l'identifiant de carte, jamais le nom.
+   · Décocher : on ne la retire que si c'est CETTE mécanique qui l'avait
+     ajoutée (`fromWish`) et qu'aucune autre wishlist ne la coche encore. Une
+     carte entrée dans la Collection autrement n'est jamais touchée.
+   · La cote arrive en tâche de fond (ensurePrices) : elle alimente aussitôt la
+     valeur de la série et le total.
+   ══════════════════════════════════════════════════════════════════════ */
+function wishCardToCollection(c) {
+  const cardId = String(c.id || '');
+  if (!cardId) return false;
+  if ((state.investCards || []).some(x => String(x.cardId) === cardId)) return false;
+  const [sid, lid] = splitCardId(cardId);
+  const setId = String(c.setId || sid || '');
+  const inf = getCachedSetInfo(setId);
+  const localId = c.localId != null && c.localId !== '' ? String(c.localId) : String(lid || '');
+  const p = {
+    id: sealedUid(), cardId,
+    name: c.name || '', setId, setName: c.setName || inf?.name || '',
+    logo: inf?.logo || null, number: localId, localId,
+    rarity: (inf?.cards || []).find(x => String(x.id) === cardId)?.rarity || '',
+    type: '', qty: 1, image: c.image || '', buyPrice: null, fromWish: true,
+  };
+  (state.investCards = state.investCards || []).push(p);
+  return true;
+}
+function wishCardStillOwned(cardId) {
+  return (state.wishlists || []).some(w => (w.cards || []).some(x => x && x.owned && String(x.id) === String(cardId)));
+}
+function afterWishCollectionChange(ids) {
+  investBadge();
+  ensurePrices(ids, n => {
+    if (!n) return;
+    if (state.view === 'home') computeCollectionValue();
+    if (state.view === 'invest') renderInvestBody();
+  });
+}
+// Rattrapage UNE fois par appareil : les cartes déjà cochées avant cette
+// règle entrent dans la Collection. Idempotent (pas de doublon), mais une
+// seule fois : une carte qu'on a ensuite retirée de la Collection à la main
+// ne doit pas y revenir à chaque ouverture.
+const WISH_SYNC_KEY = 'milodex:wish-to-collection-v1';
+function syncWishOwnedToCollection() {
+  try { if (localStorage.getItem(WISH_SYNC_KEY)) return; } catch { return; }
+  if (!(state.wishlists || []).length) return;   // données pas encore là : on réessaiera
+  const added = [];
+  for (const w of state.wishlists) for (const c of (w.cards || [])) {
+    if (c && c.owned && wishCardToCollection(c)) added.push(String(c.id));
+  }
+  try { localStorage.setItem(WISH_SYNC_KEY, '1'); } catch {}
+  if (!added.length) return;
+  save();
+  afterWishCollectionChange(added);
+  toast(`${added.length} carte${added.length > 1 ? 's' : ''} de tes wishlists ajoutée${added.length > 1 ? 's' : ''} à ta collection`, 'success');
+}
+
 function toggleOwned(wid, cardId) {
   const w = state.wishlists.find(x => x.id === wid);
   const c = w?.cards.find(x => x.id === cardId);
   if (!c) return;
-  c.owned = !c.owned; save();
+  c.owned = !c.owned;
+  let moved = '';
+  if (c.owned) {
+    if (wishCardToCollection(c)) moved = 'in';
+  } else if (!wishCardStillOwned(c.id)) {
+    const i = (state.investCards || []).findIndex(x => String(x.cardId) === String(c.id) && x.fromWish);
+    if (i >= 0) { state.investCards.splice(i, 1); moved = 'out'; }
+  }
+  save();
+  if (moved) {
+    afterWishCollectionChange([String(c.id)]);
+    toast(moved === 'in' ? `${c.name || 'Carte'} ajoutée à ta collection` : `${c.name || 'Carte'} retirée de ta collection`, 'success');
+  }
   sfx.play(c.owned ? 'pop' : 'unpop');
   document.querySelector(`.card-thumb[data-card="${cardId}"]`)?.classList.toggle('owned', c.owned);
   const owned = w.cards.filter(x => x.owned).length;
@@ -11586,6 +11662,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // inactif — les décoder pendant le chargement, c'était lui voler des images.
   runIntro(() => {
     render();
+    syncWishOwnedToCollection();
     bootPrices();
     const whenIdle = window.requestIdleCallback || (f => setTimeout(f, 1));
     setTimeout(() => whenIdle(() => three.then(ok => { if (ok) warmupModels(); }), { timeout: 4000 }), 2500);
