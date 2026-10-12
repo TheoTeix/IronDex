@@ -2777,9 +2777,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .card-picker-item.just-added{animation:just-added var(--dur-2) var(--ease-out)}
 
 /* ═══════════════════ FICHE DE CARTE ═══════════════════ */
-.detail-grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:clamp(20px,3vw,40px);
-  align-items:start}
-.detail-card-stage{position:relative;perspective:1000px}
 .detail-img-wrap{position:relative;border-radius:16px;overflow:hidden;transform-style:preserve-3d;
   box-shadow:var(--e3);transition:transform var(--dur-2) var(--ease-out)}
 .detail-img{width:100%;aspect-ratio:2.5/3.5;object-fit:contain;background:var(--v-2);display:block}
@@ -2787,37 +2784,9 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   background:radial-gradient(140px 180px at var(--mx,50%) var(--my,50%),rgba(255,255,255,.36),transparent 68%);
   mix-blend-mode:overlay}
 .detail-img-wrap:hover .zoom-btn{opacity:1}
-.detail-info{min-width:0;display:flex;flex-direction:column;gap:var(--s3)}
-.detail-name{font-size:clamp(24px,3vw,34px);font-weight:900;letter-spacing:-.032em;line-height:1.05;text-wrap:balance}
-.detail-set{font-size:13.5px;color:var(--t3)}
-.detail-price-box{position:relative;display:flex;flex-direction:column;gap:4px;padding:16px 18px;border-radius:var(--r-lg);
-  background:color-mix(in srgb,var(--acc) 9%,rgba(255,255,255,.03));
-  border:1px solid color-mix(in srgb,var(--acc) 26%,transparent);
-  transition:background var(--flow),border-color var(--flow)}
 /* Le bouton de recote se pose dans le coin du cadre de prix — au-dessus du
    montant, comme un bouton d'actualisation, sans décaler le montant lui-même
    (il est hors flux : le prix reste exactement où l'œil le cherche). */
-.detail-price-sync{position:absolute;top:10px;right:10px;margin:0;width:32px;height:32px}
-.detail-price-box{padding-right:52px}
-.detail-price-label{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--t3)}
-.detail-price-val{font-size:30px;font-weight:900;letter-spacing:-.03em;line-height:1;
-  font-variant-numeric:tabular-nums}
-.detail-price-note{font-size:11.5px;color:var(--t3)}
-.detail-rows{display:flex;flex-direction:column;border-radius:var(--r);overflow:hidden;
-  border:1px solid var(--line)}
-.detail-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 14px;
-  font-size:13.5px;background:rgba(255,255,255,.02);
-  animation:fade var(--dur-2) var(--ease-out) both;animation-delay:calc(min(var(--i,0),10) * 26ms)}
-.detail-row+.detail-row{border-top:1px solid var(--line)}
-.detail-row-key{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
-.detail-row-val{font-weight:600;text-align:right;min-width:0}
-.detail-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:var(--s2)}
-.btn-cm{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;
-  border-radius:var(--pill);background:rgba(255,255,255,.05);border:1px solid var(--line-2);
-  font-size:13.5px;font-weight:700;color:var(--t1);
-  transition:background var(--dur-1) var(--ease-out),border-color var(--dur-1) var(--ease-out)}
-.btn-cm:hover{background:color-mix(in srgb,var(--acc) 15%,transparent);
-  border-color:color-mix(in srgb,var(--acc) 44%,transparent)}
 
 /* ═══════════════════ SÉLECTEUR « PIÈCE MAÎTRESSE » ═══════════════════ */
 .fp-auto{display:flex;align-items:center;gap:13px;width:100%;text-align:left;padding:14px 16px;
@@ -2974,8 +2943,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
   .milo-teaser-stage{order:-1}
   .milo-teaser-copy{align-items:center}
   .milo-teaser-legend{margin:0 auto}
-  .detail-grid{grid-template-columns:1fr}
-  .detail-card-stage{max-width:240px;margin:0 auto}
 }
 @media(max-width:640px){
   :root{--gutter:18px}
@@ -3272,11 +3239,10 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 }
 /* Imbriqués DANS une modale : panneaux translucides simples, pas du verre —
    verre sur verre = contraste du texte détruit. */
-.detail-rows,.card-picker-grid,.detail-price-box,.sealed-imp-list li{
+.card-picker-grid,.sealed-imp-list li{
   background:rgba(255,255,255,.045);
   box-shadow:inset 1px 1px 0 -0.5px var(--lg-rim-2);
 }
-.detail-price-box{background:color-mix(in srgb,var(--acc) 13%,rgba(0,0,0,.24))}
 /* ══ LES PANNEAUX N'ONT PLUS DE FLOU — ET ÇA NE SE VOIT PAS ══
    Un `backdrop-filter` floute ce qu'il y a DERRIÈRE. Derrière un panneau, il
    n'y a plus que le fond uni : flouter une couleur unie rend exactement la
@@ -3297,7 +3263,6 @@ body.milo-no-select,body.milo-no-select *{user-select:none!important;-webkit-use
 .inv-kpi::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
 }
-.detail-rows .detail-row{background:transparent}
 .empty-state{border-style:dashed;border-color:var(--line-2)}
 
 /* ── Couches flottantes : modales, palette, toasts, overlay occupé ── */
@@ -4283,16 +4248,6 @@ body::before{display:none}
 /* ── Le réglage de quantité, dans la fiche ─────────────────────────
    Posé entre la cote et le tableau des caractéristiques : après le prix (qu'on
    vient lire) et avant les détails (qu'on parcourt). */
-.detail-qty{
-  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-  margin:var(--s4) 0;padding:12px 14px;border-radius:var(--r);
-  background:rgba(255,255,255,.04);border:1px solid var(--line)}
-.detail-qty-k{font-size:11.5px;font-weight:700;letter-spacing:.05em;
-  text-transform:uppercase;color:var(--t3)}
-.detail-qty .qty{margin-left:auto}
-.detail-qty-sum{width:100%;font-size:12.5px;color:var(--t2);
-  font-variant-numeric:tabular-nums}
-.detail-qty-sum:empty{display:none}
 
 /* ── Le « + » d'une carte de wishlist : au CENTRE, comme dans Collection ──
    Même place, même gabarit et même apparition que .cardser-miss-add : le
@@ -4825,3 +4780,87 @@ body::before{display:none}
 .binder-shelf>.binder-tile:not(.binder-tile-milo) .binder-tile-name{text-shadow:0 2px 0 rgba(0,0,0,.2)}
 .binder-tile-tag{font-family:var(--round);font-weight:900;color:#3b2400;border:0;
   background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2))}
+
+/* ══ LA FICHE D'UNE CARTE, EN JOUETS (2026-10-12) — voir openCardDetail ══ */
+#modal-card-detail .modal-title{visibility:hidden}
+#modal-card-detail .modal-header{position:absolute;z-index:3;top:0;right:0;padding:16px;background:none}
+#modal-card-detail .modal-body{padding:28px}
+.cd{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:clamp(22px,3.4vw,44px);align-items:center}
+.cd-stage{position:relative;z-index:0;display:grid;place-items:center;padding:18px 10px 24px}
+.cd-glow{position:absolute;z-index:-1;inset:-10% -20%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--acc) 34%,transparent) 0,color-mix(in srgb,var(--acc) 10%,transparent) 42%,transparent 70%)}
+.cd-float{position:relative;width:100%;max-width:320px;border-radius:5% / 3.6%;overflow:hidden;
+  box-shadow:0 34px 60px -24px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.1);
+  animation:hfloat 5.6s ease-in-out infinite alternate}
+.cd-float .detail-img{display:block;width:100%;height:auto}
+.cd-float .card-noimg{aspect-ratio:2.5/3.5}
+.cd-zoom{position:absolute;right:calc(50% - min(160px,50%) - 10px);bottom:12px;width:46px;height:46px;padding:0;border:0;border-radius:50%;
+  display:grid;place-items:center;cursor:pointer;color:#fff;
+  background:linear-gradient(160deg,#3a4a9a,#232c66);box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 6px 14px rgba(0,0,0,.45);
+  transition:transform var(--dur-1) var(--ease-out)}
+.cd-zoom svg{width:22px;height:22px}
+@media(hover:hover){.cd-zoom:hover{transform:scale(1.08) rotate(-8deg)}}
+.cd-zoom:active{transform:scale(.92)}
+
+.cd-info{min-width:0;display:flex;flex-direction:column;gap:16px}
+.cd-name{margin:0;padding-right:40px;font:900 clamp(28px,3.6vw,42px)/1.04 var(--round);color:#fff;letter-spacing:-.01em;
+  text-wrap:balance;text-shadow:0 3px 0 rgba(0,0,0,.22)}
+.cd-pills{display:flex;flex-wrap:wrap;gap:8px}
+.cd-price{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.cd-price-tag{display:inline-flex;align-items:center;padding:10px 20px;border-radius:999px;transform:rotate(-3deg);
+  font:900 clamp(26px,3vw,34px)/1 var(--round);color:#3b2400;font-variant-numeric:tabular-nums;
+  background:linear-gradient(180deg,#FFE27A,#FFB938);box-shadow:inset 0 -4px 0 rgba(122,74,5,.3),inset 0 2px 0 rgba(255,255,255,.5),0 10px 22px -10px rgba(245,166,35,.8)}
+.cd-price-tag.none{color:#fff;background:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+.cd-sync{width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;transition:transform var(--dur-1) var(--ease-out)}
+.cd-sync img{width:100%;height:100%;filter:drop-shadow(0 3px 6px rgba(0,0,0,.4))}
+@media(hover:hover){.cd-sync:hover{transform:rotate(-40deg) scale(1.06)}}
+.cd-sync:active{transform:scale(.9)}
+.cd-sync.spinning img{animation:spin .9s linear infinite}
+.cd-src:empty{display:none}
+
+/* Exemplaires : le même compteur-jouet partout. */
+.cd-qty{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 14px;border-radius:22px;
+  background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+.cd-qty-k{font:900 15px/1 var(--round);color:#fff}
+.cd-qty .qty{margin-left:auto;display:flex;align-items:center;gap:6px;padding:4px;border:0;border-radius:999px;
+  background:rgba(0,0,0,.28);box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
+.cd-qty .qty-btn{width:36px;height:36px}
+.cd-qty .cd-qty-minus{border:0;border-radius:50%;color:#fff;background:linear-gradient(160deg,#3a4a9a,#232c66);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.cd-qty .cd-qty-minus:disabled{opacity:.35}
+.cd-qty .qty-val{min-width:28px;text-align:center;font:900 18px/1 var(--round);color:#fff;font-variant-numeric:tabular-nums}
+.cd-qty-sum{width:100%;font:800 13px/1.2 var(--round);color:#fff}
+.cd-qty-sum:empty{display:none}
+
+/* Les caractéristiques : des tuiles de couleur, plus un tableau. */
+.cd-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.cd-fact{position:relative;overflow:hidden;display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:18px;color:#fff;
+  background:linear-gradient(150deg,var(--c1),var(--c2));box-shadow:var(--toy-relief),0 10px 20px -14px var(--c2);
+  animation:rise var(--dur-2) var(--ease-out) both;animation-delay:calc(min(var(--i,0),10) * 40ms)}
+.cd-fact::after{content:"";position:absolute;right:-18px;top:-18px;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.14)}
+.cd-fact-k{font:800 12px/1 var(--round);color:#fff}
+.cd-fact-v{font:900 16px/1.15 var(--round);color:#fff;text-shadow:0 1px 0 rgba(0,0,0,.15);overflow-wrap:anywhere}
+.cd-violet{--c1:var(--toy-violet);--c2:var(--toy-violet-2)}
+.cd-red{--c1:var(--toy-red);--c2:var(--toy-red-2)}
+.cd-blue{--c1:var(--toy-blue);--c2:var(--toy-blue-2)}
+.cd-green{--c1:var(--toy-green);--c2:var(--toy-green-2)}
+.cd-gold{--c1:var(--toy-gold-2);--c2:#D9761A}
+.cd-pink{--c1:var(--toy-pink);--c2:var(--toy-pink-2)}
+
+.cd-actions{display:flex;flex-wrap:wrap;gap:10px}
+.cd-link{flex:1;min-width:140px;min-height:48px;justify-content:center;color:#fff;font-size:15px}
+.cd-link-cm,.cd-link-cm:hover:not(:disabled){background:linear-gradient(180deg,var(--toy-blue),var(--toy-blue-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),inset 0 -4px 0 rgba(0,0,0,.2),0 10px 22px -12px var(--toy-blue-2)}
+.cd-link-ebay,.cd-link-ebay:hover:not(:disabled){background:linear-gradient(180deg,var(--toy-violet),var(--toy-violet-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),inset 0 -4px 0 rgba(0,0,0,.2),0 10px 22px -12px var(--toy-violet-2)}
+
+@media (max-width:767px){
+  #modal-card-detail .modal-body{padding:20px 18px 24px}
+  .cd{grid-template-columns:1fr;gap:18px}
+  .cd-float{max-width:230px}
+  .cd-zoom{right:calc(50% - 115px - 8px)}
+  .cd-name{text-align:center;padding:0}
+  .cd-pills,.cd-price{justify-content:center}
+  .cd-facts{grid-template-columns:1fr 1fr}
+}
+@media (prefers-reduced-motion:reduce){.cd-float{animation:none}}

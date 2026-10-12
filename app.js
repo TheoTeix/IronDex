@@ -1369,6 +1369,7 @@ async function vaultPullPrices() {
     if (!data || !data.length) break;
     for (const row of data) {
       if (!row.value || typeof row.value !== 'object') continue;
+      if (!priceUsable(row.value)) { if (!since || row.updated_at > since) since = row.updated_at; continue; }
       priceCache[row.card_id] = row.value;
       total++;
       if (!since || row.updated_at > since) since = row.updated_at;
@@ -3502,6 +3503,15 @@ const pricePromises = {};   // requêtes en cours (dédoublonnage)
 // clé, mais l'ancienne est REPRISE : le coffre garde une valeur à l'ouverture,
 // et le premier « Sync » (pont allumé) remplace chaque cote par le vrai prix FR.
 const PRICE_CACHE_KEY = 'pkm_prices_v7';       // { syncedAt, prices }
+// Cartes dont la fiche Cardmarket a été jugée douteuse pendant cette session
+// (voir getRawPrice) : la raison, pour la fiche de la carte.
+const _cmDoubt = {};
+// Une cote enregistrée qui n'est QUE la moyenne Cardmarket douteuse (ancienne
+// règle, ou poussée dans le cache partagé avant le correctif) ne doit plus
+// être crue : on l'oublie, la carte sera recotée avec la règle actuelle.
+function priceUsable(v) {
+  return !!(v && typeof v === 'object' && !(v.doubtCM && v.src === 'cardmarket'));
+}
 const LEGACY_PRICE_KEYS = ['pkm_prices_v6', 'pkm_price_cache_v4'];
 let _priceSyncedAt = 0, _priceSaveTimer = null;
 function loadPriceCache() {
@@ -3511,7 +3521,7 @@ function loadPriceCache() {
   if (!d) for (const k of LEGACY_PRICE_KEYS) { const o = read(k); if (o && o.prices) { d = o; break; } }
   if (!d) return;
   const prices = d.prices || {};
-  for (const k in prices) if (prices[k] && typeof prices[k] === 'object') priceCache[k] = prices[k];
+  for (const k in prices) if (priceUsable(prices[k])) priceCache[k] = prices[k];
   _priceSyncedAt = Number(d.syncedAt || d.ts) || 0;
 }
 // Cotes à écrire sur le disque. Les échecs (null) ne sont JAMAIS persistés :
@@ -3638,12 +3648,19 @@ function getRawPrice(cardId) {
         const second = bestPtcgCM(p?.cardmarket?.prices);
         if (second != null) res = { raw: second, currency: 'EUR', src: 'ptcg', doubtCM: doubt };
         else if (tcgEur != null) res = { raw: tcgEur, currency: 'EUR', src: 'tcgplayer', doubtCM: doubt };
-        else res = { raw, currency: 'EUR', src: 'cardmarket', cmId: cm?.idProduct || null, doubtCM: doubt };
+        // PLUS JAMAIS LA VALEUR SUSPECTE. Elle était gardée « en la marquant »
+        // quand le second avis manquait — et depuis que pokemontcg.io répond
+        // 500, il manque tout le temps : Amphinobi EX (xyp-XY20, ~25 €) est
+        // revenu à 543 €, une moyenne sans AUCUNE offre en vente. On laisse la
+        // chaîne continuer (PriceCharting, plafonné) ; à défaut, « ? ».
+        else _cmDoubt[cardId] = doubt;
       }
     } catch {}
     // 2) Fiche ANGLAISE TCGdex : certaines cartes n'ont de mapping Cardmarket
     //    que côté EN — même produit, même cote en euros.
-    if (!res) {
+    //    Sautée si la fiche FR vient d'être jugée douteuse : la fiche EN pointe
+    //    sur le MÊME produit Cardmarket et redonnerait la même moyenne fausse.
+    if (!res && !_cmDoubt[cardId]) {
       const en = await fetchEnCard(cardId).catch(() => null);
       if (en?.cm != null) res = { raw: en.cm, currency: 'EUR', src: 'cardmarket', cmId: en.cmId || null };
     }
@@ -3655,6 +3672,7 @@ function getRawPrice(cardId) {
       if (raw != null) res = { raw, currency: 'EUR', src: 'ptcg' };
     }
     // 4) Dernier recours : ventes eBay réelles (PriceCharting, USD→EUR) —
+    //    c'est aussi l'arbitre d'une fiche Cardmarket jugée douteuse (étape 1).
     //    couvre les cartes que Cardmarket ne cote pas du tout. Plafonné :
     //    voir EBAY_TRUST_MAX, son appariement peut désigner un autre produit.
     if (!res) {
@@ -3874,7 +3892,10 @@ async function recoteCard(cardId) {
     vaultPushSoon('prices');  // …et les autres appareils la verront (marquée par finish)
     return r;
   }
-  if (before) priceCache[cardId] = before;
+  // On remet l'ancienne valeur… sauf si la recote vient de PROUVER qu'elle
+  // était fausse (fiche Cardmarket douteuse) : la garder serait la recopier.
+  if (before && priceUsable(before) && !_cmDoubt[cardId]) priceCache[cardId] = before;
+  else flushPriceCache();
   delete _priceNullAt[cardId];
   return null;
 }
@@ -3926,6 +3947,14 @@ async function syncCardPrice(id, ev) {
 // Le même geste depuis la FICHE d'une carte — c'est le seul endroit où passent
 // TOUTES les cartes de l'app (wishlists, classeurs, Milobellus, accueil), et
 // donc le seul moyen de recoter celles qui ne sont pas au portefeuille.
+// L'étiquette de prix de la fiche : le montant, ou « ? » quand aucune source
+// fiable n'en donne (mieux qu'un chiffre faux — voir getRawPrice).
+function paintDetailCote(el, note, r) {
+  const v = r && r.raw != null ? r.raw : null;
+  el.textContent = v == null ? '?' : fmt(v);
+  el.classList.toggle('none', v == null);
+  if (note && note.isConnected) note.textContent = v == null ? 'pas de cote fiable' : coteSourceLabel(r);
+}
 async function syncDetailPrice(cardId, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   if (_cardSyncing.has(cardId)) return;
@@ -3937,8 +3966,7 @@ async function syncDetailPrice(cardId, ev) {
   if (val) val.innerHTML = '<span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span>';
   try {
     const r = await recoteCard(cardId);
-    if (val && val.isConnected) val.textContent = fmt(r ? r.raw : (getCachedRawPrice(cardId)?.raw ?? null));
-    if (note && note.isConnected) note.textContent = r ? coteSourceLabel(r) : 'Aucune cote disponible';
+    if (val && val.isConnected) paintDetailCote(val, note, r || getCachedRawPrice(cardId));
     const href = (r && r.cmUrl) || await resolveCmUrl(cardId).catch(() => null);
     const a = document.getElementById('cd-cm');
     if (a && href && a.isConnected) a.href = href;
@@ -5724,60 +5752,60 @@ async function openCardDetail(cardId) {
      un hasard : refreshCardTile() les met à jour sans rien savoir de qui les
      affiche, donc la pastille de la vignette suit toute seule. */
   const inv = (state.investCards || []).find(x => x.cardId === cardId) || null;
-  const rows = [
-    ['Rareté', card.rarity], ['PV', card.hp], ['Type', (card.types||[]).join(', ')],
-    ['Catégorie', card.category], ['Stade', card.stage], ['Illustrateur', card.illustrator],
-    ['Numéro', card.localId != null ? `${card.localId} / ${card.set?.cardCount?.official || '?'}` : null],
+  /* LA FICHE, EN JOUETS (2026-10-12) : « elle ne colle pas avec le reste ».
+     La carte flotte sur une lueur douce, comme sur l'accueil ; la cote est
+     l'étiquette dorée qu'on voit partout ; les caractéristiques ne sont plus un
+     tableau à libellés gris mais des tuiles de couleur ; les liens sont des
+     boutons-jouets. Les identifiants (cd-raw, cd-note, cd-sync, qty-…,
+     cd-qty-sum, cd-cm) sont ceux qu'écrivent syncDetailPrice et
+     refreshCardTile : ils ne changent pas. */
+  const facts = [
+    ['Rareté', card.rarity, 'violet'], ['PV', card.hp, 'red'], ['Type', (card.types || []).join(', '), 'blue'],
+    ['Stade', card.stage, 'green'], ['Catégorie', card.category, 'gold'], ['Illustrateur', card.illustrator, 'pink'],
   ].filter(r => r[1]);
+  const num = card.localId != null ? `${card.localId} / ${card.set?.cardCount?.official || '?'}` : '';
   // Rendu IMMÉDIAT : la cote et le lien Cardmarket direct arrivent en asynchrone.
   body.innerHTML = `
-    <div class="detail-grid">
-      <div class="detail-card-stage spot" id="detail-stage">
-        <div class="detail-img-wrap" id="detail-img-wrap">
-          <!-- LA CARTE EST LÀ AVANT MÊME QUE LA FICHE FINISSE DE S'OUVRIR.
-               On affichait directement la variante nette (82 Ko, jamais en
-               cache) : la fiche s'ouvrait sur un rectangle vide, puis le
-               visuel tombait dedans une demi-seconde plus tard — le
-               « saccadé » qu'on voyait. Or la petite variante (19 Ko) est
-               DÉJÀ dans le cache : c'est la vignette qu'on vient de cliquer,
-               et TCGdex la sert en immutable pour un an. Elle s'affiche donc
-               instantanément, et data-hi laisse attachArtUpgrade poser la
-               version nette une fois décodée — sans clignotement, puisqu'elle
-               est préchargée par une image sonde. -->
+    <div class="cd">
+      <div class="cd-stage" id="detail-stage">
+        <span class="cd-glow" aria-hidden="true"></span>
+        <div class="cd-float detail-img-wrap" id="detail-img-wrap">
+          <!-- La petite variante (déjà en cache : c'est la vignette qu'on vient
+               de cliquer) s'affiche tout de suite ; data-hi laisse
+               attachArtUpgrade poser la version nette une fois décodée. -->
           ${card.image ? `<img class="detail-img" src="${IMG(card.image, 'low')}" data-hi="${IMG(card.image)}" decoding="async" onerror="imgFail(this,'${esc(String(card.localId||''))}','${esc(card.set?.id||'')}','${jss(card.name)}')" alt="${esc(card.name)}">` : noImgHTML(card.localId, card.name, card.set?.id, 'detail-img')}
-          ${card.image ? `<button class="zoom-btn" title="Voir en grand" aria-label="Agrandir" onclick="event.stopPropagation();openPhotoLightbox('${IMG(card.image)}','${jss(card.name)}')"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.2-3.2M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>` : ''}
         </div>
+        ${card.image ? `<button class="cd-zoom" title="Voir en grand" aria-label="Agrandir" onclick="event.stopPropagation();openPhotoLightbox('${IMG(card.image)}','${jss(card.name)}')">${ICO.search}</button>` : ''}
       </div>
-      <div class="detail-info">
-        <div class="detail-name">${esc(card.name)}</div>
-        <div class="detail-set">${esc(card.set?.name || '')}</div>
-        <div class="detail-price-box">
-          <div class="detail-price-label">Prix loose</div>
-          <!-- Refaire la cote de CETTE carte. C'est ici que passent les cartes
-               qui ne sont pas au portefeuille (wishlists, classeurs,
-               Milobellus) : sans ce bouton, plus aucun moyen de les recoter
-               depuis que le « Sync » global n'existe plus. -->
-          <button class="cardtile-sync detail-price-sync" id="cd-sync" onclick="syncDetailPrice('${esc(cardId)}',event)"
+      <div class="cd-info">
+        <h2 class="cd-name">${esc(card.name)}</h2>
+        <div class="cd-pills">
+          ${card.set?.name ? `<span class="vpill">${esc(card.set.name)}</span>` : ''}
+          ${num ? `<span class="vpill">#${esc(num)}</span>` : ''}
+        </div>
+        <div class="cd-price">
+          <span class="cd-price-tag" id="cd-raw"><span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span></span>
+          <!-- Refaire la cote de CETTE carte : seul chemin pour celles qui ne
+               sont pas au portefeuille (wishlists, classeurs, Milobellus). -->
+          <button class="cd-sync" id="cd-sync" onclick="syncDetailPrice('${esc(cardId)}',event)"
             title="Refaire la cote de cette carte" aria-label="Refaire la cote de cette carte">
-            <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <div class="detail-price-val" id="cd-raw"><span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span></div>
-          <div class="detail-price-note" id="cd-note">Cote Cardmarket…</div>
+            <img src="ico-series.png?v=2" alt="" width="96" height="96" decoding="async"></button>
+          <span class="vpill cd-src" id="cd-note">…</span>
         </div>
         ${inv ? `
-        <div class="detail-qty">
-          <span class="detail-qty-k">Exemplaires</span>
+        <div class="cd-qty">
+          <span class="cd-qty-k">Exemplaires</span>
           <div class="qty" role="group" aria-label="Nombre d'exemplaires de ${esc(card.name)}">
-            <button class="qty-btn cd-qty-minus" onclick="bumpCardQty('${inv.id}',-1)" aria-label="Retirer un exemplaire" ${cardQty(inv) <= 1 ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+            <button class="qty-btn cd-qty-minus" onclick="bumpCardQty('${inv.id}',-1)" aria-label="Retirer un exemplaire" ${cardQty(inv) <= 1 ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
             <span class="qty-val" id="qty-${inv.id}">${cardQty(inv)}</span>
             <button class="qty-btn" onclick="bumpCardQty('${inv.id}',1)" aria-label="Ajouter un exemplaire">${ICO.plus}</button>
           </div>
-          <span class="detail-qty-sum" id="cd-qty-sum">${cardQtySumText(inv)}</span>
+          <span class="cd-qty-sum" id="cd-qty-sum">${cardQtySumText(inv)}</span>
         </div>` : ''}
-        <div class="detail-rows">${rows.map((r, i) => `<div class="detail-row stagger" style="--i:${i}"><span class="detail-row-key">${esc(r[0])}</span><span class="detail-row-val">${esc(String(r[1]))}</span></div>`).join('')}</div>
-        <div class="detail-actions">
-          <a class="btn btn-cm" href="${ebaySoldLink((card.name + ' ' + cardNumStr(card.localId, card.set?.cardCount?.official)).trim())}" target="_blank" rel="noopener">Voir les ventes eBay</a>
-          <a class="btn btn-cm" id="cd-cm" href="${_cmUrlStore[cardId] || cmSearchLink(cachedEnName(cardId) || card.name)}" target="_blank" rel="noopener">Voir sur Cardmarket</a>
+        ${facts.length ? `<div class="cd-facts">${facts.map((r, i) => `<div class="cd-fact cd-${r[2]} stagger" style="--i:${i}"><span class="cd-fact-k">${esc(r[0])}</span><span class="cd-fact-v">${esc(String(r[1]))}</span></div>`).join('')}</div>` : ''}
+        <div class="cd-actions">
+          <a class="btn cd-link cd-link-cm" id="cd-cm" href="${_cmUrlStore[cardId] || cmSearchLink(cachedEnName(cardId) || card.name)}" target="_blank" rel="noopener">Cardmarket</a>
+          <a class="btn cd-link cd-link-ebay" href="${ebaySoldLink((card.name + ' ' + cardNumStr(card.localId, card.set?.cardCount?.official)).trim())}" target="_blank" rel="noopener">Ventes eBay</a>
         </div>
       </div>
     </div>`;
@@ -5791,8 +5819,7 @@ async function openCardDetail(cardId) {
   boundedTask(getRawPrice(cardId), 20000).then(p => {
     const el = document.getElementById('cd-raw'), note = document.getElementById('cd-note');
     if (!el || !el.isConnected) return;
-    el.textContent = fmt(p?.raw ?? null);
-    if (note) note.textContent = p?.raw != null ? coteSourceLabel(p) : 'Aucune cote disponible';
+    paintDetailCote(el, note, p);
   });
   boundedTask(resolveCmUrl(cardId), 15000).then(u => {
     const a = document.getElementById('cd-cm');
