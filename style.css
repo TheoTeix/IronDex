@@ -4588,7 +4588,10 @@ body::before{display:none}
   display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;
   font:900 13px/1 var(--round);color:#3b2400;font-variant-numeric:tabular-nums;letter-spacing:0;
   background:linear-gradient(180deg,#FFE27A,#FFB938);box-shadow:inset 0 -2px 0 rgba(122,74,5,.3),0 4px 10px rgba(0,0,0,.3)}
-.card-value{margin-top:8px;transform:rotate(-2deg)}
+/* L'étiquette a TOUJOURS sa propre ligne : en ligne avec la pastille « #25 »,
+   elle restait à côté quand il y avait la place et passait dessous sinon —
+   sur téléphone, d'une carte à l'autre, elle n'était jamais au même endroit. */
+.card-value{display:flex;width:fit-content;margin-top:8px;transform:rotate(-2deg);transform-origin:left center}
 .card-value.muted,.vcard-tag-none{color:#fff;font-weight:900;background:rgba(255,255,255,.12);box-shadow:none}
 
 /* ── Bulles de série ─────────────────────────────────────────────────── */
@@ -4849,3 +4852,126 @@ body::before{display:none}
   .cd-facts{grid-template-columns:1fr 1fr}
 }
 @media (prefers-reduced-motion:reduce){.cd-float{animation:none}}
+
+/* ══ LA RECHERCHE, EN JOUETS (2026-10-18) — voir renderPalette ════════════ */
+.palette .palette-box{border:0;border-radius:30px;overflow:hidden;
+  background:linear-gradient(170deg,#262f6b,#1a2152);box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 40px 80px -30px rgba(0,0,0,.9)}
+.palette .palette-box::before{display:none}
+.palette-top{gap:12px;padding:16px;border-bottom:0}
+.palette-input{height:52px;padding:0 18px;border-radius:999px;font:800 18px/1 var(--round);color:#fff;
+  background:rgba(0,0,0,.28);box-shadow:inset 0 2px 5px rgba(0,0,0,.4)}
+.palette-input::placeholder{color:#fff;opacity:.55}
+.palette-top svg.ico-badge{width:34px;height:34px}
+.palette-list{max-height:min(66vh,620px);padding:4px 16px 16px}
+.pal-group{display:flex;align-items:center;gap:8px;padding:14px 2px 10px;font:900 17px/1 var(--round);letter-spacing:0;
+  text-transform:none;color:#fff}
+.pal-group::before{content:"";width:14px;height:14px;flex:none;background:var(--acc);
+  -webkit-mask:var(--star) center/contain no-repeat;mask:var(--star) center/contain no-repeat}
+.pal-group .spinner{width:16px;height:16px}
+.pal-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:46px 20px;
+  font:800 16px/1.3 var(--round);color:#fff}
+.pal-empty-ico svg{width:64px;height:64px}
+.palette-foot{display:none}
+.pal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:16px 12px}
+/* Une carte de la recherche : pas une ligne de liste — on hérite donc de rien
+   de .pal-item (fond, rayon, flex), sauf l'état « sel » du clavier. */
+.palette .pal-item.pal-card{position:relative;display:flex;flex-direction:column;align-items:stretch;gap:6px;
+  padding:0;border-radius:0;background:none;box-shadow:none}
+.pal-card-art{position:relative;display:block;width:100%;aspect-ratio:2.5/3.5;padding:0;border:0;border-radius:10px;overflow:hidden;
+  cursor:pointer;background:rgba(255,255,255,.05);box-shadow:0 14px 24px -14px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.08);
+  transition:transform var(--dur-2) var(--ease-out)}
+.pal-card-art img{display:block;width:100%;height:100%;object-fit:cover;filter:grayscale(.85) brightness(.8);
+  transition:filter var(--dur-2) var(--ease-out)}
+.pal-card-art .card-noimg{height:100%}
+.pal-card:has(.pal-check.on) .pal-card-art img{filter:none}
+.pal-card:has(.pal-check.on) .pal-card-art{box-shadow:0 14px 24px -14px rgba(0,0,0,.85),0 0 0 3px var(--toy-green)}
+@media(hover:hover){
+  .pal-card:hover .pal-card-art{transform:translateY(-5px) rotate(-1.5deg)}
+  .pal-card:hover .pal-card-art img{filter:none}
+}
+.pal-card.sel .pal-card-art{outline:3px solid var(--acc);outline-offset:3px}
+.pal-check{position:absolute;top:-8px;right:-8px;z-index:2;width:34px;height:34px;padding:0;border:0;border-radius:50%;
+  display:grid;place-items:center;cursor:pointer;background:none;transition:transform var(--dur-1) var(--ease-out)}
+.pal-check svg.ico-badge{width:100%;height:100%;filter:drop-shadow(0 3px 6px rgba(0,0,0,.45))}
+.pal-check.on{color:#fff;background:linear-gradient(160deg,#6CF0C6,var(--toy-green-2));
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.4),inset 0 -2px 0 rgba(0,0,0,.2),0 4px 10px rgba(0,0,0,.4)}
+.pal-check.on svg{width:18px;height:18px}
+.pal-check:active{transform:scale(.88)}
+.pal-card-name{font:800 13.5px/1.15 var(--round);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pal-card-set{align-self:flex-start;max-width:100%;padding:3px 8px;border-radius:999px;font:800 11px/1.2 var(--round);color:#fff;
+  background:rgba(255,255,255,.1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ══ LE SÉLECTEUR DE CARTES (ajouter à une wishlist…), EN JOUETS ═════════ */
+#modal-card-picker .modal{max-width:980px}
+.picker-eyebrow{display:none}
+.picker-heading{font:900 clamp(24px,3vw,32px)/1.05 var(--round);color:#fff;letter-spacing:-.01em;margin:0 0 14px}
+.picker-lead{color:#fff}
+.picker-steps{gap:10px}
+.picker-steps .pstep{display:inline-flex;align-items:center;gap:8px;font:800 14px/1 var(--round);color:#fff;opacity:.6}
+.picker-steps .pstep.on,.picker-steps .pstep.done{opacity:1}
+.picker-steps .pstep b{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;font:900 14px/1 var(--round);
+  background:rgba(255,255,255,.12);color:#fff}
+.picker-steps .pstep.on b{color:#3b2400;background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2));box-shadow:inset 0 -2px 0 rgba(122,74,5,.3)}
+.picker-steps .pstep.done b{background:linear-gradient(160deg,#6CF0C6,var(--toy-green-2))}
+.picker-steps .pstep b svg{width:16px;height:16px}
+.picker-steps .pstep-sep{width:22px;height:3px;border-radius:2px;background:rgba(255,255,255,.18)}
+.picker-back{min-height:40px;padding:0 16px 0 10px;border:0;border-radius:999px;font:800 14px/1 var(--round);color:#fff;
+  background:linear-gradient(160deg,#3a4a9a,#232c66);box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 4px 10px rgba(0,0,0,.35)}
+.picker-back:hover{color:#fff;background:linear-gradient(160deg,#4558b0,#2a3478)}
+.picker-crumb{font:800 14px/1.2 var(--round);color:#fff}
+.picker-count{padding:5px 12px;border-radius:999px;font:900 13px/1 var(--round);color:#fff;background:rgba(255,255,255,.1)}
+.series-grid{gap:14px}
+.series-item{border:0;border-radius:24px;background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+@media(hover:hover){.series-item:hover{transform:translateY(-5px) rotate(-1deg);border-color:transparent;
+  box-shadow:var(--toy-surface-relief),0 0 0 2px color-mix(in srgb,var(--acc) 60%,transparent)}}
+.series-item.is-added{box-shadow:var(--toy-surface-relief),0 0 0 3px var(--toy-green)}
+.series-logo-wrap{background:none}
+.series-name{font:800 14px/1.2 var(--round);color:#fff}
+.series-count{padding:4px 10px;border-radius:999px;font:900 11.5px/1 var(--round);letter-spacing:0;text-transform:none;color:#fff;
+  background:rgba(255,255,255,.1)}
+.card-picker-grid{gap:14px 12px;padding:16px;border:0;border-radius:24px;background:rgba(0,0,0,.2);box-shadow:inset 0 2px 6px rgba(0,0,0,.35)}
+.card-picker-item{border:0;border-radius:12px;overflow:visible;background:none;box-shadow:none}
+.card-picker-item img,.card-picker-item .card-noimg{border-radius:10px;box-shadow:0 12px 22px -12px rgba(0,0,0,.85)}
+@media(hover:hover){.card-picker-item:hover{transform:translateY(-5px) rotate(-1.5deg);border-color:transparent}}
+.card-picker-name{padding:7px 2px 0;font:800 12px/1.15 var(--round);color:#fff}
+.card-picker-item:not(.added) .card-picker-name{color:#fff;opacity:.75}
+.card-picker-item.added img,.card-picker-item.added .card-noimg{box-shadow:0 12px 22px -12px rgba(0,0,0,.85),0 0 0 3px var(--toy-green)}
+.card-picker-check{top:-8px;right:-8px;width:30px;min-width:30px;height:30px;border:0;border-radius:50%;color:#fff;
+  background:linear-gradient(160deg,#6CF0C6,var(--toy-green-2));box-shadow:inset 0 2px 0 rgba(255,255,255,.4),0 4px 10px rgba(0,0,0,.4);
+  font:900 12px/1 var(--round)}
+.card-picker-item::before,.card-picker-item::after{display:none}
+
+/* ══ LE PROFIL, EN JOUETS ═════════════════════════════════════════════ */
+.pf-id{border:0;border-radius:30px;overflow:hidden;background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+.pf-name{font:900 clamp(28px,4vw,40px)/1.05 var(--round);color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.22)}
+.pf-since{margin-top:8px}
+.pf-duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;border:0;background:none;box-shadow:none}
+.pf-duo .pf-duo-cell{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:flex-start;gap:8px;
+  padding:18px;border:0;border-radius:24px;color:#fff;background:linear-gradient(150deg,var(--toy-blue),var(--toy-blue-2));
+  box-shadow:var(--toy-relief),0 14px 28px -16px var(--toy-blue-2)}
+.pf-duo .pf-duo-cell+.pf-duo-cell{background:linear-gradient(150deg,var(--toy-pink),var(--toy-pink-2));box-shadow:var(--toy-relief),0 14px 28px -16px var(--toy-pink-2)}
+.pf-duo .pf-duo-cell::after{content:"";position:absolute;right:-30px;top:-30px;width:96px;height:96px;border-radius:50%;background:rgba(255,255,255,.13)}
+.pf-duo-cell .hvalue-coin{width:34px;height:34px;font-size:18px}
+.pf-duo-v{font:900 clamp(26px,4vw,36px)/1 var(--round);color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.15)}
+.pf-duo-k{font:800 14px/1 var(--round);color:#fff;letter-spacing:0;text-transform:none;opacity:1}
+.pf-fold{border:0;border-radius:24px;background:var(--toy-surface);box-shadow:var(--toy-surface-relief)}
+.pf-fold-title{font:900 17px/1.1 var(--round);color:#fff}
+.pf-fold-state{font:800 12.5px/1.2 var(--round);color:#fff}
+.pf-fold-chev{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;color:#3b2400;
+  background:linear-gradient(180deg,var(--toy-gold),var(--toy-gold-2))}
+.pf-note{color:#fff;font-weight:600}
+.pf-field-lab{font-family:var(--round);font-weight:800;color:#fff;text-transform:none;letter-spacing:0}
+.pf-signout{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+
+@media (max-width:767px){
+  .pal-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px}
+  .palette-list{max-height:none}
+  .card-picker-grid{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px}
+  .pf-duo{grid-template-columns:1fr 1fr}
+}
+.palette .palette-box{max-width:900px}
+/* Les champs des fenêtres : la même gouttière ronde que la recherche. */
+.modal .input,.modal input.input{min-height:48px;padding:0 18px;border:0;border-radius:999px;
+  font:800 16px/1 var(--round);color:#fff;background:rgba(0,0,0,.28);box-shadow:inset 0 2px 5px rgba(0,0,0,.4)}
+.modal .input::placeholder{color:#fff;opacity:.55}
+.modal .input:focus{outline:3px solid color-mix(in srgb,var(--acc) 70%,transparent);outline-offset:2px}

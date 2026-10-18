@@ -1796,12 +1796,12 @@ function renderProfile() {
         </div>
         <div class="pf-idtext">
           <h1 class="pf-name" id="pf-name">${esc(name)}</h1>
-          <p class="pf-since">${since
-            ? 'Coffre ouvert le ' + since.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-            : esc(vaultEmail())}</p>
+          <span class="vpill pf-since">${since
+            ? 'Depuis le ' + since.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+            : esc(vaultEmail())}</span>
         </div>
         <button class="title-edit-btn pf-rename" onclick="openRenamePseudo()"
-          title="Changer de pseudo" aria-label="Changer de pseudo">${ICO.edit}</button>
+          title="Changer de pseudo" aria-label="Changer de pseudo">${ART('wl-rename')}</button>
       </div>
     </section>
 
@@ -1809,8 +1809,9 @@ function renderProfile() {
          Ce que vaut le coffre, ce qu'il contient. Pas un de plus. -->
     <section class="pf-duo reveal" style="--i:1">
       <div class="pf-duo-cell">
-        <span class="pf-duo-v">${fmt(value)}</span>
-        <span class="pf-duo-k">Valeur de la collection</span>
+        <span class="hvalue-coin" aria-hidden="true">€</span>
+        <span class="pf-duo-v">${homeValueHidden() ? '*** €' : fmt(value)}</span>
+        <span class="pf-duo-k">Ma collection</span>
       </div>
       <div class="pf-duo-cell">
         <span class="pf-duo-v">${copies.toLocaleString('fr-FR')}</span>
@@ -1818,20 +1819,21 @@ function renderProfile() {
       </div>
     </section>
 
-    ${strip.length ? `
-    <section class="reveal" style="--i:2">
-      <div class="ed-head">
-        <div>
-          <h2 class="ed-title">Tes plus belles pièces</h2>
-          <div class="ed-sub">${strip.length} carte${strip.length > 1 ? 's' : ''} · la plus chère en premier</div>
-        </div>
-        <div class="strip-nav">
-          <button class="strip-btn" aria-label="Cartes précédentes" onclick="railScroll('profile-rail',-1)">${ICO.left}</button>
-          <button class="strip-btn" aria-label="Cartes suivantes" onclick="railScroll('profile-rail',1)">${ICO.right}</button>
-        </div>
-      </div>
-      <div class="strip"><div class="strip-track" id="profile-rail">${strip.map((e, i) => renderTopCardTile(e, i)).join('')}</div></div>
-    </section>` : ''}
+    ${strip.length ? (() => {
+      // Les plus belles pièces : la même main de cartes que sur l'accueil.
+      const top5 = strip.filter(e => e.image).slice(0, 5), fan = [];
+      top5.forEach((e, k) => { if (k % 2) fan.push(e); else fan.unshift(e); });
+      const hid = homeValueHidden();
+      return `<section class="hfan-wrap reveal" style="--i:2">
+      <h2 class="htitle">Mes trésors</h2>
+      <div class="hfan" style="--n:${fan.length}">${fan.map((e, k) => {
+        const o = k - (fan.length - 1) / 2;
+        return `<button class="hfan-card" data-cc="${esc(e.id)}" style="--o:${o};--a:${Math.abs(o)};--z:${10 - Math.round(Math.abs(o))}"
+          aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
+          <img crossorigin="anonymous" src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy">
+          <span class="hfan-tag" data-v="${esc(fmt(e.value))}">${hid ? '***' : esc(fmt(e.value))}</span></button>`;
+      }).join('')}</div></section>`;
+    })() : ''}
 
     <!-- ── L'ATELIER ────────────────────────────────────────────────
          Tout ce qui touche au compte et à la synchronisation, replié.
@@ -4197,7 +4199,9 @@ function palCatalogFetch(nq) {
     try {
       // Requête DIRECTE, pas apiFetch : chaque frappe est une requête
       // différente, et apiFetch les garderait toutes en IndexedDB.
-      const r = await fetchTimeout(`${API}/cards?name=${encodeURIComponent(nq)}&pagination:page=1&pagination:itemsPerPage=40`, 8000);
+      // TOUTES les cartes du Pokémon tapé (jusqu'à 250) : « Pikachu » en
+      // compte plus de deux cents, et c'est justement ce qu'on veut parcourir.
+      const r = await fetchTimeout(`${API}/cards?name=${encodeURIComponent(nq)}&pagination:page=1&pagination:itemsPerPage=250`, 10000);
       if (r.ok) list = await r.json();
     } catch {}
     _palCat[nq] = Array.isArray(list) ? list : [];
@@ -4265,14 +4269,57 @@ function closePalette() {
   _palPrevFocus = null;
 }
 function paletteOpen() { return !!document.getElementById('palette')?.classList.contains('open'); }
+/* LA RECHERCHE EN JOUETS (2026-10-18) : plus des lignes, des CARTES. Chaque
+   carte porte une pastille : « + » bleu pour l'ajouter à la Collection, coche
+   verte quand elle y est déjà (la toucher l'en retire). Toucher la carte elle-
+   même ouvre sa fiche. */
+function palOwned(id) { return (state.investCards || []).some(p => String(p.cardId) === String(id)); }
+function palCardHTML(c, i) {
+  const own = palOwned(c.id);
+  const [sid, lid] = splitCardId(c.id);
+  const setName = c.setName || getCachedSetInfo(sid)?.name || String(sid || '').toUpperCase();
+  return `<div class="pal-card pal-item ${i === 0 ? 'sel' : ''}" role="option" aria-selected="${i === 0}" data-pal="${i}" data-cc="${esc(c.id)}">
+    <button class="pal-card-art" onclick="runPalette(${i})" aria-label="Voir la fiche de ${esc(c.name)}">
+      ${c.image ? `<img src="${IMG(c.image, 'low')}" alt="" loading="lazy" decoding="async">` : noImgHTML(c.localId || lid, c.name, sid)}
+    </button>
+    <button class="pal-check ${own ? 'on' : ''}" onclick="palToggle('${esc(c.id)}',${i})"
+      aria-pressed="${own}" aria-label="${own ? 'Retirer de' : 'Ajouter à'} ma collection">${own ? ICO.check : ICO.plus}</button>
+    <span class="pal-card-name">${esc(c.name)}</span>
+    <span class="pal-card-set">${esc(setName)}${(c.localId || lid) ? ' · #' + esc(String(c.localId || lid)) : ''}</span>
+  </div>`;
+}
+// Cocher dans la recherche = ajouter à la Collection (dans son set, avec sa
+// cote) ; décocher = l'en retirer. Mise à jour EN PLACE de la pastille.
+function palToggle(id, i) {
+  const r = _palRows[i];
+  const btn = document.querySelector(`.pal-item[data-pal="${i}"] .pal-check`);
+  if (palOwned(id)) {
+    state.investCards = state.investCards.filter(p => String(p.cardId) !== String(id));
+    save(); investBadge(); sfx.play('poof');
+  } else {
+    const [sid] = splitCardId(id);
+    const c = { id, name: r?.name || '', image: r?.image || '', localId: r?.localId || '', setId: sid, setName: r?.setName || getCachedSetInfo(sid)?.name || '' };
+    if (wishCardToCollection(c, 'search')) {
+      save(); afterWishCollectionChange([String(id)]); sfx.play('pop');
+      // Le nom du set n'est pas dans la réponse de recherche : on le lit (mis
+      // en cache) et on le pose sur la carte dès qu'il arrive.
+      if (!c.setName && sid) apiFetch(`/sets/${sid}`).then(inf => {
+        const p = state.investCards.find(x => String(x.cardId) === String(id));
+        if (p && inf) { p.setName = p.setName || inf.name || ''; p.logo = p.logo || inf.logo || null; save(); }
+      }).catch(() => {});
+    }
+  }
+  const own = palOwned(id);
+  if (btn) { btn.classList.toggle('on', own); btn.setAttribute('aria-pressed', String(own)); btn.innerHTML = own ? ICO.check : ICO.plus; }
+  if (state.view === 'invest') renderInvestBody();
+}
 function renderPalette(q) {
   const list = document.getElementById('palette-list');
   if (!list) return;
   const nq = palNorm(q);
-  const rows = [];
   if (!nq) {
     _palRows = [];
-    list.innerHTML = `<div class="pal-empty">Tape le nom d'une carte.<br>Tes cartes d'abord, puis tout le catalogue.</div>`;
+    list.innerHTML = `<div class="pal-empty"><span class="pal-empty-ico">${ICO.search}</span>Tape le nom d'un Pokémon</div>`;
     return;
   }
   // Score simple : un nom qui COMMENCE par la requête passe devant.
@@ -4284,54 +4331,29 @@ function renderPalette(q) {
     })
     .filter(Boolean)
     .sort((a, b) => a.score - b.score || String(a.c.name).localeCompare(String(b.c.name)))
-    .slice(0, 40);
-  if (mine.length) {
-    rows.push({ group: `Mes cartes (${mine.length})` });
-    mine.forEach(({ c }) => {
-      const p = getCachedRawPrice(c.id);
-      rows.push({
-        kind: 'card', name: c.name, sub: [c.setName, c.localId ? '#' + c.localId : '', c.from.join(' · ')].filter(Boolean).join(' · '),
-        img: c.image ? IMG(c.image, 'low') : '', meta: (p && p.raw != null) ? fmt(p.raw) : '',
-        run: () => openCardDetail(c.id),
-      });
-    });
-  }
+    .slice(0, 60).map(x => x.c);
   palCatalogFetch(nq);
   const cat = _palCat[nq];
   const pending = nq.length >= 2 && !Array.isArray(cat);
-  if (Array.isArray(cat)) {
-    const seen = new Set(mine.map(m => m.c.id));
-    const extra = cat.filter(c => c && c.id && !seen.has(c.id));
-    if (extra.length) {
-      rows.push({ group: `Catalogue (${extra.length})` });
-      extra.forEach(c => rows.push({
-        kind: 'card', name: c.name || c.id, sub: [c.id.replace(/-[^-]+$/, '').toUpperCase(), c.localId ? '#' + c.localId : ''].filter(Boolean).join(' · '),
-        img: c.image ? IMG(c.image, 'low') : '', meta: '',
-        run: () => openCardDetail(c.id),
-      }));
-    }
-  }
-  _palRows = rows.filter(r => !r.group);
+  const seen = new Set(mine.map(c => String(c.id)));
+  const extra = Array.isArray(cat) ? cat.filter(c => c && c.id && !seen.has(String(c.id))) : [];
+  const toRow = c => ({ kind: 'card', id: c.id, name: c.name || c.id, image: c.image || '', localId: c.localId || '', setName: c.setName || '', run: () => openCardDetail(c.id) });
+  _palRows = [...mine.map(toRow), ...extra.map(toRow)];
   _palIdx = 0;
   if (!_palRows.length) {
     list.innerHTML = pending
-      ? `<div class="pal-empty">Recherche dans le catalogue…</div>`
-      : `<div class="pal-empty">Aucune carte pour « ${esc(q)} ».</div>`;
+      ? `<div class="pal-empty"><span class="spinner"></span>Recherche des cartes…</div>`
+      : `<div class="pal-empty">Aucune carte pour « ${esc(q)} »</div>`;
     return;
   }
-  let i = -1;
-  list.innerHTML = rows.map(r => {
-    if (r.group) return `<div class="pal-group">${esc(r.group)}</div>`;
-    i++;
-    const ico = r.img
-      ? `<span class="pal-ico"><img src="${r.img}" alt="" loading="lazy"></span>`
-      : `<span class="pal-ico" aria-hidden="true">${r.ico || ICO.card}</span>`;
-    return `<button class="pal-item ${i === 0 ? 'sel' : ''}" role="option" aria-selected="${i === 0}" data-pal="${i}" onclick="runPalette(${i})">
-      ${ico}
-      <span class="pal-body"><span class="pal-name">${esc(r.name)}</span>${r.sub ? `<span class="pal-sub">${esc(r.sub)}</span>` : ''}</span>
-      ${r.meta ? `<span class="pal-meta">${esc(r.meta)}</span>` : ''}
-    </button>`;
-  }).join('') + (pending ? `<div class="pal-group">Catalogue…</div>` : '');
+  let i = 0;
+  const grid = rows => `<div class="pal-grid">${rows.map(r => palCardHTML(r, i++)).join('')}</div>`;
+  list.innerHTML =
+    (mine.length ? `<div class="pal-group"><span>Mes cartes</span><span class="vpill">${mine.length}</span></div>${grid(_palRows.slice(0, mine.length))}` : '') +
+    (extra.length ? `<div class="pal-group"><span>Toutes les cartes</span><span class="vpill">${extra.length}</span></div>${grid(_palRows.slice(mine.length))}` : '') +
+    (pending ? `<div class="pal-group"><span class="spinner"></span><span>Toutes les cartes…</span></div>` : '');
+  hydrateFallbackImages(list);
+  paintCards(list);
 }
 function movePalette(d) {
   if (!_palRows.length) return;
@@ -4504,7 +4526,7 @@ function navigate(view, extra = {}) {
   // un écran redimensionné ne doivent pas pouvoir y échouer.
   if (isPhone() && PHONE_HIDDEN.includes(view)) view = 'home';
   const from = state.view;
-  if (from !== view) sfx.play('swoosh');
+  if (from !== view) sfx.play('hop');
   const kind = transitionKind(from, view);
   state.view = view; Object.assign(state, extra);
   // La pastille de nav réagit tout de suite, indépendamment du temps que prend
@@ -5717,7 +5739,7 @@ function paintCardValues(ids) {
    · La cote arrive en tâche de fond (ensurePrices) : elle alimente aussitôt la
      valeur de la série et le total.
    ══════════════════════════════════════════════════════════════════════ */
-function wishCardToCollection(c) {
+function wishCardToCollection(c, origin = 'wish') {
   const cardId = String(c.id || '');
   if (!cardId) return false;
   if ((state.investCards || []).some(x => String(x.cardId) === cardId)) return false;
@@ -5730,9 +5752,11 @@ function wishCardToCollection(c) {
     name: c.name || '', setId, setName: c.setName || inf?.name || '',
     logo: inf?.logo || null, number: localId, localId,
     rarity: (inf?.cards || []).find(x => String(x.id) === cardId)?.rarity || '',
-    type: '', qty: 1, image: c.image || '', buyPrice: null, fromWish: true,
+    type: '', qty: 1, image: c.image || '', buyPrice: null,
+    ...(origin === 'wish' ? { fromWish: true } : {}),
   };
   (state.investCards = state.investCards || []).push(p);
+  msSyncCollectionAdd([cardId]);
   return true;
 }
 function wishCardStillOwned(cardId) {
@@ -6311,6 +6335,7 @@ function pickCard(id, name, image, setName, setId, localId) {
     const info = getCachedSetInfo(setId);
     if (info) { if (info.logo) p.logo = info.logo; if (!p.rarity) { const c = (info.cards || []).find(x => x.id === id); if (c && c.rarity) p.rarity = c.rarity; } }
     state._investCardTarget = null;
+    msSyncCollectionAdd([id]);
     save(); investBadge();
     closeModal('modal-card-picker');
     if (state.view === 'invest') { state.investMode = 'cards'; renderInvestBody(); }
@@ -9028,6 +9053,9 @@ const sfx = (() => {
     tock: () => tone(1200, 1000, ctx.currentTime, 0.035, 0.12, 'triangle'),
     // Changer de page : un « fwip » de feuille.
     swoosh: () => swish(ctx.currentTime, 0.16, 0.22, 900, 3200),
+    // Changer de page : un petit saut — deux notes qui rebondissent, plus douces
+    // qu'un « fwip » (il revenait à chaque onglet et finissait par fatiguer).
+    hop: () => { const t = ctx.currentTime; tone(659.25, 880, t, 0.07, 0.22); tone(987.77, 1318.5, t + 0.065, 0.1, 0.18); tone(1975, 1975, t + 0.07, 0.05, 0.04, 'triangle'); },
     // Changer de volet : une bulle qui remonte.
     bloop: () => { const t = ctx.currentTime; tone(330, 260, t, 0.06, 0.35); tone(420, 900, t + 0.05, 0.12, 0.35); },
     // Ouvrir / fermer une fenêtre.
@@ -10197,6 +10225,7 @@ function addMissingCard(cardId) {
     if (hit && hit.rarity) p.rarity = hit.rarity;
   }
   state.investCards.push(p);
+  msSyncCollectionAdd([cardId]);
   save(); investBadge();
   const tile = document.querySelector(`.cardser-miss[data-card="${cardId}"]`);
   if (tile) {
@@ -10763,6 +10792,25 @@ function msSyncMeta(m, d) {
    première chose à reprocher à cet écran. Ça n'a lieu qu'à L'AJOUT du
    masterset — ensuite les cases n'appartiennent qu'à toi, et décocher reste
    décoché. */
+/* COLLECTION → MASTERSET, AU FIL DE L'EAU. Une carte qui entre dans la
+   Collection coche sa case « normale » dans le masterset de son set, s'il est
+   suivi. Le set d'un masterset réunit ses galeries (voir mastersetCards) : on
+   consulte donc sa liste réelle quand elle est déjà lue, et sinon on la laisse
+   faire à l'ouverture (msSeedFromCollection rattrape tout). */
+function msSyncCollectionAdd(cardIds) {
+  let n = 0;
+  for (const m of state.mastersets || []) {
+    const d = _msCache[m.setId];
+    if (!d) continue;
+    const inSet = new Set(d.cards.map(c => String(c.id)));
+    m.owned = m.owned || {};
+    for (const id of cardIds.map(String)) {
+      if (!inSet.has(id) || (m.owned[id] & MS_N)) continue;
+      m.owned[id] = (m.owned[id] | 0) | MS_N; n++;
+    }
+  }
+  return n;
+}
 function msSeedFromCollection(m, d) {
   const mine = new Set((state.investCards || []).map(p => p.cardId).filter(Boolean).map(String));
   if (!mine.size) return 0;
@@ -10925,6 +10973,10 @@ function renderMastersetDetail(body, setId) {
     });
     return;
   }
+  // Les cartes de la Collection cochent leur case (version normale) à CHAQUE
+  // ouverture, pas seulement à l'ajout du masterset : celles ajoutées depuis y
+  // entrent aussi. On ne décoche jamais rien ici.
+  if (msSeedFromCollection(m, d)) save();
   body.innerHTML = msHeadHTML(m, d) + mastersetGridHTML(m, d);
   attachArtUpgrade(body);
   // Les visuels de la suite du set sont mis en cache pendant qu'on regarde le
