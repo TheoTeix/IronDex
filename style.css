@@ -4975,3 +4975,9 @@ body::before{display:none}
   font:800 16px/1 var(--round);color:#fff;background:rgba(0,0,0,.28);box-shadow:inset 0 2px 5px rgba(0,0,0,.4)}
 .modal .input::placeholder{color:#fff;opacity:.55}
 .modal .input:focus{outline:3px solid color-mix(in srgb,var(--acc) 70%,transparent);outline-offset:2px}
+
+/* Masterset : le « i » des cartes (voir msSlotHTML) — même place et même
+   apparition que dans la Collection. */
+.card-thumb>.ms-info{opacity:0}
+@media(hover:hover){.ms-slot:hover>.ms-info,.ms-info:focus-visible{opacity:1}}
+@media(hover:none){.card-thumb>.ms-info{opacity:.8}}

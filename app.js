@@ -3476,14 +3476,19 @@ function pingCmBridge(force) {
   if (!force && Date.now() - _cmBridge.at < CM_BRIDGE_TTL) return Promise.resolve(_cmBridge);
   if (_cmBridgePing) return _cmBridgePing;
   return (_cmBridgePing = (async () => {
-    let st = { at: Date.now(), up: false, ready: false };
+    let st = { at: Date.now(), up: false, ready: false, squatted: false };
     for (const base of cmBridgeHosts()) {
       try {
         const r = await fetchTimeout(`${base}/health`, 4000);
-        if (!r.ok) continue;
-        const d = await r.json();
+        // Quelque chose RÉPOND sur le port… mais pas le pont (vu le
+        // 2026-10-18 : un serveur de fichiers oublié occupait le 4610 depuis
+        // douze jours, et toutes les recotes retombaient en silence sur les
+        // moyennes). On le note, pour le dire au lieu de se taire.
+        if (!r.ok) { st.squatted = true; continue; }
+        const d = await r.json().catch(() => null);
+        if (!d || typeof d.ready === 'undefined') { st.squatted = true; continue; }
         _cmBridgeBase = base;
-        st = { at: Date.now(), up: true, ready: !!d.ready, needsLogin: !!d.needsLogin, base };
+        st = { at: Date.now(), up: true, ready: !!d.ready, needsLogin: !!d.needsLogin, base, squatted: false };
         break;
       } catch {}
     }
@@ -3957,6 +3962,7 @@ async function syncCardPrice(id, ev) {
   try {
     const r = await recoteCard(p.cardId);
     if (r) sfx.play('cash');
+    { const why = cmBridgeProblem(); if (why && r) toast(why, 'error'); }
     if (!r) toast(cmBridgeUp()
       ? `Aucune offre trouvée pour ${p.name}${had ? ' — valeur précédente conservée' : ''}`
       : `Cote introuvable pour ${p.name}. Sans le pont Cardmarket (cm_price_bridge.py) on ne lit que des moyennes.`, 'error');
@@ -3985,6 +3991,16 @@ function paintDetailCote(el, note, r) {
   el.classList.toggle('none', v == null);
   if (note && note.isConnected) note.textContent = v == null ? 'pas de cote fiable' : coteSourceLabel(r);
 }
+// Pourquoi la recote n'a pas pu lire le PREMIER PRIX — en clair, et seulement
+// sur ordinateur (le téléphone n'a pas de pont : là-bas, la moyenne est normale).
+function cmBridgeProblem() {
+  if (isPhone()) return '';
+  const b = _cmBridge || {};
+  if (b.up && b.ready && !b.needsLogin) return '';
+  if (b.squatted) return 'Le port 4610 est occupé par un autre programme : le pont Cardmarket ne peut pas répondre. Ferme ce programme puis relance python3 scripts/cm_price_bridge.py';
+  if (b.up && b.needsLogin) return 'Le pont Cardmarket doit se reconnecter : lance python3 scripts/cm_price_bridge.py --login';
+  return 'Pont Cardmarket éteint — moyenne affichée. Pour le premier prix FR : python3 scripts/cm_price_bridge.py';
+}
 async function syncDetailPrice(cardId, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   if (_cardSyncing.has(cardId)) return;
@@ -3997,6 +4013,7 @@ async function syncDetailPrice(cardId, ev) {
   try {
     const r = await recoteCard(cardId);
     if (r) sfx.play('cash');
+    { const why = cmBridgeProblem(); if (why) toast(why, 'error'); }
     if (val && val.isConnected) paintDetailCote(val, note, r || getCachedRawPrice(cardId));
     const href = (r && r.cmUrl) || await resolveCmUrl(cardId).catch(() => null);
     const a = document.getElementById('cd-cm');
@@ -11075,6 +11092,10 @@ function msSlotHTML(m, c, hasRev, i) {
         : noImgHTML(c.localId, c.name, c.__set || m.setId)}
       <span class="ms-check" aria-hidden="true">${ICO.check}</span>
     </div>
+    <!-- Consulter la fiche sans quitter le masterset (ni cocher la case) : le
+         même « i » violet que dans la Collection, à cheval sur le coin. -->
+    <button class="cardser-miss-info ms-info" title="Voir la fiche" aria-label="Voir la fiche de ${esc(c.name)}"
+      onclick="event.stopPropagation();openCardDetail('${esc(id)}')">${ICO.infoDot}</button>
     <div class="card-thumb-info">
       <div class="card-thumb-name">${esc(c.name)}</div>
       ${c.localId ? `<div class="card-thumb-sub">#${esc(String(c.localId))}</div>` : ''}
