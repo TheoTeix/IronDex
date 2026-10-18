@@ -6,7 +6,18 @@ const API = 'https://api.tcgdex.net/v2/fr';
 const IMG = (path, qual = 'high') => {
   if (!path) return '';
   if (path.startsWith('DIRECT::')) {
-    const u = path.slice(8);
+    let u = path.slice(8);
+    /* Les sets RÉCENTS (« me55 » = 30ᵉ Anniversaire, « me55c » = sa Collection
+       Classique…) ne sont plus servis par images.pokemontcg.io (404) : leur
+       miroir pointe désormais sur images.scrydex.com, en « small » / « large ».
+       Les anciennes adresses restent enregistrées un peu partout (cache des
+       visuels de repli, cartes de la Collection, wishlists) : on les réécrit
+       ici, au seul endroit par où passent toutes les images. Les anciens sets
+       (base1, swsh12tg…) répondent toujours chez pokemontcg.io : on n'y touche
+       pas. */
+    const old = u.match(/^https:\/\/images\.pokemontcg\.io\/(me[\w.]+)\/([\w-]+?)(_hires)?\.png$/);
+    if (old) u = `https://images.scrydex.com/pokemon/${old[1]}-${old[2]}/large`;
+    if (/^https:\/\/images\.scrydex\.com\//.test(u)) return u.replace(/\/(small|large)$/, qual === 'low' ? '/small' : '/large');
     // Les visuels de repli viennent de pokemontcg.io, où la même carte existe en
     // deux tailles : « TG01_hires.png » (~480 ko) et « TG01.png » (~170 ko). La
     // qualité demandée doit être RESPECTÉE là aussi : une grille de 30 vignettes
@@ -1950,7 +1961,6 @@ async function savePseudo(v) {
     // vient elle aussi du pseudo, et « Milobellus » sous un médaillon marqué
     // « T » se lit comme un bug.
     if (state.view === 'profile') renderProfile();
-    toast('Pseudo enregistré', 'success');
   } catch (e) {
     if (el) el.textContent = vaultDisplayName();
     toast('Pseudo non enregistré : ' + vaultErrText(e), 'error');
@@ -2125,6 +2135,7 @@ async function offerRecoveryIfNeeded() {
 }
 
 function toast(msg, type = '') {
+  if (type === 'error') sfx.play('bonk');
   const c = document.getElementById('toast-container');
   const el = document.createElement('div'); el.className = `toast ${type}`;
   el.innerHTML = `<span class="toast-dot"></span>${esc(msg)}`;
@@ -2665,6 +2676,15 @@ function enNamesOfSet(setId) {
     } catch { return null; }
   })());
 }
+/* Collection Classique du 30ᵉ Anniversaire : les trois cartes que l'appariement
+   automatique écarte À RAISON (il ne devine pas) —
+   · les deux moitiés de « Darkrai & Cresselia LÉGENDE » portent le MÊME nom ;
+   · « Palkia » chez TCGdex s'appelle « Palkia LV.X » chez pokemontcg.io.
+   Vérifié sur le miroir : me55c-99 / me55c-100 sont les moitiés haute et basse,
+   me55c-106p le Palkia LV.X. */
+const PTCG_ID_OVERRIDE = {
+  '30th-c': { '019': 'me55c-99', '020': 'me55c-100', '022': 'me55c-106p' },
+};
 const _verifiedImgCache = {};
 function verifiedSetImages(setId) {
   if (setId in _verifiedImgCache) return Promise.resolve(_verifiedImgCache[setId]);
@@ -2681,11 +2701,12 @@ function verifiedSetImages(setId) {
       let json = [];
       try { json = await fetchGhSetJson(ext); } catch {}
       if (!json.length) continue;
-      const byNum = new Map(), byName = new Map();
+      const byNum = new Map(), byName = new Map(), byId = new Map();
       for (const c of json) {
         const url = c.images?.large || c.images?.small;
         if (!url) continue;
         const v = 'DIRECT::' + url, nm = _cardNorm(c.name);
+        if (c.id) byId.set(String(c.id), v);
         const suf = String(c.id || '').split('-')[1] || '';
         for (const k of [String(c.number), normNum(c.number), normNum(suf)]) {
           if (k && !byNum.has(k)) byNum.set(k, { v, nm });
@@ -2693,7 +2714,11 @@ function verifiedSetImages(setId) {
         if (nm) byName.set(nm, byName.has(nm) ? null : v);   // null = homonyme
       }
       const out = new Map();
+      // Les appariements que ni le numéro ni le nom ne peuvent trancher, posés
+      // à la main et vérifiés carte par carte (voir PTCG_ID_OVERRIDE).
+      const forced = PTCG_ID_OVERRIDE[setId] || {};
       for (const [localId, name] of (en || new Map())) {
+        if (forced[localId] && byId.has(forced[localId])) { out.set(String(localId), byId.get(forced[localId])); continue; }
         const want = _cardNorm(name);
         const hit = byNum.get(String(localId)) || byNum.get(normNum(localId));
         // Le numéro, s'il ne désigne pas visiblement une AUTRE carte.
@@ -3929,8 +3954,8 @@ async function syncCardPrice(id, ev) {
   if (coteEl) coteEl.innerHTML = '<span class="cote-wait">cote…</span>';
   try {
     const r = await recoteCard(p.cardId);
-    if (r) toast(`${p.name} · ${fmt(r.raw)} (${coteSourceLabel(r)})`, 'success');
-    else toast(cmBridgeUp()
+    if (r) sfx.play('cash');
+    if (!r) toast(cmBridgeUp()
       ? `Aucune offre trouvée pour ${p.name}${had ? ' — valeur précédente conservée' : ''}`
       : `Cote introuvable pour ${p.name}. Sans le pont Cardmarket (cm_price_bridge.py) on ne lit que des moyennes.`, 'error');
     // Le lien Cardmarket de la tuile suit la fiche qu'on vient de retrouver.
@@ -3969,12 +3994,12 @@ async function syncDetailPrice(cardId, ev) {
   if (val) val.innerHTML = '<span class="cv-skeleton" style="display:inline-block;width:74px;height:1em"></span>';
   try {
     const r = await recoteCard(cardId);
+    if (r) sfx.play('cash');
     if (val && val.isConnected) paintDetailCote(val, note, r || getCachedRawPrice(cardId));
     const href = (r && r.cmUrl) || await resolveCmUrl(cardId).catch(() => null);
     const a = document.getElementById('cd-cm');
     if (a && href && a.isConnected) a.href = href;
-    if (r) toast(`Cote refaite · ${fmt(r.raw)} (${coteSourceLabel(r)})`, 'success');
-    else toast('Aucune cote trouvée pour cette carte', 'error');
+    if (!r) toast('Aucune cote trouvée pour cette carte', 'error');
     // La valeur du coffre et les tuiles visibles suivent.
     window._vaultCounted = false;
     if (state.view === 'invest') { refreshInvestTotals(); const p = (state.investCards || []).find(x => x.cardId === cardId); if (p) refreshCardTile(p); }
@@ -4479,7 +4504,7 @@ function navigate(view, extra = {}) {
   // un écran redimensionné ne doivent pas pouvoir y échouer.
   if (isPhone() && PHONE_HIDDEN.includes(view)) view = 'home';
   const from = state.view;
-  if (from !== view) sfx.play('tick');
+  if (from !== view) sfx.play('swoosh');
   const kind = transitionKind(from, view);
   state.view = view; Object.assign(state, extra);
   // La pastille de nav réagit tout de suite, indépendamment du temps que prend
@@ -5192,7 +5217,7 @@ const EYE_SVG = {
 };
 function toggleHomeValue() {
   const hide = !homeValueHidden();
-  sfx.play(hide ? 'unpop' : 'coin');
+  sfx.play(hide ? 'squeak' : 'coin');
   try { localStorage.setItem(HOME_HIDE_KEY, hide ? '1' : '0'); } catch {}
   // L'œil existe à deux endroits (accueil, volet Valeur) : tous suivent.
   const ve = document.getElementById('inv-total-value');
@@ -5423,9 +5448,8 @@ function setHeroCard(cardId) {
   const e = ownedCardEntries().find(x => String(x.id) === String(cardId));
   if (!e) return;
   state.heroRef = { type: 'loose', id: e.id, cardId: e.id, name: e.name, image: e.image, setName: e.setName, setId: e.setId, localId: e.localId };
-  save(); closeModal('modal-feature-picker');
+  save(); closeModal('modal-feature-picker'); sfx.play('fanfare');
   if (state.view === 'home') renderHome();
-  toast('Pièce maîtresse mise à jour', 'success');
 }
 function clearFeatured(target) {
   state.heroRef = null;
@@ -5738,7 +5762,6 @@ function syncWishOwnedToCollection() {
   if (!added.length) return;
   save();
   afterWishCollectionChange(added);
-  toast(`${added.length} carte${added.length > 1 ? 's' : ''} de tes wishlists ajoutée${added.length > 1 ? 's' : ''} à ta collection`, 'success');
 }
 
 function toggleOwned(wid, cardId) {
@@ -5756,9 +5779,8 @@ function toggleOwned(wid, cardId) {
   save();
   if (moved) {
     afterWishCollectionChange([String(c.id)]);
-    toast(moved === 'in' ? `${c.name || 'Carte'} ajoutée à ta collection` : `${c.name || 'Carte'} retirée de ta collection`, 'success');
   }
-  sfx.play(c.owned ? 'pop' : 'unpop');
+  sfx.play(c.owned ? 'sparkle' : 'unpop');
   document.querySelector(`.card-thumb[data-card="${cardId}"]`)?.classList.toggle('owned', c.owned);
   const owned = w.cards.filter(x => x.owned).length;
   const pct = w.cards.length ? Math.round(owned/w.cards.length*100) : 0;
@@ -5774,7 +5796,6 @@ function removeFromWishlist(wid, cardId) {
   const thumb = document.querySelector(`.card-thumb[data-card="${cardId}"]`);
   if (thumb) { thumb.style.transition = 'opacity .2s, transform .2s'; thumb.style.opacity = '0'; thumb.style.transform = 'scale(.9)'; }
   setTimeout(renderWishlistDetail, 200);
-  toast('Carte retirée');
 }
 
 // Course bornée : résout au plus tard après `ms`, ne rejette jamais — les
@@ -5910,16 +5931,16 @@ function openCreateWishlist() {
 function createWishlist() {
   const name = document.getElementById('wishlist-name-input').value.trim();
   if (!name) { toast('Donne un nom à ta wishlist', 'error'); return; }
+  sfx.play('tada');
   const w = { id: uid(), name, cards: [] };
   closeModal('modal-create-wishlist');
   flashBusy('Création de la wishlist…', () => {
     state.wishlists.push(w); save();
     navigate('wishlist-detail', { activeWishlistId: w.id });
-    toast(`Wishlist « ${name} » créée`, 'success');
   });
 }
 function confirmDeleteWishlist(id) {
-  if (confirm('Supprimer cette wishlist ?')) { sfx.play('poof'); state.wishlists = state.wishlists.filter(w => w.id !== id); save(); navigate('wishlists'); toast('Wishlist supprimée'); }
+  if (confirm('Supprimer cette wishlist ?')) { sfx.play('poof'); state.wishlists = state.wishlists.filter(w => w.id !== id); save(); navigate('wishlists');  }
 }
 function openRenameWishlist(id) {
   const w = state.wishlists.find(x => x.id === id);
@@ -5943,7 +5964,6 @@ function confirmRenameWishlist() {
   if (state.view === 'wishlist-detail') renderWishlistDetail();
   else if (state.view === 'wishlists') renderWishlists();
   else renderViewContent(state.view);
-  toast('Wishlist renommée', 'success');
 }
 
 async function openCardPicker(mode, slot) {
@@ -6260,14 +6280,13 @@ function filterPickerCards() {
 }
 function searchPicker(q) { state.pickerSearch = q; filterPickerCards(); }
 function pickCard(id, name, image, setName, setId, localId) {
-  sfx.play(state.pickerMode === 'hero' ? 'ding' : 'pop');
+  sfx.play(state.pickerMode === 'hero' ? 'fanfare' : 'pop');
   if (state.pickerMode === 'hero') {
     state.heroRef = { type: 'loose', id, cardId: id, name, image, setName, setId, localId };
     save(); closeModal('modal-card-picker');
     // Cote la carte choisie si on ne l'a jamais vue, puis rafraîchit la puce.
     ensurePrices([id], n => { if (n && state.view === 'home') renderHome(); });
     if (state.view === 'home') renderHome();
-    toast('Pièce maîtresse mise à jour', 'success');
     return;
   }
   if (state.pickerMode === 'investCard') {
@@ -6303,7 +6322,6 @@ function pickCard(id, name, image, setName, setId, localId) {
       }
     }).catch(() => {});
     ensureSetDates(() => { if (state.view === 'invest' && state.investMode === 'cards' && !state.investSeriesOpen) renderInvestBody(); });
-    toast(isNew ? `${name} ajoutée` : 'Carte rattachée', 'success');
     return;
   }
   if (state.pickerMode === 'binder') {
@@ -6360,7 +6378,6 @@ function finishPicker() {
   closeModal('modal-card-picker');
   if (state.pickerMode === 'binder') refreshSpreadPages();   // en place, sans réouvrir la couverture
   else renderWishlistDetail();
-  if (state.sessionAdded > 0) toast(`${state.sessionAdded} carte${state.sessionAdded>1?'s':''} ajoutée${state.sessionAdded>1?'s':''}`, 'success');
 }
 // retry : nom d'un appel global (sans donnée utilisateur → onclick sûr) à
 // rejouer au clic sur « Réessayer ». Fini les impasses sur un hoquet réseau.
@@ -6611,11 +6628,11 @@ function createBinder() {
   const inp = document.getElementById('binder-name-input');
   const name = (inp && inp.value || '').trim();
   if (!name) { toast('Donne un nom à ton classeur', 'error'); return; }
+  sfx.play('tada');
   const b = { id: 'b' + Date.now().toString(36), name, perPage: window._binderPerPage === 9 ? 9 : 4, cards: [] };
   state.binders.push(b);
   save();
   closeModal('modal-create-binder');
-  toast('Classeur créé', 'success');
   openBinder(b.id);
 }
 function openRenameBinder(id) {
@@ -6637,7 +6654,6 @@ function renameBinder() {
   closeModal('modal-rename-binder');
   if (state.view === 'binders') renderBinders();
   else if (state.view === 'binder-detail') renderBinderDetail();
-  toast('Classeur renommé', 'success');
 }
 function deleteBinder(id) {
   const b = binderById(id);
@@ -6646,7 +6662,6 @@ function deleteBinder(id) {
   state.binders = state.binders.filter(x => x.id !== id);
   save();
   if (state.view === 'binders') renderBinders();
-  toast('Classeur supprimé', 'success');
 }
 // Retire une carte : laisse une pochette vide à sa place (comme un vrai
 // classeur), puis compacte les pochettes vides en fin de classeur.
@@ -6660,7 +6675,6 @@ function removeBinderCard(idx) {
   trimBinderTail(b);
   save();
   refreshSpreadPages();
-  toast(`${name} retirée du classeur`, '');
 }
 // Ajoute une page vierge au classeur custom ouvert (pochettes « + » prêtes à
 // recevoir des cartes), puis feuillette jusqu'à elle.
@@ -6672,7 +6686,6 @@ function addBinderPage() {
   updateMiloControls();
   const target = miloTotalSpreads() - 1;
   if (_miloState.spread < target && !_miloState.flipping) miloTurn(1);
-  toast('Page ajoutée au classeur', 'success');
 }
 // Re-rend la double-page courante EN PLACE (pas de réouverture de couverture).
 function refreshSpreadPages() {
@@ -8097,8 +8110,13 @@ function anyModalOpen() { return !!document.querySelector('.modal-overlay.open')
 function pauseHero() { if (_hero && !_hero.paused) { _hero.paused = true; cancelAnimationFrame(_hero.raf); } }
 function resumeHero() { if (_hero && _hero.paused) { _hero.paused = false; _hero.raf = requestAnimationFrame(_hero.animate); } }
 
-function openModal(m) { (typeof m === 'string' ? document.getElementById(m) : m).classList.add('open'); pauseHero(); }
+function openModal(m) {
+  const el = typeof m === 'string' ? document.getElementById(m) : m;
+  if (el && !el.classList.contains('open')) sfx.play(el.id === 'modal-card-detail' ? 'boing' : 'whoop');
+  el.classList.add('open'); pauseHero();
+}
 function closeModal(id) {
+  if (document.getElementById(id)?.classList.contains('open')) sfx.play('whoopDown');
   document.getElementById(id)?.classList.remove('open');
   if (!anyModalOpen()) resumeHero();
   // Quitter le picker d'un classeur par n'importe quel chemin (✕, overlay…)
@@ -8922,8 +8940,7 @@ function initHero3D() {
    · La sortie : la barre finit, on laisse 160 ms pour la voir pleine, puis
      l'écran s'efface en fondu pendant que l'app se peint DESSOUS.
    · Le son (voir sfx) : un « plop » qui monte à chaque dixième, un « ding » à
-     la fin. Le navigateur l'interdit avant tout geste : la barre attend alors
-     un toucher sur « Entrer » pour finir en musique.
+     la fin — quand le navigateur l'autorise (pas avant un premier geste).
    ─────────────────────────────────────────────────────────────────────── */
 /* ══════════════════════════════════════════════════════════════════════
    LE SON — un seul moteur pour le chargement et pour toute l'app
@@ -8931,9 +8948,8 @@ function initHero3D() {
    bruit est réglé pour aller avec les autres (même gamme, même enveloppe).
 
    LA RÈGLE DES NAVIGATEURS. Aucun son n'est permis avant le premier geste de
-   l'utilisateur sur la page (Safari, Chrome, Firefox). D'où le bouton
-   « Entrer » à la fin du chargement : c'est ce toucher qui débloque le son.
-   Ensuite, chaque geste (pointerup / touchend / click / keydown) relance le
+   l'utilisateur sur la page (Safari, Chrome, Firefox) : le premier toucher le
+   débloque. Ensuite, chaque geste (pointerup / touchend / click / keydown) relance le
    contexte s'il s'est rendormi — iOS l'endort quand l'app passe en fond.
    À savoir : sur iPhone, le bouton silencieux coupe aussi ces sons.
 
@@ -8971,19 +8987,67 @@ const sfx = (() => {
     g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     src.connect(f); f.connect(g); g.connect(master); src.start(at); src.stop(at + dur + 0.02);
   };
+  // Une note qui « vibre » (LFO sur la hauteur) : le ressort, le boing.
+  const wobble = (f0, f1, at, dur, vol, rate, depth, type = 'sine') => {
+    const o = ctx.createOscillator(), g = ctx.createGain(), l = ctx.createOscillator(), lg = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, at); o.frequency.exponentialRampToValueAtTime(f1, at + dur * 0.8);
+    l.frequency.value = rate; lg.gain.value = depth; l.connect(lg); lg.connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    o.connect(g); g.connect(master); o.start(at); l.start(at); o.stop(at + dur + 0.03); l.stop(at + dur + 0.03);
+  };
+  // Un souffle filtré qui balaie : le « fwip » d'une page qui tourne.
+  const swish = (at, dur, vol, fA, fB) => {
+    const n = Math.floor(ctx.sampleRate * dur), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / n);
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = buf; f.type = 'bandpass'; f.Q.value = 1.4;
+    f.frequency.setValueAtTime(fA, at); f.frequency.exponentialRampToValueAtTime(fB, at + dur);
+    g.gain.value = vol; src.connect(f); f.connect(g); g.connect(master); src.start(at); src.stop(at + dur + 0.02);
+  };
   // Gamme pentatonique majeure : dans n'importe quel ordre, ça sonne gai.
   const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5, 1567.98, 1760];
+  // LES POPS QUI MONTENT. Ajouter cinq cartes d'affilée joue une petite
+  // mélodie au lieu du même « pop » cinq fois : chaque pop prend la note
+  // suivante de la gamme, et la gamme repart du bas après une pause.
+  let popStep = 0, popAt = 0;
+  const nextPop = () => {
+    const now = performance.now();
+    popStep = now - popAt < 1400 ? Math.min(popStep + 1, SCALE.length - 1) : 0;
+    popAt = now;
+    return SCALE[popStep] * 0.75;
+  };
   const SOUNDS = {
     plop: i => { const f = SCALE[Math.min(i, SCALE.length - 1)]; tone(f, f * 1.5, ctx.currentTime, 0.11, 0.5); },
-    pop: () => { const t = ctx.currentTime; tone(620, 1180, t, 0.09, 0.45); tone(1240, 2000, t + 0.01, 0.06, 0.12, 'triangle'); },
+    pop: () => { const t = ctx.currentTime, f = nextPop(); tone(f, f * 1.9, t, 0.09, 0.45); tone(f * 2, f * 3.2, t + 0.01, 0.06, 0.12, 'triangle'); },
     unpop: () => tone(760, 380, ctx.currentTime, 0.1, 0.35),
+    // Cocher une carte de wishlist : trois clochettes qui scintillent.
+    sparkle: () => { const t = ctx.currentTime; [1318.5, 1567.98, 2093].forEach((f, i) => { tone(f, f, t + i * 0.05, 0.22, 0.24 - i * 0.04); tone(f * 2, f * 2, t + i * 0.05, 0.12, 0.05, 'triangle'); }); },
     poof: () => { const t = ctx.currentTime; puff(t, 0.22, 0.32); tone(420, 160, t, 0.18, 0.2); },
     tick: () => tone(1900, 1700, ctx.currentTime, 0.03, 0.12, 'triangle'),
+    tock: () => tone(1200, 1000, ctx.currentTime, 0.035, 0.12, 'triangle'),
+    // Changer de page : un « fwip » de feuille.
+    swoosh: () => swish(ctx.currentTime, 0.16, 0.22, 900, 3200),
+    // Changer de volet : une bulle qui remonte.
+    bloop: () => { const t = ctx.currentTime; tone(330, 260, t, 0.06, 0.35); tone(420, 900, t + 0.05, 0.12, 0.35); },
+    // Ouvrir / fermer une fenêtre.
+    whoop: () => tone(320, 900, ctx.currentTime, 0.13, 0.22, 'triangle'),
+    whoopDown: () => tone(760, 260, ctx.currentTime, 0.12, 0.18, 'triangle'),
+    // La fiche d'une carte : un ressort, comme une carte qui saute de la pile.
+    boing: () => wobble(260, 620, ctx.currentTime, 0.32, 0.3, 18, 40),
     coin: () => { const t = ctx.currentTime; tone(987.77, 987.77, t, 0.08, 0.3, 'square'); tone(1318.5, 1318.5, t + 0.07, 0.32, 0.26, 'square'); },
+    squeak: () => tone(1500, 820, ctx.currentTime, 0.09, 0.22),
+    // Une cote refaite : la pièce, puis une pluie de petites notes.
+    cash: () => { SOUNDS.coin(); const t = ctx.currentTime + 0.2; [2093, 2637, 3136].forEach((f, i) => tone(f, f, t + i * 0.04, 0.15, 0.08)); },
+    bonk: () => { const t = ctx.currentTime; tone(180, 90, t, 0.16, 0.4); puff(t, 0.06, 0.12); },
     ding: () => { const t = ctx.currentTime + 0.01; tone(1046.5, 1046.5, t, 0.5, 0.45, 'triangle'); tone(1567.98, 1567.98, t + 0.07, 0.6, 0.32); tone(2093, 2093, t + 0.14, 0.7, 0.2); },
+    // Créer une wishlist, un classeur : « ta-da ! »
+    tada: () => { const t = ctx.currentTime; tone(784, 784, t, 0.12, 0.3, 'triangle'); tone(1046.5, 1046.5, t + 0.11, 0.5, 0.32, 'triangle'); tone(1318.5, 1318.5, t + 0.11, 0.5, 0.18); },
+    // Masterset complété, pièce maîtresse choisie : la petite fanfare.
+    fanfare: () => { const t = ctx.currentTime; [[523.25, 0], [659.25, 0.1], [783.99, 0.2], [1046.5, 0.3]].forEach(([f, d], i) => tone(f, f, t + d, i === 3 ? 0.7 : 0.14, i === 3 ? 0.38 : 0.3, 'triangle')); tone(1318.5, 1318.5, t + 0.3, 0.7, 0.16); },
     cascade: () => { const t = ctx.currentTime; [5, 6, 7, 8, 9].forEach((k, j) => { const f = SCALE[k]; tone(f, f * 1.5, t + j * 0.055, 0.1, 0.42); }); },
   };
-  const play = (name, arg) => { if (!live()) return; try { SOUNDS[name] && SOUNDS[name](arg); } catch {} };
+  const play = (name, arg) => { if (!live()) return; try { SOUNDS[name] && SOUNDS[name](arg); } catch (e) { console.warn('[sfx]', name, e); } };
   return {
     play, unlock,
     supported: () => !!AC,
@@ -9085,34 +9149,17 @@ function runIntro(onReveal) {
     }, reduce ? 60 : 170);
   }
   const finish = () => { finishing = true; target = 100; };
-  /* LE BOUTON « ENTRER ». Si le son est encore verrouillé par le navigateur
-     (aucun geste sur la page), la barre s'arrête juste avant la fin et attend
-     un toucher : c'est lui qui débloque le son. La barre finit alors en
-     cascade de notes, ding, et l'app s'ouvre. Son coupé, non pris en charge,
-     ou déjà débloqué (un geste pendant le chargement) : on entre tout seul. */
-  const enterOrWait = () => {
-    if (!sfx.supported() || !sfx.enabled() || sfx.running()) { finish(); return; }
-    target = Math.max(target, 92);
-    const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'intro-enter'; btn.textContent = 'Entrer';
-    const go = () => {
-      btn.disabled = true; sfx.unlock();
-      // resume() est asynchrone : on laisse au contexte le temps de se réveiller.
-      setTimeout(() => { sfx.play('cascade'); intro?.classList.add('entering'); finish(); }, 40);
-    };
-    btn.addEventListener('click', go, { once: true });
-    intro?.querySelector('.intro-hud')?.appendChild(btn);
-    intro?.classList.add('await');
-    requestAnimationFrame(() => btn.focus({ preventScroll: true }));
-  };
-
+  /* Plus de bouton « Entrer » (2026-10-18, « c'est inutile ») : on entre
+     tout seul. Le navigateur interdit le son tant qu'aucun geste n'a eu lieu
+     sur la page — le chargement est donc le plus souvent muet, et les sons de
+     l'app démarrent au premier toucher (voir sfx). */
   // On attend que l'app soit PRÊTE et qu'un minimum de temps soit passé (sans
   // plancher, la barre ferait 0 → 100 % en un clignement). Plafond : 6 s.
   const MIN_MS = reduce ? 400 : 1100;
   const t0 = performance.now();
   const ready = window._introReady || Promise.resolve();
   Promise.race([ready, new Promise(r => setTimeout(r, 6000))])
-    .then(() => setTimeout(enterOrWait, Math.max(0, MIN_MS - (performance.now() - t0))));
+    .then(() => setTimeout(finish, Math.max(0, MIN_MS - (performance.now() - t0))));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9249,7 +9296,7 @@ function setInvestMode(mode) {
   mode = INVEST_MODES.includes(mode) ? mode : 'cards';
   if (state.investMode === mode) return;
   state.investMode = mode;
-  sfx.play('tick');
+  sfx.play('bloop');
   state.investSeriesOpen = null; state.mastersetOpen = null;
   save();
   renderInvestBody();
@@ -9302,7 +9349,6 @@ function renderInvestBody() {
     // Séries restées « ? » depuis un import (« HS : Triomphe »…) : on leur
     // rend leur vrai set — donc leur logo, leur bloc et leur visuel.
     repairUnknownSets(n => {
-      toast(`${n} carte${n > 1 ? 's' : ''} rattachée${n > 1 ? 's' : ''} à sa série`, 'success');
       if (state.view === 'invest' && state.investMode === 'cards') renderInvestBody();
       prefetchCardPrices();
     });
@@ -9861,6 +9907,7 @@ function toggleBloc(id) {
   _blocsOpen = _blocsOpen || new Set();
   open ? _blocsOpen.add(id) : _blocsOpen.delete(id);
   sec.querySelector('.bloc-head')?.setAttribute('aria-expanded', String(open));
+  sfx.play(open ? 'tick' : 'tock');
   // L'animation se fait sur une hauteur INLINE, posée le temps de la
   // transition puis retirée : au repos, un corps ouvert n'a aucune contrainte
   // de hauteur (il grandit si les cotes arrivent) et un corps replié est
@@ -9981,10 +10028,22 @@ function seriesRows(setId, g) {
     if (!serieCardShown(cat, c.id)) continue;
     rows.set(String(c.id), { c, p: null, k: c.localId, id: String(c.id) });
   }
+  let healed = false;
+  const catById = new Map((cat ? cat.cards : []).map(c => [String(c.id), c]));
   for (const p of g.cards) {
     const key = p.cardId ? String(p.cardId) : 'own:' + p.id;
     const hit = rows.get(key);
-    if (hit) { hit.p = p; continue; }
+    /* L'IMAGE OFFICIELLE D'ABORD. Une carte importée quand TCGdex n'avait pas
+       encore le visuel (le 30ᵉ Anniversaire, à sa sortie) a gardé une image
+       vide ou une image de repli externe — parfois morte depuis. Dès que le
+       catalogue a la sienne, on la reprend, et on l'ENREGISTRE. On la cherche
+       dans tout le catalogue, filtres de rareté compris. */
+    const cc = catById.get(key) || (getCachedSetInfo(p.setId)?.cards || []).find(x => String(x.id) === key);
+    if (cc && cc.image && (!p.image || String(p.image).startsWith('DIRECT::'))) { p.image = cc.image; healed = true; }
+    if (hit) {
+      hit.p = p;
+      continue;
+    }
     // Absente des lignes : soit un filtre vient d'écarter sa rareté — et une
     // carte à moi n'y échappe pas —, soit elle n'est pas au catalogue du tout
     // (commune gardée exprès, carte ajoutée à la main, numéro inconnu de
@@ -9998,8 +10057,15 @@ function seriesRows(setId, g) {
      famille, pour qu'elle se parcoure comme une petite liste. Une carte à moi
      que le catalogue ne connaît pas n'a pas de famille : elle passe en fin de
      liste plutôt qu'en tête. */
+  if (healed) save();
   const fam = cat && cat.order;
+  // Le set principal d'abord, ses sous-séries ensuite (la Collection Classique
+  // du 30ᵉ Anniversaire, les galeries…) : leurs numéros recommencent à 001, et
+  // trier sur le seul numéro les mélangeait au set.
+  const sub = r => (r.id && r.id.slice(0, r.id.lastIndexOf('-')) !== String(setId)) ? 1 : 0;
   return [...rows.values()].sort((a, b) => {
+    const sa = sub(a), sb = sub(b);
+    if (sa !== sb) return sa - sb;
     if (fam) {
       const ga = fam.has(a.id) ? fam.get(a.id) : 99;
       const gb = fam.has(b.id) ? fam.get(b.id) : 99;
@@ -10140,7 +10206,6 @@ function addMissingCard(cardId) {
   }
   paintCardValues([cardId]);
   refreshInvestTotals();
-  toast(`${p.name} ajoutée`, 'success');
   // La cote arrive en tâche de fond : elle alimente la valeur de la série et
   // le total de la Collection.
   getRawPrice(cardId).then(() => {
@@ -10386,10 +10451,11 @@ function toggleSerieShow(key) {
    La table est vide pour tous les autres sets : eux gardent l'ordre des
    numéros, et ne paient aucune requête de plus.
    ══════════════════════════════════════════════════════════════════════ */
-const SERIE_RARITY_ORDER = {
-  '30th': ['Pikachu Rare', 'Double rare', 'Illustration rare',
-           'Illustration spéciale rare', 'Futuristic Rare', 'Rare', 'Sans Rareté'],
-};
+/* 2026-10-18 : le 30ᵉ Anniversaire SORT de la table. « L'ordre est un peu
+   aléatoire — base-toi sur l'ordre de Pokécardex » : c'est l'ordre des
+   numéros, comme sur la feuille officielle, la Collection Classique après le
+   set (voir seriesRows). La mécanique reste, prête pour un autre set. */
+const SERIE_RARITY_ORDER = {};
 async function serieRarityOrder(setId, b, own) {
   const wanted = SERIE_RARITY_ORDER[String(setId)];
   if (!wanted) return null;
@@ -10678,9 +10744,6 @@ async function addMasterset(setId) {
   const seeded = msSeedFromCollection(m, d);
   save();
   if (state.view === 'invest' && String(state.mastersetOpen) === setId) renderInvestBody();
-  toast(seeded
-    ? `${m.setName} ajouté · ${seeded} carte${seeded > 1 ? 's' : ''} déjà cochée${seeded > 1 ? 's' : ''}`
-    : `${m.setName} ajouté au masterset`, 'success');
 }
 // Nom, logo, date, nombre de cases : relus du set à chaque ouverture, parce que
 // c'est l'API qui fait foi (et qu'une entrée créée avant l'ajout des galeries
@@ -10721,7 +10784,6 @@ function removeMasterset(setId) {
   if (String(state.mastersetOpen) === String(setId)) state.mastersetOpen = null;
   save();
   renderInvestBody();
-  toast(`${m.setName} retiré du masterset`, 'success');
 }
 
 // ── Cocher ──────────────────────────────────────────────────────────
@@ -10735,7 +10797,7 @@ function toggleMasterslot(setId, cardId, variant) {
   if (next) m.owned[cardId] = next; else delete m.owned[cardId];
   save();
   // Le masterset qui vient d'être COMPLÉTÉ mérite mieux qu'un pop.
-  sfx.play(next & bit ? (m.slots && msOwnedCount(m) >= m.slots ? 'ding' : 'pop') : 'unpop');
+  sfx.play(next & bit ? (m.slots && msOwnedCount(m) >= m.slots ? 'fanfare' : 'pop') : 'unpop');
   // La vignette et SA coche : la carte reprend ses couleurs dès qu'une des
   // deux versions est cochée, chaque coche ne parle que de la sienne.
   const tile = document.querySelector(`.ms-slot[data-card="${cardId}"]`);
@@ -10768,7 +10830,6 @@ function toggleMastersetAll(setId) {
   // les couleurs changent, donc seules les classes changent.
   paintMastersetSlots(m);
   paintMastersetHead();
-  toast(full ? `${m.setName} remis à zéro` : `${m.setName} : tout est coché`, 'success');
 }
 // Remet chaque vignette et chaque coche de la grille au niveau de `owned`.
 function paintMastersetSlots(m) {
@@ -10988,18 +11049,18 @@ function addSealedRow(cat) {
 }
 function deleteSealedRow(id) {
   const i = state.sealed.findIndex(x => x.id === id); if (i < 0) return;
-  state.sealed.splice(i, 1); save(); renderInvestBody(); investBadge(); toast('Ligne supprimée', 'success');
+  state.sealed.splice(i, 1); save(); renderInvestBody(); investBadge();
 }
 function addSealedPeriod() {
   const P = sealedPeriods(); P.push(nextPeriod(P[P.length - 1] || '2026-07'));
-  save(); renderInvestBody(); toast('Semestre ajouté', 'success');
+  save(); renderInvestBody();
 }
 function removeSealedPeriod(key) {
   const P = sealedPeriods(); const i = P.indexOf(key); if (i < 0 || P.length <= 1) return;
   P.splice(i, 1);
   for (const p of state.sealed) if (p.values) delete p.values[key];
   for (const p of state.investCards) if (p.values) delete p.values[key];
-  save(); renderInvestBody(); toast(`Colonne ${periodLabel(key)} retirée`, 'success');
+  save(); renderInvestBody();
 }
 function refreshSealedTotalsUI() {
   const t = sealedTotals(state.sealed), pos = t.pnl >= 0;
@@ -11030,7 +11091,7 @@ function deleteInvestCard(id) {
   // Retirer UNE carte ne fait pas renaître la série : les voisines se
   // referment sur la place laissée vide.
   flipGrid(() => renderInvestBody());
-  investBadge(); toast('Carte retirée', 'success');
+  investBadge();
 }
 // Quantité : mise à jour EN PLACE (cote, total, plus-value, KPI) — la tuile
 // n'est pas reconstruite, donc aucun saut de scroll ni perte de focus.
