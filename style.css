@@ -4305,19 +4305,6 @@ body::before{display:none}
    étincelles restent autour d'elle quelle que soit la largeur. */
 .hstage-halo{position:absolute;z-index:-1;left:50%;top:calc(30px + var(--cw) * .7);
   width:calc(var(--cw) * 2.6);aspect-ratio:1;transform:translate(-50%,-50%);pointer-events:none}
-.hstage-sun{position:absolute;inset:-12%;border-radius:50%;
-  background:repeating-conic-gradient(from 0deg,color-mix(in srgb,var(--acc) 34%,transparent) 0deg 7deg,transparent 7deg 18deg);
-  -webkit-mask:radial-gradient(circle,#000 0 14%,rgba(0,0,0,.55) 36%,transparent 66%);
-          mask:radial-gradient(circle,#000 0 14%,rgba(0,0,0,.55) 36%,transparent 66%);
-  animation:hsun 120s linear infinite}
-.hstage-glow{position:absolute;inset:14%;border-radius:50%;
-  background:radial-gradient(circle,color-mix(in srgb,var(--acc) 55%,transparent) 0,color-mix(in srgb,var(--acc) 18%,transparent) 42%,transparent 70%)}
-@keyframes hsun{to{transform:rotate(1turn)}}
-.hspark{position:absolute;width:calc(10px + 16px * var(--k));aspect-ratio:1;margin:-8px 0 0 -8px;
-  color:color-mix(in srgb,var(--acc) 35%,#fff);
-  animation:hspark 3.2s var(--d) ease-in-out infinite both}
-.hspark svg{display:block;width:100%;height:100%}
-@keyframes hspark{0%,100%{opacity:.15;transform:scale(.45) rotate(0deg)}50%{opacity:1;transform:scale(1) rotate(45deg)}}
 
 .hstage-pin{position:relative;width:var(--cw)}
 .hstage-card{position:relative;width:100%;cursor:pointer;outline:none;
@@ -4333,10 +4320,6 @@ body::before{display:none}
   background:linear-gradient(105deg,transparent 42%,rgba(255,255,255,.42) 50%,transparent 58%);
   transform:translateX(-70%);animation:hshine 6.5s 1.2s ease-in-out infinite}
 @keyframes hshine{0%,62%{transform:translateX(-70%)}86%,100%{transform:translateX(70%)}}
-.hstage-shadow{display:block;width:72%;height:20px;margin:14px auto 0;border-radius:50%;
-  background:radial-gradient(closest-side,rgba(0,0,0,.55),transparent);
-  animation:hshadow 5.6s ease-in-out infinite alternate}
-@keyframes hshadow{from{transform:scaleX(1.06);opacity:.8}to{transform:scaleX(.86);opacity:.55}}
 @media(hover:hover){.hstage-card:hover{transform:scale(1.035)}}
 .hstage-card:active{transform:scale(.97)}
 .hstage-card:focus-visible .hstage-float{outline:3px solid var(--acc);outline-offset:4px}
@@ -4474,8 +4457,7 @@ body::before{display:none}
   .hwl-b{width:84px}.hwl-ring{width:76px;height:76px}
 }
 @media (prefers-reduced-motion:reduce){
-  .hstage-sun,.hspark,.hstage-float,.hstage-shine,.hstage-shadow,.hstage-empty svg,.hwl-fill{animation:none}
-  .hspark{opacity:.7}
+  .hstage-float,.hstage-shine,.hstage-empty svg,.hwl-fill{animation:none}
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -4981,3 +4963,62 @@ body::before{display:none}
 .card-thumb>.ms-info{opacity:0}
 @media(hover:hover){.ms-slot:hover>.ms-info,.ms-info:focus-visible{opacity:1}}
 @media(hover:none){.card-thumb>.ms-info{opacity:.8}}
+.pal-owned-pill{color:#fff;background:linear-gradient(160deg,#6CF0C6,var(--toy-green-2))}
+.pal-owned-pill svg{width:13px;height:13px}
+
+@keyframes hsun{to{transform:rotate(1turn)}}
+
+/* ══ LA VITRINE DE L'ACCUEIL (2026-10-20) ═════════════════════════════════
+   « La carte qui vole et les brillants derrière, ça fait un peu cheap. »
+   Une vitrine plutôt qu'un feu d'artifice :
+   · un halo à la couleur de la carte, très doux, qui respire ;
+   · trois lueurs floues (des dégradés, pas des filtres) qui dérivent lentement ;
+   · la carte qui PIVOTE en 3D — peu, lentement — avec un film holographique
+     teinté qui glisse sur elle au rythme du pivot, et son reflet dessous ;
+   · un socle de lumière sous la carte, comme un présentoir.
+   Tout est en transform/opacity : composé par la carte graphique. */
+.hstage-aura{position:absolute;inset:4%;border-radius:50%;
+  background:
+    radial-gradient(circle at 50% 46%,color-mix(in srgb,var(--acc) 42%,transparent) 0,color-mix(in srgb,var(--acc) 14%,transparent) 34%,transparent 62%),
+    radial-gradient(circle at 50% 46%,rgba(255,255,255,.07) 0,transparent 30%);
+  animation:haura 7s ease-in-out infinite alternate}
+@keyframes haura{from{transform:scale(.94);opacity:.85}to{transform:scale(1.06);opacity:1}}
+.hstage-bokeh{position:absolute;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--acc) 55%,#fff) 0,color-mix(in srgb,var(--acc) 20%,transparent) 38%,transparent 70%);
+  opacity:.32;animation:hbokeh 16s ease-in-out infinite alternate}
+.hstage-bokeh.b1{width:18%;aspect-ratio:1;left:6%;top:18%}
+.hstage-bokeh.b2{width:12%;aspect-ratio:1;right:9%;top:30%;animation-duration:13s;animation-delay:-4s;opacity:.24}
+.hstage-bokeh.b3{width:9%;aspect-ratio:1;left:20%;bottom:16%;animation-duration:19s;animation-delay:-9s;opacity:.2}
+@keyframes hbokeh{from{transform:translate3d(-10px,8px,0) scale(.9)}to{transform:translate3d(14px,-14px,0) scale(1.1)}}
+
+.hstage-pin{perspective:1100px}
+.hstage-card{transform-style:preserve-3d}
+.hstage-float{
+  box-shadow:0 30px 60px -26px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.12),0 0 50px -10px color-mix(in srgb,var(--acc) 45%,transparent);
+  animation:hsway 9s ease-in-out infinite;
+  -webkit-box-reflect:below 10px linear-gradient(transparent 82%,rgba(255,255,255,.1));
+  will-change:transform}
+@keyframes hsway{
+  0%  {transform:translate3d(0,-4px,0) rotateY(-9deg) rotateX(4deg)}
+  50% {transform:translate3d(0,4px,0)  rotateY(9deg)  rotateX(2deg)}
+  100%{transform:translate3d(0,-4px,0) rotateY(-9deg) rotateX(4deg)}}
+/* Le film holographique : un dégradé irisé, teinté à la couleur de la carte,
+   trois fois plus large qu'elle, qui glisse au rythme du pivot. */
+.hstage-foil{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:inherit;mix-blend-mode:color-dodge;opacity:.32}
+.hstage-foil::before{content:"";position:absolute;top:0;bottom:0;left:-100%;width:300%;
+  background:linear-gradient(110deg,transparent 20%,color-mix(in srgb,var(--acc) 60%,#fff) 34%,#9ff 40%,#f9f 46%,color-mix(in srgb,var(--acc) 60%,#fff) 52%,transparent 66%);
+  animation:hfoil 9s ease-in-out infinite}
+@keyframes hfoil{0%,100%{transform:translateX(-18%)}50%{transform:translateX(18%)}}
+.hstage-shine{background:linear-gradient(105deg,transparent 44%,rgba(255,255,255,.3) 50%,transparent 56%);animation-duration:9s}
+/* Le socle : une ellipse de lumière sous la carte. */
+.hstage-pedestal{display:block;position:relative;width:96%;height:34px;margin:18px auto 0;border-radius:50%;
+  background:radial-gradient(50% 50% at 50% 50%,color-mix(in srgb,var(--acc) 55%,#fff) 0,color-mix(in srgb,var(--acc) 30%,transparent) 32%,transparent 70%);
+  opacity:.6;animation:hpedestal 4.5s ease-in-out infinite alternate}
+.hstage-pedestal::after{content:"";position:absolute;inset:30% 8%;border-radius:50%;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 50%,transparent),0 0 24px 4px color-mix(in srgb,var(--acc) 40%,transparent)}
+@keyframes hpedestal{from{transform:scaleX(.92);opacity:.5}to{transform:scaleX(1.04);opacity:.8}}
+@media(hover:hover){.hstage-card:hover .hstage-float{animation-play-state:paused}}
+@media (prefers-reduced-motion:reduce){
+  .hstage-aura,.hstage-bokeh,.hstage-foil::before,.hstage-pedestal{animation:none}
+  .hstage-float{transform:rotateY(-6deg)}
+}

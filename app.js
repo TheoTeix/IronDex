@@ -2033,7 +2033,7 @@ function renderProfile() {
         const o = k - (fan.length - 1) / 2;
         return `<button class="hfan-card" data-cc="${esc(e.id)}" style="--o:${o};--a:${Math.abs(o)};--z:${10 - Math.round(Math.abs(o))}"
           aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
-          <img crossorigin="anonymous" src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy">
+          <img src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy">
           <span class="hfan-tag" data-v="${esc(fmt(e.value))}">${hid ? '***' : esc(fmt(e.value))}</span></button>`;
       }).join('')}</div></section>`;
     })() : ''}
@@ -2783,8 +2783,12 @@ const PTCG_SET_MAP = { 'sm7.5': 'sm75', 'sm3.5': 'sm35' };
 const ptcgCardCache = {};
 // Découpe « sm12-1 » → ['sm12','1'], « smp-SM241 » → ['smp','SM241'] (les setId
 // TCGdex ne contiennent jamais de tiret, on coupe donc au premier).
+// Coupé au DERNIER tiret : le set peut en contenir (« 30th-c-001 » est la
+// carte 001 du set « 30th-c », « tk-ex-latia-1 » la 1 de « tk-ex-latia »), le
+// numéro jamais. Couper au premier lisait « 30th » / « c-001 » — d'où le
+// Dracaufeu de la Collection Classique illustré par Noeunoeuf (30th-001).
 function splitCardId(cardId) {
-  const s = String(cardId || ''); const i = s.indexOf('-');
+  const s = String(cardId || ''); const i = s.lastIndexOf('-');
   return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)];
 }
 // fetch avec délai maximum — l'API pokemontcg.io peut rester muette 60 s+ :
@@ -4410,9 +4414,12 @@ function palNorm(s) {
    catalogue ouvre sa fiche, d'où on peut l'ajouter. */
 const _palCat = {};            // requête normalisée → cartes du catalogue (ou null pendant le chargement)
 let _palCatTimer = 0;
-function palCatalogFetch(nq) {
+function palCatalogFetch(nq, raw) {
   clearTimeout(_palCatTimer);
   if (nq.length < 2 || nq in _palCat) return;
+  // On interroge TCGdex avec le texte TAPÉ, accents compris : la forme
+  // normalisée (« evoli ») ne trouvait pas « Évoli ».
+  const term = String(raw || nq).trim();
   _palCatTimer = setTimeout(async () => {
     _palCat[nq] = null;
     let list = [];
@@ -4421,7 +4428,7 @@ function palCatalogFetch(nq) {
       // différente, et apiFetch les garderait toutes en IndexedDB.
       // TOUTES les cartes du Pokémon tapé (jusqu'à 250) : « Pikachu » en
       // compte plus de deux cents, et c'est justement ce qu'on veut parcourir.
-      const r = await fetchTimeout(`${API}/cards?name=${encodeURIComponent(nq)}&pagination:page=1&pagination:itemsPerPage=250`, 10000);
+      const r = await fetchTimeout(`${API}/cards?name=${encodeURIComponent(term)}&pagination:page=1&pagination:itemsPerPage=250`, 10000);
       if (r.ok) list = await r.json();
     } catch {}
     _palCat[nq] = Array.isArray(list) ? list : [];
@@ -4533,6 +4540,26 @@ function palToggle(id, i) {
   if (btn) { btn.classList.toggle('on', own); btn.setAttribute('aria-pressed', String(own)); btn.innerHTML = own ? ICO.check : ICO.plus; }
   if (state.view === 'invest') renderInvestBody();
 }
+/* L'ordre des sets, du plus RÉCENT au plus ancien : rang de la série dans
+   /series, puis rang du set dans sa série (les listes de TCGdex sont déjà
+   chronologiques — voir ensureCatalog). Un set inconnu passe à la fin. */
+let _setOrderMemo = null;
+function setOrderRank(setId) {
+  if (!_catalog) return -1;
+  if (!_setOrderMemo || _setOrderMemo.n !== _catalog.length) {
+    _setOrderMemo = { n: _catalog.length, m: new Map(_catalog.map(x => [String(x.setId), x.serieRank * 1000 + x.rank])) };
+  }
+  const v = _setOrderMemo.m.get(String(setId));
+  return v == null ? -1 : v;
+}
+function setNameOf(setId) {
+  const hit = _catalog && _catalog.find(x => String(x.setId) === String(setId));
+  return hit?.setName || getCachedSetInfo(setId)?.name || '';
+}
+/* UNE SEULE GRILLE : toutes les cartes du Pokémon tapé (catalogue complet),
+   les miennes cochées au milieu des autres, du set le plus récent au plus
+   ancien, puis par numéro. « Mes cartes » à part donnait l'impression que la
+   recherche ne montrait que ce qu'on possède. */
 function renderPalette(q) {
   const list = document.getElementById('palette-list');
   if (!list) return;
@@ -4542,23 +4569,29 @@ function renderPalette(q) {
     list.innerHTML = `<div class="pal-empty"><span class="pal-empty-ico">${ICO.search}</span>Tape le nom d'un Pokémon</div>`;
     return;
   }
-  // Score simple : un nom qui COMMENCE par la requête passe devant.
-  const mine = palCards()
-    .map(c => {
-      const n = palNorm(c.name), hay = palNorm(`${c.name} ${c.setName} ${c.localId} ${c.from.join(' ')}`);
-      if (!hay.includes(nq)) return null;
-      return { c, score: n.startsWith(nq) ? 0 : n.includes(nq) ? 1 : 2 };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.score - b.score || String(a.c.name).localeCompare(String(b.c.name)))
-    .slice(0, 60).map(x => x.c);
-  palCatalogFetch(nq);
+  ensureCatalog(() => { const inp = document.getElementById('palette-input'); if (paletteOpen() && inp) renderPalette(inp.value); });
+  palCatalogFetch(nq, q);
   const cat = _palCat[nq];
   const pending = nq.length >= 2 && !Array.isArray(cat);
-  const seen = new Set(mine.map(c => String(c.id)));
-  const extra = Array.isArray(cat) ? cat.filter(c => c && c.id && !seen.has(String(c.id))) : [];
-  const toRow = c => ({ kind: 'card', id: c.id, name: c.name || c.id, image: c.image || '', localId: c.localId || '', setName: c.setName || '', run: () => openCardDetail(c.id) });
-  _palRows = [...mine.map(toRow), ...extra.map(toRow)];
+  const byId = new Map();
+  for (const c of (Array.isArray(cat) ? cat : [])) if (c && c.id) byId.set(String(c.id), { id: String(c.id), name: c.name || c.id, image: c.image || '', localId: c.localId || '' });
+  // Mes cartes qui correspondent (y compris celles que le catalogue ne
+  // renverrait pas : promos rares, cartes ajoutées à la main).
+  for (const c of palCards()) {
+    const hay = palNorm(`${c.name} ${c.setName} ${c.localId}`);
+    if (!hay.includes(nq) || byId.has(String(c.id))) continue;
+    byId.set(String(c.id), { id: String(c.id), name: c.name, image: c.image || '', localId: c.localId || '', setName: c.setName || '' });
+  }
+  const rows = [...byId.values()].map(c => {
+    const [sid, lid] = splitCardId(c.id);
+    return { ...c, sid, localId: c.localId || lid, setName: c.setName || setNameOf(sid), rank: setOrderRank(sid) };
+  })
+  // TCG Pocket (« A1 », « P-A »…) n'existe nulle part ailleurs dans l'app :
+  // une fois le catalogue connu, un set qu'il ignore et qu'on ne possède pas
+  // n'a rien à faire là.
+  .filter(r => !_catalog || r.rank >= 0 || palOwned(r.id))
+  .sort((a, b) => (b.rank - a.rank) || (a.sid === b.sid ? cmpLocalId(a.localId, b.localId) : String(b.sid).localeCompare(String(a.sid))));
+  _palRows = rows.map(r => ({ kind: 'card', ...r, run: () => openCardDetail(r.id) }));
   _palIdx = 0;
   if (!_palRows.length) {
     list.innerHTML = pending
@@ -4566,14 +4599,13 @@ function renderPalette(q) {
       : `<div class="pal-empty">Aucune carte pour « ${esc(q)} »</div>`;
     return;
   }
-  let i = 0;
-  const grid = rows => `<div class="pal-grid">${rows.map(r => palCardHTML(r, i++)).join('')}</div>`;
-  list.innerHTML =
-    (mine.length ? `<div class="pal-group"><span>Mes cartes</span><span class="vpill">${mine.length}</span></div>${grid(_palRows.slice(0, mine.length))}` : '') +
-    (extra.length ? `<div class="pal-group"><span>Toutes les cartes</span><span class="vpill">${extra.length}</span></div>${grid(_palRows.slice(mine.length))}` : '') +
-    (pending ? `<div class="pal-group"><span class="spinner"></span><span>Toutes les cartes…</span></div>` : '');
+  const owned = _palRows.filter(r => palOwned(r.id)).length;
+  list.innerHTML = `<div class="pal-group"><span>${esc(q.trim())}</span>
+      <span class="vpill">${_palRows.length} carte${_palRows.length > 1 ? 's' : ''}</span>
+      ${owned ? `<span class="vpill pal-owned-pill">${ICO.check}${owned}</span>` : ''}
+      ${pending ? '<span class="spinner"></span>' : ''}</div>
+    <div class="pal-grid">${_palRows.map((r, i) => palCardHTML(r, i)).join('')}</div>`;
   hydrateFallbackImages(list);
-  paintCards(list);
 }
 function movePalette(d) {
   if (!_palRows.length) return;
@@ -5474,11 +5506,6 @@ function toggleHomeValue() {
   document.getElementById('view-home')?.classList.toggle('hv-hidden', hide);
   computeCollectionValue();
 }
-// Les quatre étincelles autour de la carte : positions fixes (pas de hasard,
-// sinon elles sautent à chaque retour sur l'accueil), délais décalés.
-const HOME_SPARKS = [[8, 18, 1], [86, 12, .7], [92, 62, .9], [4, 70, .6], [74, 88, .5], [22, 92, .75]];
-const SPARK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5c.9 5.6 4.9 9.6 10.5 10.5-5.6.9-9.6 4.9-10.5 10.5C11.1 16.9 7.1 12.9 1.5 12 7.1 11.1 11.1 7.1 12 1.5z" fill="currentColor"/></svg>';
-
 function renderHome() {
   const entries = ownedCardEntries();
   // La plus chère au CENTRE de la main, les suivantes de part et d'autre.
@@ -5511,9 +5538,12 @@ function renderHome() {
   el.classList.toggle('hv-hidden', hidden);
   el.innerHTML = `
     <section class="hstage reveal" style="--i:0">
+      <!-- LA VITRINE (2026-10-20, « ça fait un peu cheap ») : plus de soleil à
+           rayons ni d'étincelles. Un halo doux qui respire, trois lueurs floues
+           qui dérivent, un socle lumineux sous la carte. -->
       <div class="hstage-halo" aria-hidden="true">
-        <span class="hstage-sun"></span><span class="hstage-glow"></span>
-        ${HOME_SPARKS.map(([x, y, k], i) => `<span class="hspark" style="left:${x}%;top:${y}%;--k:${k};--d:${(i * 0.55).toFixed(2)}s">${SPARK_SVG}</span>`).join('')}
+        <span class="hstage-aura"></span>
+        <span class="hstage-bokeh b1"></span><span class="hstage-bokeh b2"></span><span class="hstage-bokeh b3"></span>
       </div>
       <div class="hstage-pin">
         <div class="hstage-card" role="button" tabindex="0" aria-label="${heroF ? 'Voir la fiche de ' + esc(heroName) : 'Choisir ma carte préférée'}"
@@ -5521,12 +5551,13 @@ function renderHome() {
           <span class="hstage-float">
             ${heroF
               ? (heroPhoto
-                  ? `<img crossorigin="anonymous" src="${heroPhoto}" alt="${esc(heroName)}" onerror="this.parentNode.innerHTML=''">`
+                  ? `<img src="${heroPhoto}" alt="${esc(heroName)}" onerror="this.parentNode.innerHTML=''">`
                   : noImgHTML(featured.localId, heroName, featured.setId))
               : `<span class="hstage-empty">${ICO.plus}</span>`}
+            <span class="hstage-foil" aria-hidden="true"></span>
             <span class="hstage-shine" aria-hidden="true"></span>
           </span>
-          <span class="hstage-shadow" aria-hidden="true"></span>
+          <span class="hstage-pedestal" aria-hidden="true"></span>
         </div>
         ${heroF ? `<button class="hstage-swap" onclick="openFeaturePicker('hero')" title="Changer de carte" aria-label="Changer de carte">
           <img src="ico-series.png?v=2" alt="" width="96" height="96" decoding="async"></button>` : ''}
@@ -5559,7 +5590,7 @@ function renderHome() {
         ${fan.map((e, i) => `
           <button class="hfan-card" data-cc="${esc(e.id)}" style="--o:${i - (fan.length - 1) / 2};--a:${Math.abs(i - (fan.length - 1) / 2)};--z:${10 - Math.round(Math.abs(i - (fan.length - 1) / 2))}"
             aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
-            <img crossorigin="anonymous" src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy"
+            <img src="${IMG(e.image, 'low')}" alt="${esc(e.name)}" loading="lazy"
               onerror="imgFail(this,'${esc(String(e.localId || ''))}','${esc(e.setId || '')}','${jss(e.name)}')">
             <span class="hfan-tag" data-v="${esc(fmt(e.value))}">${hidden ? '***' : esc(fmt(e.value))}</span>
           </button>`).join('')}
@@ -5620,7 +5651,7 @@ function renderTopCardTile(e, i) {
     <button class="featured-slab foil" data-cc="${esc(e.id)}" style="--i:${i}"
       aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
       <span class="featured-slab-img">${img
-        ? `<img crossorigin="anonymous" src="${img}" onerror="imgFail(this,'${esc(String(e.localId || ''))}','${esc(e.setId || '')}','${jss(e.name)}')" alt="${esc(e.name)}" loading="lazy">`
+        ? `<img src="${img}" onerror="imgFail(this,'${esc(String(e.localId || ''))}','${esc(e.setId || '')}','${jss(e.name)}')" alt="${esc(e.name)}" loading="lazy">`
         : noImgHTML(e.localId, e.name, e.setId)}</span>
       <span class="featured-slab-name">${esc(e.name)}</span>
       <span class="featured-slab-foot"><span class="top-card-qty">${sub}</span><span class="featured-slab-val">${fmt(e.value)}</span></span>
