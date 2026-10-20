@@ -259,7 +259,7 @@ const state = {
   sealedPeriods: [],          // colonnes de valeur (semestres) : ['2026-07','2026-12', …]
   investCards: [],            // cartes suivies : { id, cardId, name, setId, setName, logo, number, localId, rarity, type, qty, image, buyPrice }
   investMode: 'cards',        // volet actif de la Collection : 'cards' | 'masterset' | 'value'
-  serieShow: { rare: true },  // ce qu'on affiche dans une série ouverte (voir SERIE_FILTERS)
+  serieShow: { rare: true, common: false, uncommon: false },  // ce qu'on affiche dans une série ouverte (voir SERIE_FILTERS)
   investSeriesOpen: null,     // set ouvert dans le volet Cartes (détail) — runtime
   mastersets: [],             // mastersets suivis : { setId, setName, logo, serieId, serieName, date, slots, owned:{ cardId: 1|2|3 } }
   mastersetOpen: null,        // masterset ouvert (setId) — runtime
@@ -999,7 +999,8 @@ function applyLoaded(d) {
   state.investMode = ['masterset', 'value'].includes(d.investMode) ? d.investMode : 'cards';
   // Un réglage absent (sauvegarde d'avant ce filtre) vaut « tout affiché » :
   // on ne fait jamais disparaître des cartes à cause d'une donnée manquante.
-  state.serieShow = { rare: (d.serieShow?.rare) !== false };
+  state.serieShow = { rare: (d.serieShow?.rare) !== false,
+    common: d.serieShow?.common === true, uncommon: d.serieShow?.uncommon === true };
   state.setDates = d.setDates || {};
   state.setBlocs = d.setBlocs || {};
   state.investSeriesOpen = null;
@@ -9484,7 +9485,7 @@ function serieFiltersHTML(setId) {
   const chips = SERIE_FILTERS.map(f => {
     const n = cat.cards.filter(c => f.has(cat, String(c.id))).length;
     if (!n) return '';
-    const on = state.serieShow?.[f.key] !== false;
+    const on = serieShowOn(f);
     return `<button class="serie-chip ${on ? 'on' : ''}" aria-pressed="${on}"
       title="${on ? 'Masquer' : 'Afficher'} les ${esc(f.label.toLowerCase())} (${n})"
       aria-label="${on ? 'Masquer' : 'Afficher'} les ${esc(f.label.toLowerCase())} — ${n} carte${n > 1 ? 's' : ''}"
@@ -9496,6 +9497,8 @@ function serieFiltersHTML(setId) {
 // L'étoile est le symbole IMPRIMÉ sur une carte rare : c'est le repère que le
 // collectionneur a déjà dans l'œil, pas une icône à apprendre.
 const RARITY_ICO = {
+  circle: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.2" fill="currentColor"/></svg>',
+  diamond: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.2 19.8 12 12 19.8 4.2 12z" fill="currentColor"/></svg>',
   star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.1l2.62 5.75 6.28.72-4.66 4.26 1.26 6.17L12 16.9l-5.5 3.1 1.26-6.17L3.1 9.57l6.28-.72z" fill="currentColor"/></svg>',
 };
 /* Le compteur du bandeau : « 25 / 109 · 240 € ». Écrit ici et nulle part
@@ -9548,7 +9551,7 @@ function seriesRows(setId, g) {
     // (commune gardée exprès, carte ajoutée à la main, numéro inconnu de
     // TCGdex). Le second cas reste affiché : aucun réglage ne le gouverne, et
     // le faire disparaître serait une perte sèche.
-    if (p.cardId && cat && !serieCardShown(cat, p.cardId)) continue;
+    if (p.cardId && cat && !serieCardShown(cat, p.cardId, true)) continue;
     rows.set(key, { c: null, p, k: p.localId, id: String(p.cardId || '') });
   }
   /* L'ORDRE : par famille quand le set en définit une (voir
@@ -9723,8 +9726,9 @@ function addMissingCard(cardId) {
    désaturée par défaut et `.mine` lui rend ses couleurs, exactement comme dans
    les wishlists et le masterset.
 
-   CE QU'ON NE MONTRE PAS : les communes, les peu communes et les holo simples.
-   Ce sont des cartes qu'on ne cherche pas, et 180 cases de bulk noieraient les
+   CE QU'ON NE MONTRE PAS D'OFFICE : les communes et les peu communes (deux
+   pastilles du bandeau les rallument, voir SERIE_FILTERS), et on n'affiche
+   jamais les holo simples des séries récentes. 180 cases de bulk noieraient les
    quarante qui comptent. SAUF sur les séries anciennes, où l'holo rare EST la
    carte du set — le Dracaufeu du Set de Base n'est pas du remplissage.
 
@@ -9737,8 +9741,6 @@ function addMissingCard(cardId) {
    au lieu de 45 sur Tempête Argentée. Deux à quatre requêtes par set, en
    cache.
    ══════════════════════════════════════════════════════════════════════ */
-// Toujours écartées. Le nom exact vient de /rarities (TCGdex FR).
-const BULK_RARITIES = ['Commune', 'Peu Commune'];
 // Écartées seulement sur les séries récentes. Les deux graphies existent selon
 // l'époque ; `eq:` garantit qu'on ne touche pas à « Rare Holo LV.X » ni aux
 // « Holo Rare V / VMAX / VSTAR », qui sont des chases.
@@ -9758,7 +9760,12 @@ async function seriesCatalog(setId) {
   if (_serieCat[setId]) return _serieCat[setId];
   const b = await setWithSubsets(setId);
   const vintage = !!b.date && b.date < VINTAGE_BEFORE;
-  const drop = vintage ? BULK_RARITIES : BULK_RARITIES.concat(HOLO_RARITIES);
+  // Les communes et peu communes ne sont plus ÉCARTÉES mais MARQUÉES : deux
+  // pastilles du bandeau les montrent ou les cachent (voir SERIE_FILTERS). Ce
+  // sont les MÊMES requêtes qu'avant — afficher le bulk ne coûte rien de plus à
+  // l'ouverture d'une série. Seules les holo simples des séries récentes
+  // restent écartées.
+  const drop = vintage ? [] : HOLO_RARITIES;
   /* À QUI APPARTIENT UNE CARTE — et pourquoi le préfixe ne suffit pas.
      Le filtre `set=` de TCGdex est un « contient » : `set=30th` ramène aussi
      les cartes de `30th-c`. On écartait les intruses par leur préfixe
@@ -9768,13 +9775,16 @@ async function seriesCatalog(setId) {
      exactement quels identifiants sont les siens (voir setWithSubsets). */
   const own = {};
   for (const id of b.ids) own[id] = new Set(b.cards.filter(c => c.__set === id).map(c => String(c.id)));
-  const skip = new Set();
+  const skip = new Set(), common = new Set(), uncommon = new Set();
   const jobs = [];
-  for (const id of b.ids) for (const r of drop) jobs.push([id, r]);
-  await Promise.all(jobs.map(async ([id, r]) => {
+  for (const id of b.ids) {
+    for (const r of drop) jobs.push([id, r, skip]);
+    jobs.push([id, 'Commune', common], [id, 'Peu Commune', uncommon]);
+  }
+  await Promise.all(jobs.map(async ([id, r, into]) => {
     try {
       const list = await apiFetch(`/cards?set=${encodeURIComponent(id)}&rarity=${encodeURIComponent('eq:' + r)}`);
-      for (const c of list || []) if (own[id].has(String(c.id))) skip.add(String(c.id));
+      for (const c of list || []) if (own[id].has(String(c.id))) into.add(String(c.id));
     } catch {}
   }));
   /* LES RARES SONT MISES À PART, pas écartées : c'est la seule famille que
@@ -9795,7 +9805,7 @@ async function seriesCatalog(setId) {
     } catch {}
   }));
   const cards = b.cards.filter(c => !skip.has(String(c.id)));
-  const out = { cards, rare, vintage, setTotal: b.cards.length, order: await serieRarityOrder(setId, b, own) };
+  const out = { cards, rare, common, uncommon, vintage, setTotal: b.cards.length, order: await serieRarityOrder(setId, b, own) };
   /* Les sous-séries que TCGdex n'illustre pas — la Collection Classique du 30ᵉ
      n'a AUCUNE image, dans aucune langue — vont chercher leurs visuels
      ailleurs, une requête par sous-set concerné. Sans ça, réunir les deux sets
@@ -9813,26 +9823,76 @@ async function seriesCatalog(setId) {
    suivante (le rond des communes, le losange des peu communes — les symboles
    imprimés sur les cartes) ne soit qu'une ligne à ajouter, ici et dans
    seriesCatalog. */
+/* 2026-10-20 : les communes (le ROND) et les peu communes (le LOSANGE)
+   rejoignent l'étoile — ce sont les symboles imprimés sur les cartes.
+   · Éteintes par défaut (`def:false`) : une série s'ouvre comme avant, sans
+     cent cases de bulk ni le moindre coût de rendu en plus.
+   · Mes communes restent visibles même pastille éteinte (`keepMine`) : avant,
+     une commune possédée s'affichait toujours ; la cacher maintenant aurait
+     fait disparaître des cartes de la collection. */
 const SERIE_FILTERS = [
-  { key: 'rare', label: 'Rares', ico: 'star', has: (cat, id) => cat.rare && cat.rare.has(id) },
+  // Dans l'ordre des raretés, comme sur la carte : ● ◆ ★
+  { key: 'common', label: 'Communes', ico: 'circle', def: false, keepMine: true, has: (cat, id) => cat.common && cat.common.has(id) },
+  { key: 'uncommon', label: 'Peu communes', ico: 'diamond', def: false, keepMine: true, has: (cat, id) => cat.uncommon && cat.uncommon.has(id) },
+  { key: 'rare', label: 'Rares', ico: 'star', def: true, has: (cat, id) => cat.rare && cat.rare.has(id) },
 ];
+function serieShowOn(f) { const v = state.serieShow?.[f.key]; return v == null ? f.def : v !== false; }
 /* Une carte est-elle visible avec les réglages actuels ? La réponse ne dépend
    QUE de sa rareté — possédée ou non. Éteindre l'étoile retire donc aussi les
    rares qu'on a déjà : quand on ne veut plus voir les rares, on ne veut plus
    les voir du tout, et en garder quelques-unes au milieu des chases aurait
    donné une grille à trous qu'on ne sait pas lire. */
-function serieCardShown(cat, cardId) {
+function serieCardShown(cat, cardId, mine = false) {
   if (!cat) return true;
   for (const f of SERIE_FILTERS) {
-    if (state.serieShow?.[f.key] === false && f.has(cat, String(cardId))) return false;
+    if (!serieShowOn(f) && f.has(cat, String(cardId)) && !(mine && f.keepMine)) return false;
   }
   return true;
 }
 function toggleSerieShow(key) {
+  const f = SERIE_FILTERS.find(x => x.key === key); if (!f) return;
   state.serieShow = state.serieShow || {};
-  state.serieShow[key] = state.serieShow[key] === false;
+  state.serieShow[key] = !serieShowOn(f);
+  sfx.play(state.serieShow[key] ? 'pop' : 'unpop');
   save();
-  flipGrid(() => renderInvestBody());
+  const setId = state.investSeriesOpen;
+  const grid = document.querySelector('#inv-mode-body .cards-grid');
+  if (!setId || !grid || !_serieCat[String(setId)]) { flipGrid(() => renderInvestBody()); return; }
+  flipGrid(() => patchSeriesGrid(String(setId), grid));
+}
+/* LA BASCULE SANS TOUT REDESSINER. Reconstruire la grille entière coûtait
+   60 à 250 ms pour ~190 cases (mesuré) : allumer les communes figeait la page.
+   On ne touche plus qu'aux cases CONCERNÉES — celles qui arrivent sont créées
+   et posées à leur place, celles qui partent sont retirées, toutes les autres
+   restent les mêmes nœuds (image déjà décodée, aucun clignotement). */
+function patchSeriesGrid(setId, grid) {
+  const g = cardsAllGroups(cardsGrouped()).find(x => String(x.setId) === setId);
+  if (!g) { renderInvestBody(); return; }
+  const rows = seriesRows(setId, g);
+  if (!rows.length) { renderInvestBody(); return; }   // l'état vide a son propre écran
+  const keyOf = r => r.p ? String(r.p.id) : String(r.c.id);
+  const have = new Map([...grid.children].map(el => [el.getAttribute('data-card'), el]));
+  const want = new Set(rows.map(keyOf));
+  for (const [k, el] of have) if (!want.has(k)) el.remove();
+  const tpl = document.createElement('template');
+  let prev = null, added = false;
+  rows.forEach((r, i) => {
+    const k = keyOf(r);
+    let el = have.get(k);
+    if (!el || !el.isConnected) {
+      tpl.innerHTML = (r.p ? investCardThumbHTML(r.p, i) : investMissingThumbHTML(r.c, i)).trim();
+      el = tpl.content.firstElementChild; added = true;
+    }
+    const at = prev ? prev.nextSibling : grid.firstChild;
+    if (at !== el) grid.insertBefore(el, at);
+    prev = el;
+  });
+  // Le bandeau dit combien il y a de cartes et quelles pastilles sont allumées.
+  const filters = document.querySelector('#inv-mode-body .serie-filters');
+  if (filters) filters.outerHTML = serieFiltersHTML(setId);
+  const meta = document.querySelector('#inv-mode-body .cardser-bar-meta');
+  if (meta) meta.innerHTML = seriesBarMetaText(setId, g, rows);
+  if (added) { attachArtUpgrade(grid); hydrateFallbackImages(grid); }
 }
 /* ══════════════════════════════════════════════════════════════════════
    RANGER UN SET PAR FAMILLES PLUTÔT QUE PAR NUMÉROS
