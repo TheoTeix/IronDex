@@ -488,16 +488,6 @@ function ensureThree() {
     return !!window.THREE;
   })());
 }
-let _xlsxPromise = null;
-// SheetJS : ~900 ko qui ne servent qu'au moment où l'on choisit un .xlsx.
-function ensureXlsx() {
-  if (_xlsxPromise) return _xlsxPromise;
-  return (_xlsxPromise = (async () => {
-    if (typeof XLSX !== 'undefined') return true;
-    await injectScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-    return typeof XLSX !== 'undefined';
-  })());
-}
 
 // ── STOCKAGE FIABLE (IndexedDB) ────────────────────────────────────
 // localStorage plafonne à ~5 Mo : une collection un peu fournie (classeurs,
@@ -842,14 +832,6 @@ function autoBackupDaily() {
   _dailyBackupDone = day;
   autoBackup(day);
 }
-// Enregistrement immédiat, sans bouton : la pastille de l'en-tête clignote
-// brièvement pour confirmer, et seul un ÉCHEC parle (toast d'erreur).
-function saveNow() {
-  writeNow().then(ok => {
-    if (ok) pulseSaveDot();
-    else toast('Enregistrement impossible (stockage plein ?)', 'error');
-  });
-}
 function pulseSaveDot() {
   const d = document.getElementById('save-dot'); if (!d) return;
   d.classList.remove('on'); void d.offsetWidth;   // relance l'animation
@@ -1166,8 +1148,6 @@ function sbClient() {
 
 // ── SESSION ────────────────────────────────────────────────────────
 let _user = null, _profile = null, _authReady = false;
-function vaultUser() { return _user; }
-function vaultProfile() { return _profile; }
 function vaultOn() { return !!_user; }
 function vaultUid() { return _user ? _user.id : null; }
 // Ce qu'on affiche de quelqu'un : Google fournit le nom et l'avatar dans les
@@ -1322,7 +1302,6 @@ const _priceDirty = new Set();
 // retélécharger un instantané identique (voir vaultPull).
 let _remoteStamp = '';
 
-function vaultStatus() { return { state: _vaultStatus, err: _vaultErr }; }
 function vaultLocalEmpty() {
   return !(state.wishlists.length || state.binders.length || state.sealed.length
     || state.investCards.length || (state.mastersets || []).length
@@ -1887,62 +1866,9 @@ function paintAccountButton() {
 const ICO_SILHOUETTE = '<svg viewBox="0 0 24 24" fill="none" width="17" height="17" aria-hidden="true">'
   + '<circle cx="12" cy="8.4" r="3.6" stroke="currentColor" stroke-width="1.8"/>'
   + '<path d="M5 19.4c.6-3.4 3.5-5.4 7-5.4s6.4 2 7 5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-function ensureAccountModal() {
-  let m = document.getElementById('modal-account');
-  if (m) return m;
-  m = document.createElement('div');
-  m.className = 'modal-overlay'; m.id = 'modal-account';
-  m.innerHTML = `<div class="modal" style="max-width:520px">
-      <div class="modal-header"><div class="modal-title">Ton compte</div><button class="modal-close" onclick="closeModal('modal-account')" aria-label="Fermer">${ICO.close}</button></div>
-      <div class="modal-body" id="account-body" style="min-height:120px"></div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-account')">Fermer</button></div>
-    </div>`;
-  document.body.appendChild(m);
-  return m;
-}
 function openAccount() {
   if (!vaultOn()) { showAuthGate(); return; }
   navigate('profile');
-}
-// La feuille modale d'origine reste joignable pour un diagnostic rapide, mais
-// ce n'est plus la porte d'entrée : voir renderProfile().
-function openAccountSheet() {
-  if (!vaultOn()) { showAuthGate(); return; }
-  ensureAccountModal();
-  const av = vaultAvatar();
-  const n = state.wishlists.length + state.binders.length + state.investCards.length;
-  document.getElementById('account-body').innerHTML = `
-    <div class="acc-head">
-      ${av ? `<img class="acc-face" src="${esc(av)}" alt="" referrerpolicy="no-referrer">`
-           : `<span class="acc-face acc-face-ini">${esc(vaultDisplayName().charAt(0).toUpperCase())}</span>`}
-      <div class="acc-id">
-        <div class="acc-name">${esc(vaultDisplayName())}</div>
-        <div class="acc-mail">${esc(vaultEmail())}</div>
-      </div>
-    </div>
-    <dl class="acc-facts">
-      <div><dt>Synchronisation</dt><dd id="account-sync-line">${esc(vaultStatusLine())}</dd></div>
-      <div><dt>Dans ton coffre</dt><dd>${n.toLocaleString('fr-FR')} entrées · ${state.investCards.length} cartes · ${state.wishlists.length} wishlists</dd></div>
-      <div><dt>Cotes</dt><dd>${Object.keys(priceCache).length.toLocaleString('fr-FR')} en cache · ${esc(agoLabel(priceSyncedAt()))}</dd></div>
-      <div><dt>Version</dt><dd>${esc(appVersion())}</dd></div>
-    </dl>
-    <p class="sealed-imp-note">Tes données vivent dans ta ligne à toi, et la base refuse au niveau du moteur de les servir à quelqu'un d'autre. Se connecter sur un autre appareil suffit à les y retrouver.</p>
-    <div class="cloud-actions">
-      <button class="btn btn-ghost" onclick="accountPull()">Relire mon compte</button>
-      <button class="btn btn-ghost" onclick="accountPush()">Envoyer maintenant</button>
-      <button class="btn btn-ghost" onclick="exportData()">Télécharger une copie</button>
-      <button class="btn btn-ghost" onclick="accountPublishPrices()">Publier mes cotes</button>
-    </div>
-    <div class="cloud-actions">
-      <button class="btn btn-ghost" id="acc-sound" onclick="toggleSound()" aria-pressed="${sfx.enabled()}"><span>${sfx.enabled() ? 'Sons activés' : 'Sons coupés'}</span></button>
-    </div>
-    <div class="acc-out">
-      <button class="btn btn-ghost" onclick="vaultSignOut(false)">Se déconnecter</button>
-      <button class="btn btn-danger btn-sm" onclick="accountSignOutWipe()">Effacer cet appareil</button>
-    </div>
-    <p class="sealed-imp-note">« Effacer cet appareil » ne touche QUE la copie hors ligne d'ici. Ton compte, lui, garde tout — c'est le geste à faire sur un ordinateur qui n'est pas le tien.</p>
-    <div id="account-report" class="cloud-report"></div>`;
-  openModal('modal-account');
 }
 /* ══════════════════════════════════════════════════════════════════
    LA PAGE DE PROFIL
@@ -2737,24 +2663,6 @@ function fetchGhSetJson(extSetId) {
   return ghSetJsonCache[extSetId];
 }
 const ghSetCache = {};
-function fetchGhSetImages(extSetId) {
-  if (!ghSetCache[extSetId]) {
-    ghSetCache[extSetId] = fetchGhSetJson(extSetId).then(d => {
-      const map = new Map();
-      d.forEach(c => {
-        const url = c.images?.large || c.images?.small;
-        if (!url) return;
-        const v = 'DIRECT::' + url;
-        map.set(String(c.number), v);
-        if (!map.has(normNum(c.number))) map.set(normNum(c.number), v);
-        const suf = String(c.id || '').split('-')[1];
-        if (suf && !map.has(normNum(suf))) map.set(normNum(suf), v);
-      });
-      return map;
-    });
-  }
-  return ghSetCache[extSetId];
-}
 // numéro (brut/normalisé) → id pokemontcg.io exact (« cel25c-15_A1 »...) —
 // sert à retrouver la fiche Cardmarket officielle de la carte.
 const ghIdCache = {};
@@ -3803,19 +3711,6 @@ function flushPriceCache() {
   if (_priceSaveTimer) { clearTimeout(_priceSaveTimer); _priceSaveTimer = null; }
   return writePriceCache();
 }
-function priceSyncedAt() { return _priceSyncedAt; }
-// « il y a 2 h », « à l'instant »… pour l'étiquette de dernière synchro.
-function agoLabel(ts) {
-  if (!ts) return 'jamais synchronisées';
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 90) return 'à l\u2019instant';
-  const m = Math.round(s / 60);
-  if (m < 60) return `il y a ${m} min`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  const j = Math.round(h / 24);
-  return j <= 1 ? 'hier' : `il y a ${j} jours`;
-}
 const _priceNullAt = {};   // heure du dernier échec → nouvel essai après 2 min
 function getRawPrice(cardId) {
   if (cardId in priceCache) {
@@ -4025,61 +3920,6 @@ function ensurePrices(ids, onDone) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  RÉPARATION DES IDENTIFIANTS DE CARTE
-//  Symptôme : des cartes sans AUCUNE cote, quoi qu'on synchronise. Mesuré sur
-//  les 66 cartes « Galerie de Dresseurs » de Tempête Argentée : elles portaient
-//  `cardId: swsh12.5tg-TG02` (la galerie de Zénith Suprême) alors que leur set
-//  est `swsh12`. Or `swsh12.5tg` est un set FANTÔME : l'API répond, mais il
-//  contient zéro carte. La cote cherchait donc dans le vide — et aucun nombre
-//  de synchros n'y changeait quoi que ce soit.
-//  Ces identifiants viennent de l'import script d'août (cartes en `k000xx`), pas
-//  du code actuel : c'est la DONNÉE qu'il faut réparer, une fois.
-//  Méthode : pour chaque carte dont le `cardId` ne colle ni à son set ni à une
-//  de ses sous-séries (tg/gg/sv), on recharge le set et ses sous-séries et on
-//  retrouve la carte par son NUMÉRO IMPRIMÉ — la seule donnée fiable ici.
-// ══════════════════════════════════════════════════════════════════
-const CARD_SUBSETS = ['', 'tg', 'gg', 'sv'];
-function cardIdLooksWrong(p) {
-  if (!p || !p.setId || !p.localId || String(p.setId).startsWith('?')) return false;
-  if (!p.cardId) return true;
-  const id = String(p.cardId), cut = id.lastIndexOf('-');
-  if (cut < 1) return true;
-  const setPart = id.slice(0, cut);           // « swsh12.5tg » et non « swsh12 »
-  return !CARD_SUBSETS.some(suf => setPart === p.setId + suf);
-}
-async function repairInvestCardIds() {
-  const suspects = (state.investCards || []).filter(cardIdLooksWrong);
-  if (!suspects.length) return 0;
-  const bySet = {};
-  for (const p of suspects) (bySet[p.setId] = bySet[p.setId] || []).push(p);
-  let fixed = 0;
-  for (const setId of Object.keys(bySet)) {
-    const byLocal = new Map();
-    for (const suf of CARD_SUBSETS) {
-      const sid = setId + suf;
-      const set = await apiFetch(`/sets/${sid}`).catch(() => null);
-      for (const c of (set?.cards || [])) {
-        const k = cardLocalKey(c.localId);
-        // Le set de base d'abord : en cas de numéro identique, la carte
-        // « normale » gagne sur celle d'une sous-série.
-        if (!byLocal.has(k)) byLocal.set(k, { id: c.id, setId: sid, setName: set.name || '', image: c.image || '' });
-      }
-    }
-    for (const p of bySet[setId]) {
-      const hit = byLocal.get(cardLocalKey(p.localId));
-      if (!hit || hit.id === p.cardId) continue;
-      p.cardId = hit.id;
-      p.setId = hit.setId;
-      if (hit.setName) p.setName = hit.setName;
-      if (!p.image && hit.image) p.image = hit.image;
-      fixed++;
-    }
-  }
-  if (fixed) { save(); investBadge(); }
-  return fixed;
-}
-
-// ══════════════════════════════════════════════════════════════════
 //  LA COTE SE REFAIT CARTE PAR CARTE
 //
 //  Il y avait un bouton « Sync » global (en-tête + accueil) qui recotait les
@@ -4099,15 +3939,6 @@ async function repairInvestCardIds() {
 //  sur l'iPhone, qui n'a pas de pont Cardmarket : les cotes sont calculées sur
 //  la machine qui l'a, et voyagent par la base.
 // ══════════════════════════════════════════════════════════════════
-async function pullSharedPrices() {
-  if (!vaultOn()) { toast('Connecte-toi pour récupérer les cotes', 'error'); return; }
-  const got = await vaultPullPrices().catch(() => 0);
-  if (!got) { toast('Aucune cote plus récente à récupérer', 'error'); return; }
-  window._vaultCounted = false;
-  window._investCountedCards = false;
-  renderViewContent(state.view);
-  toast(`${got.toLocaleString('fr-FR')} cotes récupérées`, 'success');
-}
 
 // Recote UNE carte. Tout ce qui la concerne est purgé — la cote, l'échec
 // mémorisé, la requête en vol ET le lien Cardmarket : une cote cassée vient
@@ -4154,39 +3985,6 @@ function coteSourceLabel(r) {
 }
 // Le bouton de la tuile du portefeuille.
 const _cardSyncing = new Set();
-async function syncCardPrice(id, ev) {
-  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
-  const p = (state.investCards || []).find(x => x.id === id);
-  if (!p || _cardSyncing.has(id)) return;
-  if (!p.cardId) { toast('Carte sans identifiant : retire-la et rajoute-la depuis le catalogue', 'error'); return; }
-  _cardSyncing.add(id);
-  const tile = document.querySelector(`.cardtile[data-id="${id}"]`);
-  const btn = tile ? tile.querySelector('.cardtile-sync') : null;
-  if (btn) { btn.classList.add('spinning'); btn.disabled = true; }
-  const coteEl = document.getElementById('cote-' + id);
-  const had = !!priceCache[p.cardId];
-  if (coteEl) coteEl.innerHTML = '<span class="cote-wait">cote…</span>';
-  try {
-    const r = await recoteCard(p.cardId);
-    if (r) sfx.play('cash');
-    { const why = cmBridgeProblem(); if (why && r) toast(why, 'error'); }
-    if (!r) toast(cmBridgeUp()
-      ? `Aucune offre trouvée pour ${p.name}${had ? ' — valeur précédente conservée' : ''}`
-      : `Cote introuvable pour ${p.name}. Sans le pont Cardmarket (cm_price_bridge.py) on ne lit que des moyennes.`, 'error');
-    // Le lien Cardmarket de la tuile suit la fiche qu'on vient de retrouver.
-    const href = (r && r.cmUrl) || await resolveCmUrl(p.cardId).catch(() => null);
-    const a = document.getElementById('cm-' + id);
-    if (a && href) a.href = href;
-  } finally {
-    _cardSyncing.delete(id);
-    if (btn) { btn.classList.remove('spinning'); btn.disabled = false; }
-    // Mise à jour EN PLACE : cote, total de la ligne, plus-value, compteurs.
-    // Aucune tuile reconstruite → pas de saut de défilement, pas d'animation
-    // rejouée, et la carte reste sous le doigt.
-    refreshCardTile(p);
-    refreshInvestTotals();
-  }
-}
 // Le même geste depuis la FICHE d'une carte — c'est le seul endroit où passent
 // TOUTES les cartes de l'app (wishlists, classeurs, Milobellus, accueil), et
 // donc le seul moyen de recoter celles qui ne sont pas au portefeuille.
@@ -4443,24 +4241,6 @@ function palCatalogFetch(nq, raw) {
    l'écran ? » sans brancher l'iPhone à un Mac.
    Il est aussi le témoin de la correction : quand l'écart est repris, il dit
    « comblé », et la ligne du bas doit indiquer 0 px de manque. */
-function screenDiag() {
-  const gap = iosViewportGap();
-  const fill = getComputedStyle(document.documentElement).getPropertyValue('--fill-h').trim() || '(non posée)';
-  const tb = document.querySelector('.tabbar');
-  // `r.bottom` est déjà exprimé depuis le HAUT du viewport de mise en page ; la
-  // tab bar ayant un `bottom` négatif, son rect dépasse innerHeight tout seul.
-  // Pas de correction à appliquer : ce nombre EST la position réelle à l'écran.
-  const r = tb ? tb.getBoundingClientRect() : null;
-  const manque = r ? Math.round((screen.height || 0) - r.bottom) : null;
-  const lines = [
-    `écran ${screen.height || '?'} · viewport ${window.innerHeight} · écart repris ${gap} px`,
-    `hauteur imposée ${fill} · installée : ${isStandaloneApp() ? 'oui' : 'NON'}`,
-    r ? `bas de la tab bar à ${Math.round(r.bottom)} px — manque ${Math.max(0, manque)} px` : 'tab bar absente',
-  ];
-  console.info('[diagnostic écran]', lines.join(' | '));
-  toast(lines.join(' — '), gap && manque === 0 ? 'success' : manque ? 'error' : '');
-  return lines;
-}
 // Toutes les cartes atteignables, dédoublonnées, avec leur provenance.
 function palCards() {
   const seen = new Map();
@@ -4664,7 +4444,6 @@ const TYPE_COLOR = {
 };
 const DEFAULT_ACC = '#E8B24B';
 function hexToRgbArr(h){ h = h.replace('#',''); const n = parseInt(h,16); return [(n>>16)&255,(n>>8)&255,n&255]; }
-function darkenHex(h,f){ const a = hexToRgbArr(h); return `rgb(${Math.round(a[0]*f)},${Math.round(a[1]*f)},${Math.round(a[2]*f)})`; }
 const _colorCache = {};
 // Résout la couleur d'une carte via son type (cache API → sinon requête légère).
 // Couleur DÉJÀ connue (ou rien) : permet de peindre sans attendre une promesse.
@@ -5068,7 +4847,6 @@ function render() {
    destinations, trois colonnes. Le feuilletage 3D reste sur Mac, et les cartes
    cochées comptent toujours dans la valeur du coffre.
    ══════════════════════════════════════════════════════════════════════ */
-const TAB_ORDER = ['home', 'wishlists', 'invest', 'binders'];
 // Le profil a SA colonne : ajouté à la bande sans y être déclaré, il s'y
 // insérait sans case de grille — page invisible et voisines déréglées.
 // Il n'est pas dans la barre du bas pour autant : on y entre par l'avatar.
@@ -5123,12 +4901,6 @@ function pagerEl() { return document.getElementById('pager'); }
    recalculé sur toute la largeur de l'écran à chaque frame (voir style.css).
    Le drapeau est posé pour la durée exacte de l'animation, plus une marge. */
 let _pagerMoveTimer = 0;
-function cancelPagerWarm() {
-  if (!_pagerWarmIdle) return;
-  if (window.cancelIdleCallback) { try { cancelIdleCallback(_pagerWarmIdle); } catch {} }
-  clearTimeout(_pagerWarmIdle);
-  _pagerWarmIdle = 0;
-}
 function markPagerMoving(ms) {
   document.documentElement.dataset.pagerMove = '1';
   if (_pagerMoveTimer) { clearTimeout(_pagerMoveTimer); _pagerMoveTimer = 0; }
@@ -5643,46 +5415,6 @@ function renderHome() {
   }
 }
 
-// Tuile du filmstrip « Pièces maîtresses » : une carte de la collection + sa cote.
-function renderTopCardTile(e, i) {
-  const img = e.image ? IMG(e.image) : '';
-  const sub = e.qty > 1 ? `×${e.qty} exemplaires` : esc(e.setName || '');
-  return `
-    <button class="featured-slab foil" data-cc="${esc(e.id)}" style="--i:${i}"
-      aria-label="Voir la fiche de ${esc(e.name)}" onclick="openCardDetail('${esc(e.id)}')">
-      <span class="featured-slab-img">${img
-        ? `<img src="${img}" onerror="imgFail(this,'${esc(String(e.localId || ''))}','${esc(e.setId || '')}','${jss(e.name)}')" alt="${esc(e.name)}" loading="lazy">`
-        : noImgHTML(e.localId, e.name, e.setId)}</span>
-      <span class="featured-slab-name">${esc(e.name)}</span>
-      <span class="featured-slab-foot"><span class="top-card-qty">${sub}</span><span class="featured-slab-val">${fmt(e.value)}</span></span>
-    </button>`;
-}
-
-// Défilement du filmstrip par pas d'une carte.
-function railScroll(id, dir) {
-  const track = document.getElementById(id);
-  if (!track) return;
-  const card = track.querySelector('.featured-slab');
-  const step = card ? card.offsetWidth + 18 : 240;
-  track.scrollBy({ left: dir * step, behavior: 'smooth' });
-}
-
-// Le teaser Milobellus (porte d'entrée du classeur 3D depuis l'accueil) et son
-// rafraîchisseur ont été retirés le 2026-08-26 : le teaser avait déjà quitté
-// l'accueil, mais `refreshMiloTeaser()` continuait d'être appelé à chaque rendu
-// — il ne trouvait plus aucun élément à mettre à jour et forçait pourtant le
-// chargement complet du catalogue Milobellus (≈40 requêtes API) au démarrage,
-// même pour qui n'a coché aucune case. Ce catalogue est désormais chargé par le
-// bloc conditionnel de renderHome, c'est-à-dire uniquement quand il sert.
-
-// Relief 3D au survol de l'emblème du teaser (transform GPU, rAF throttlé).
-// Canvas WebGL unique, conservé entre les rendus/navigations (jamais recréé) →
-// le contexte GL, la scène et les mesh survivent, donc aucun rechargement 3D.
-let _heroCanvas = null;
-function getHeroCanvas() {
-  if (!_heroCanvas) { _heroCanvas = document.createElement('canvas'); _heroCanvas.id = 'hero-canvas'; }
-  return _heroCanvas;
-}
 
 // ── Sélecteur de la pièce maîtresse ───────────────────────────────
 // Deux options : la carte la plus chère de la collection (automatique) ou
@@ -8454,7 +8186,6 @@ function jss(s) {
    ══════════════════════════════════════════════════════════════════════ */
 const SERIES_STORE_KEY = 'pkm_known_series_v1';
 const SETS_STORE_KEY = 'pkm_known_sets_v1';
-function getKnownSeries() { try { return JSON.parse(localStorage.getItem(SERIES_STORE_KEY)) || []; } catch { return []; } }
 function setKnownSeries(ids) { try { localStorage.setItem(SERIES_STORE_KEY, JSON.stringify(ids)); } catch {} }
 function getKnownSets() { try { return JSON.parse(localStorage.getItem(SETS_STORE_KEY)) || []; } catch { return []; } }
 function setKnownSets(ids) { try { localStorage.setItem(SETS_STORE_KEY, JSON.stringify(ids)); } catch {} }
@@ -8788,405 +8519,6 @@ function warmupModels() {
 }
 
 let _hero = null;
-function destroyHero3D() {
-  if (!_hero) return;
-  cancelAnimationFrame(_hero.raf);
-  window.removeEventListener('resize', _hero.onResize);
-  _hero.canvas?.removeEventListener('pointermove', _hero.onMove);
-  try { _hero.renderer.dispose(); } catch {}
-  _hero = null;
-}
-function initHero3D() {
-  if (isPhone()) return;   // scène d'ambiance réservée au desktop (voir isPhone)
-  const canvas = document.getElementById('hero-canvas');
-  if (!canvas || !window.THREE) return;
-  const loadEl0 = document.getElementById('hero3d-loading'); if (loadEl0) loadEl0.style.display = 'none';
-  // Scène déjà construite (canvas persistant réutilisé) : NE RIEN reconstruire —
-  // pas de re-parsing/re-clonage des GLB. On réveille juste l'animation et on
-  // recale la taille (la vue était masquée pendant la transition → dims à 0).
-  if (_hero && _hero.canvas === canvas) {
-    resumeHero();
-    const refit = () => { if (_hero && _hero.onResize) _hero.onResize(); };
-    requestAnimationFrame(refit); setTimeout(refit, 80); setTimeout(refit, 320);
-    return;
-  }
-  destroyHero3D();
-  const THREE = window.THREE;
-  const wrap = canvas.parentElement;
-  let W = wrap.clientWidth, H = wrap.clientHeight;
-  if (!W || !H) return;
-  // Modèles pré-parsés & clonés (cache chaud) → aucun spinner de chargement sur
-  // l'accueil : le fond abyssal s'affiche tout de suite et les mesh apparaissent
-  // dans la foulée. On masque donc l'indicateur d'emblée (ré-affiché seulement
-  // en cas d'échec réel de chargement des deux modèles).
-  const loadEl = document.getElementById('hero3d-loading'); if (loadEl) loadEl.style.display = 'none';
-
-  const scene = new THREE.Scene();
-  // Brume bleu abyssal — fond océanique profond (plus dense = plus sombre)
-  scene.fog = new THREE.FogExp2(0x03081a, 0.0125);
-
-  const camera = new THREE.PerspectiveCamera(54, W / H, 0.1, 2000);
-  camera.position.set(12, 8, 205);
-
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-  renderer.setSize(W, H, false);
-  renderer.outputEncoding = THREE.sRGBEncoding;
-
-  // ── Éclairage abyssal (volontairement sombre : les modèles vivent dans
-  //    l'ombre et sont révélés par les flashs / éclairs) ──
-  const ambient = new THREE.AmbientLight(0x0c2036, 0.30);
-  scene.add(ambient);
-  const AMBIENT_BASE = 0.30;
-  // lueur froide rasante principale (révèle les écailles) — atténuée
-  const keyLight = new THREE.DirectionalLight(0x7fe0ff, 1.5);
-  keyLight.position.set(-70, 130, 110);
-  scene.add(keyLight);
-  // rebond océanique cyan depuis le bas
-  const fillLight = new THREE.DirectionalLight(0x3bccff, 0.7);
-  fillLight.position.set(40, -60, 60);
-  scene.add(fillLight);
-  // contre-jour violet doux (profondeur, détache du fond)
-  const rimLight = new THREE.DirectionalLight(0x8a78e8, 1.0);
-  rimLight.position.set(90, 50, -90);
-  scene.add(rimLight);
-  // point bioluminescent qui roame entre les modèles
-  const glowLight = new THREE.PointLight(0x6fe0ff, 1.6, 420);
-  glowLight.position.set(0, 30, 70);
-  scene.add(glowLight);
-  // ⚡ lumière de flash (éclair / étoile filante) — éteinte par défaut,
-  //    son intensité explose ponctuellement pour révéler les modèles
-  const flashLight = new THREE.DirectionalLight(0xeafcff, 0);
-  flashLight.position.set(-40, 80, 120);
-  scene.add(flashLight);
-
-  // Modèles chargés (Milobellus + Giratina) et leurs halos lumineux
-  const loadedModels = [];
-  const haloSprites = [];
-  let modelsLoaded = 0;
-
-  // ── Orbes bioluminescentes (sprites lumineux flottants) ──
-  function makeOrbTexture() {
-    const c = document.createElement('canvas'); c.width = c.height = 64;
-    const ctx = c.getContext('2d');
-    const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0, 'rgba(255,255,255,1)');
-    grd.addColorStop(0.25, 'rgba(180,235,255,0.9)');
-    grd.addColorStop(0.55, 'rgba(59,204,255,0.35)');
-    grd.addColorStop(1, 'rgba(59,204,255,0)');
-    ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 64);
-    const tex = new THREE.Texture(c); tex.needsUpdate = true; return tex;
-  }
-  const orbTex = makeOrbTexture();
-  const orbs = [];
-  const ORB_N = 44;
-  for (let i = 0; i < ORB_N; i++) {
-    const violet = Math.random() < 0.28;
-    const mat = new THREE.SpriteMaterial({ map: orbTex, color: violet ? 0x9b6fe8 : 0x8fe8ff, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false });
-    const s = new THREE.Sprite(mat);
-    const sz = 4 + Math.random() * 16;
-    s.scale.set(sz, sz, 1);
-    s.position.set((Math.random()-0.5)*280, (Math.random()-0.5)*180, (Math.random()-0.5)*200 - 10);
-    s.userData = { baseOp: 0.45 + Math.random()*0.55, ph: Math.random()*Math.PI*2, spd: 0.3 + Math.random()*0.7, drift: 0.05 + Math.random()*0.15 };
-    scene.add(s); orbs.push(s);
-  }
-
-  // ── Fines particules (neige marine en suspension) ──
-  const SN = 900;
-  const snPos = new Float32Array(SN * 3);
-  for (let i = 0; i < SN; i++) {
-    snPos[i*3] = (Math.random()-0.5)*400;
-    snPos[i*3+1] = (Math.random()-0.5)*300;
-    snPos[i*3+2] = (Math.random()-0.5)*300 - 30;
-  }
-  const snGeo = new THREE.BufferGeometry();
-  snGeo.setAttribute('position', new THREE.BufferAttribute(snPos, 3));
-  const snow = new THREE.Points(snGeo, new THREE.PointsMaterial({ color: 0x9fd8ff, size: 0.8, transparent: true, opacity: 0.4, depthWrite: false }));
-  scene.add(snow);
-
-  // ── Rais de lumière descendants (god rays façon faisceaux) ──
-  const rays = new THREE.Group();
-  for (let i = 0; i < 8; i++) {
-    const geo = new THREE.PlaneGeometry(34 + Math.random()*24, 380);
-    const mat = new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0x6a3fc0 : 0x2fa8e8, transparent: true, opacity: 0.04, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    const p = new THREE.Mesh(geo, mat);
-    p.position.set(-165 + i*46 + (Math.random()-0.5)*28, 60, -120 - Math.random()*50);
-    p.rotation.z = (Math.random()-0.5)*0.32;
-    rays.add(p);
-  }
-  // Rais de lumière (rectangles translucides) retirés à la demande — non ajoutés à la scène.
-
-  // ── Auras lumineuses de fond (grandes nappes douces qui « respirent ») ──
-  // Elles posent une ambiance colorée derrière les modèles et s'intensifient
-  // au moment des flashs.
-  const auras = [];
-  const AURA_DEFS = [
-    { color: 0x1f6fc0, x: -30, y: 20, z: -130, size: 480, op: 0.10 }, // nappe cyan
-    { color: 0x6a32b8, x: 40, y: 30, z: -150, size: 520, op: 0.11 },  // nappe violette
-    { color: 0x123a78, x: 10, y: -10, z: -110, size: 420, op: 0.08 }, // bleu profond
-    { color: 0x7a2fd0, x: -70, y: 40, z: -180, size: 600, op: 0.09 }, // grande nappe violette (Giratina)
-    { color: 0x0f2a55, x: 60, y: -30, z: -140, size: 460, op: 0.07 }, // abysse froid
-  ];
-  for (const d of AURA_DEFS) {
-    const mat = new THREE.SpriteMaterial({ map: orbTex, color: d.color, transparent: true, opacity: d.op, blending: THREE.AdditiveBlending, depthWrite: false });
-    const s = new THREE.Sprite(mat);
-    s.scale.set(d.size, d.size, 1);
-    s.position.set(d.x, d.y, d.z);
-    scene.add(s);
-    auras.push({ sprite: s, baseOp: d.op, ph: Math.random() * Math.PI * 2, spd: 0.2 + Math.random() * 0.25 });
-  }
-
-  // ── Étoiles filantes / traînées lumineuses ──
-  // Texture de traînée : tête brillante + queue dégradée.
-  function makeStreakTexture() {
-    const c = document.createElement('canvas'); c.width = 256; c.height = 32;
-    const ctx = c.getContext('2d');
-    const grd = ctx.createLinearGradient(0, 0, 256, 0);
-    grd.addColorStop(0.0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.55, 'rgba(200,235,255,0.35)');
-    grd.addColorStop(0.88, 'rgba(235,250,255,0.95)');
-    grd.addColorStop(1.0, 'rgba(255,255,255,1)');
-    ctx.fillStyle = grd; ctx.fillRect(0, 0, 256, 32);
-    // tête plus lumineuse (halo rond)
-    const h = ctx.createRadialGradient(240, 16, 0, 240, 16, 22);
-    h.addColorStop(0, 'rgba(255,255,255,1)');
-    h.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = h; ctx.fillRect(218, 0, 60, 32);
-    const tex = new THREE.Texture(c); tex.needsUpdate = true; return tex;
-  }
-  const streakTex = makeStreakTexture();
-  const streaks = []; // étoiles filantes actives
-  const STREAK_TINTS = [0xbfefff, 0xeaffff, 0xc9a8ff, 0x9ff0ff];
-
-  function spawnShootingStar() {
-    const mat = new THREE.SpriteMaterial({ map: streakTex, color: STREAK_TINTS[(Math.random() * STREAK_TINTS.length) | 0], transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-    const s = new THREE.Sprite(mat);
-    // départ en haut, hors-champ à gauche/centre ; traverse en diagonale
-    const startX = -220 + Math.random() * 160;
-    const startY = 70 + Math.random() * 70;
-    const z = -30 - Math.random() * 90;
-    s.position.set(startX, startY, z);
-    const ang = -0.22 - Math.random() * 0.30; // descente vers la droite
-    const speed = 260 + Math.random() * 220;
-    const vel = new THREE.Vector3(Math.cos(ang) * speed, Math.sin(ang) * speed, 0);
-    mat.rotation = ang; // oriente la traînée dans le sens du déplacement
-    const len = 110 + Math.random() * 90;
-    s.scale.set(len, 7 + Math.random() * 5, 1);
-    scene.add(s);
-    streaks.push({ sprite: s, mat, vel, life: 0, maxLife: 0.8 + Math.random() * 0.6 });
-  }
-
-  // ── Planificateur de flashs (éclairs) ──
-  let flashEnergy = 0;       // intensité courante du flash (0→1)
-  let nextFlashAt = 1.2;     // prochain déclenchement (en secondes)
-  let lastT = 0;
-  function triggerFlash(t) {
-    flashEnergy = 1;
-    // direction + teinte aléatoires (cyan glacial ou violet)
-    flashLight.position.set((Math.random() - 0.5) * 180, 40 + Math.random() * 90, 90 + Math.random() * 80);
-    flashLight.color.setHex(Math.random() < 0.5 ? 0xcdf2ff : 0xe9ccff);
-    spawnShootingStar();
-    if (Math.random() < 0.45) spawnShootingStar(); // parfois une volée
-    // prochain flash dans 2.4–6 s
-    nextFlashAt = t + 2.4 + Math.random() * 3.6;
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  //  Chargement des modèles — Milobellus (cyan) + Giratina (violet)
-  // ════════════════════════════════════════════════════════════════
-  // Chaque modèle a sa colorisation, sa position, son comportement
-  // d'animation et ses deux halos (un large diffus + un serré intense).
-  const MODEL_CONFIGS = [
-    {
-      key: 'milotic',
-      b64: window.MILOTIC_GLB_BASE64, file: 'milotic.glb',
-      // émissif baissé → reste dans l'ombre, révélé surtout par les flashs
-      material: { color: 0x2f8fd8, emissive: 0x16487e, emissiveIntensity: 0.5, metalness: 0.74, roughness: 0.28 },
-      // Milobellus est LE modèle de premier plan : grand et proche (z élevé),
-      // mouvement plus calme (rotation/flottement doux).
-      targetSize: 178, pos: { x: 70, y: -8, z: 52 }, baseRotY: -0.55,
-      haloColor: 0x2a9fe0, haloColorCore: 0x9ff0ff, haloSize: 220,
-      floatAmp: 4, floatSpd: 0.42, spinSpd: 0.045, mouseRot: 0.38,
-    },
-    {
-      key: 'giratina',
-      b64: window.GIRATINA_GLB_BASE64, file: 'giratina.glb',
-      // teinte remontée + émissif renforcé + moins de métal → le mesh reste
-      // sombre et dans l'ambiance abyssale, mais ses couleurs (violet/gris)
-      // restent lisibles même hors des flashs (au lieu de sombrer dans le noir)
-      material: { color: 0x5a4288, emissive: 0xab35d2, emissiveIntensity: 1.0, metalness: 0.4, roughness: 0.4 },
-      // Giratina reste en ARRIÈRE-PLAN : repoussé dans la profondeur (z très
-      // négatif), à gauche, mouvement lent → il encadre Milobellus sans le voler.
-      targetSize: 198, pos: { x: -66, y: 26, z: -72 }, baseRotY: 0.82,
-      haloColor: 0x8a3fd0, haloColorCore: 0xd58aff, haloSize: 320,
-      floatAmp: 5, floatSpd: 0.34, spinSpd: -0.04, mouseRot: 0.22,
-    },
-  ];
-
-  // Crée un halo (sprite additif) derrière un modèle pour le détacher de l'abysse
-  function makeHalo(color, size, pos, baseOp) {
-    const mat = new THREE.SpriteMaterial({ map: orbTex, color, transparent: true, opacity: baseOp, blending: THREE.AdditiveBlending, depthWrite: false });
-    const s = new THREE.Sprite(mat);
-    s.scale.set(size, size, 1);
-    s.position.copy(pos);
-    scene.add(s);
-    haloSprites.push({ sprite: s, baseOp, ph: Math.random() * Math.PI * 2, spd: 0.4 + Math.random() * 0.4 });
-    return s;
-  }
-
-  // Mise en scène d'un modèle chargé : colorisation, recentrage, échelle, halos
-  function setupModel(root, cfg) {
-    root.traverse(o => {
-      if (o.isMesh) {
-        o.material = new THREE.MeshStandardMaterial({ ...cfg.material, flatShading: false });
-        o.material.needsUpdate = true;
-      }
-    });
-    // Recentrage + mise à l'échelle automatiques (indépendants du modèle source)
-    const box = new THREE.Box3().setFromObject(root);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    root.position.sub(center);
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const scl = cfg.targetSize / maxDim;
-
-    const group = new THREE.Group();
-    group.scale.setScalar(scl);
-    group.position.set(cfg.pos.x, cfg.pos.y, cfg.pos.z);
-    group.rotation.y = cfg.baseRotY;
-    group.add(root);
-    scene.add(group);
-
-    // Deux halos superposés pour un glow plus marqué :
-    //   - un large et diffus qui « auréole » le modèle
-    //   - un plus serré et intense juste derrière lui
-    makeHalo(cfg.haloColor, cfg.haloSize, new THREE.Vector3(cfg.pos.x, cfg.pos.y + 8, cfg.pos.z - 70), 0.34);
-    makeHalo(cfg.haloColorCore, cfg.haloSize * 0.6, new THREE.Vector3(cfg.pos.x, cfg.pos.y + 4, cfg.pos.z - 52), 0.55);
-
-    loadedModels.push({ group, cfg });
-
-    modelsLoaded++;
-    const skel = document.getElementById('hero3d-loading'); if (skel) skel.style.display = 'none';
-  }
-
-  function onModelError(cfg, err) {
-    console.warn('GLB load error (' + cfg.key + ')', err);
-    // On n'affiche le message d'erreur que si AUCUN modèle n'a pu charger.
-    if (modelsLoaded === 0) {
-      const skel = document.getElementById('hero3d-loading'); if (skel) { skel.style.display = 'flex'; skel.textContent = 'Modèle 3D indisponible'; }
-    }
-  }
-
-  // Réutilise le cache partagé : le modèle a déjà été parsé par l'intro, on ne
-  // reçoit ici qu'un clone (instantané) → pas de re-parsing, pas d'à-coup.
-  if (THREE.GLTFLoader) {
-    for (const cfg of MODEL_CONFIGS) {
-      getModelClone(cfg.key, cfg.b64, cfg.file)
-        .then(root => setupModel(root, cfg))
-        .catch(err => onModelError(cfg, err));
-    }
-  } else {
-    onModelError({ key: 'all' }, new Error('GLTFLoader indisponible'));
-  }
-
-  // ── Interaction souris ──
-  let mx = 0, my = 0, tx = 0, ty = 0;
-  const onMove = e => {
-    const r = (canvas.parentElement || wrap).getBoundingClientRect();
-    tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
-    ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
-  };
-  canvas.addEventListener('pointermove', onMove);
-  const onResize = () => {
-    // Lit le parent COURANT du canvas (celui-ci est ré-inséré dans un nouveau
-    // hero à chaque retour sur l'accueil → l'ancien `wrap` devient périmé).
-    const host = canvas.parentElement || wrap;
-    W = host.clientWidth; H = host.clientHeight;
-    if (!W || !H) return;
-    camera.aspect = W / H; camera.updateProjectionMatrix();
-    renderer.setSize(W, H, false);
-  };
-  window.addEventListener('resize', onResize);
-
-  const clock = new THREE.Clock();
-  function animate() {
-    const t = clock.getElapsedTime();
-    const dt = Math.min(t - lastT, 0.05); lastT = t;
-    mx += (tx - mx) * 0.045; my += (ty - my) * 0.045;
-
-    // ⚡ Flashs / éclairs : déclenchement périodique + décroissance rapide
-    if (t > nextFlashAt) triggerFlash(t);
-    flashEnergy *= 0.86;                       // extinction rapide (~0.4 s)
-    if (flashEnergy < 0.002) flashEnergy = 0;
-    flashLight.intensity = flashEnergy * 7.5;  // révèle violemment les modèles
-    ambient.intensity = AMBIENT_BASE + flashEnergy * 1.1;
-    keyLight.intensity = 1.5 + flashEnergy * 2.2;
-
-    // Modèles : rotation lente + flottement, chacun selon sa config
-    for (const m of loadedModels) {
-      const c = m.cfg;
-      m.group.rotation.y = c.baseRotY + t * c.spinSpd + mx * c.mouseRot;
-      m.group.rotation.x = -0.04 + my * 0.16;
-      m.group.position.y = c.pos.y + Math.sin(t * c.floatSpd) * c.floatAmp;
-    }
-    if (loadedModels.length) {
-      glowLight.position.x = Math.sin(t * 0.5) * 60;
-      glowLight.position.y = 28 + Math.cos(t * 0.6) * 25;
-    }
-
-    // halos : respiration douce + sursaut lumineux pendant les flashs
-    for (const h of haloSprites) {
-      h.sprite.material.opacity = h.baseOp * (0.7 + 0.3 * Math.sin(t * h.spd + h.ph)) + flashEnergy * 0.4;
-    }
-
-    // auras de fond : respiration lente + intensification au flash
-    for (const a of auras) {
-      a.sprite.material.opacity = a.baseOp * (0.75 + 0.25 * Math.sin(t * a.spd + a.ph)) + flashEnergy * 0.22;
-    }
-
-    // étoiles filantes : déplacement, enveloppe d'opacité, recyclage
-    for (let i = streaks.length - 1; i >= 0; i--) {
-      const st = streaks[i];
-      st.life += dt;
-      st.sprite.position.addScaledVector(st.vel, dt);
-      const k = st.life / st.maxLife;            // 0→1
-      st.mat.opacity = Math.sin(Math.min(k, 1) * Math.PI) * 0.95; // fondu entrée/sortie
-      if (st.life >= st.maxLife) {
-        scene.remove(st.sprite);
-        st.mat.dispose();
-        streaks.splice(i, 1);
-      }
-    }
-
-    // orbes : pulsation + dérive ascendante
-    for (const o of orbs) {
-      const u = o.userData;
-      o.material.opacity = u.baseOp * (0.5 + 0.5 * Math.sin(t * u.spd + u.ph));
-      o.position.y += u.drift;
-      if (o.position.y > 95) o.position.y = -95;
-    }
-
-    // neige marine : chute lente
-    const sp = snGeo.attributes.position.array;
-    for (let i = 0; i < SN; i++) {
-      sp[i*3+1] -= 0.06 + (i % 4) * 0.01;
-      if (sp[i*3+1] < -150) sp[i*3+1] = 150;
-    }
-    snGeo.attributes.position.needsUpdate = true;
-
-    rays.children.forEach((r, i) => { r.material.opacity = (0.03 + Math.sin(t * 0.4 + i) * 0.02) + flashEnergy * 0.08; });
-
-    // Cadrage rapproché sur la composition, léger parallaxe à la souris
-    camera.position.x += (12 + mx * 18 - camera.position.x) * 0.04;
-    camera.position.y += (8 - my * 13 - camera.position.y) * 0.04;
-    camera.lookAt(14, 6, 0);
-
-    renderer.render(scene, camera);
-    _hero.raf = requestAnimationFrame(animate);
-  }
-  _hero = { renderer, canvas, onResize, onMove, raf: 0, animate, paused: false };
-  animate();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
    INTRO — le chargement (voir runIntro)
@@ -9449,13 +8781,6 @@ function runIntro(onReveal) {
 //  Colonnes de VALEUR par semestre (juil./déc.). Persisté dans le state.
 // ══════════════════════════════════════════════════════════════════
 const DEFAULT_SEALED_PERIODS = ['2026-07', '2026-12', '2027-07', '2027-12'];
-const SEALED_CATS = [
-  ['etb',     'Elite Trainer Boxes'],
-  ['coffret', 'Coffrets, boîtes & packs'],
-  ['display', 'Displays scellées'],
-  ['item',    'Items & autres'],
-];
-const SEALED_CAT_LABEL = Object.fromEntries(SEALED_CATS);
 function sealedCatOf(txt) {
   const s = String(txt || '').toLowerCase();
   if (/elite\s*trainer|\betb\b/.test(s)) return 'etb';
@@ -9465,56 +8790,8 @@ function sealedCatOf(txt) {
 }
 function sealedUid() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-function sealedPeriods() {
-  if (!state.sealedPeriods || !state.sealedPeriods.length) state.sealedPeriods = DEFAULT_SEALED_PERIODS.slice();
-  return state.sealedPeriods;
-}
-const MONTH_FR = { '01': 'Janv.', '02': 'Févr.', '03': 'Mars', '04': 'Avr.', '05': 'Mai', '06': 'Juin', '07': 'Juil.', '08': 'Août', '09': 'Sept.', '10': 'Oct.', '11': 'Nov.', '12': 'Déc.' };
-function periodLabel(key) { const [y, m] = String(key).split('-'); return `${MONTH_FR[m] || m} ${y}`; }
-function periodShort(key) { const [y, m] = String(key).split('-'); return `${MONTH_FR[m] || m} ’${String(y).slice(2)}`; }
-function nextPeriod(key) { let [y, m] = String(key).split('-').map(Number); if (m >= 12) { y += 1; m = 7; } else if (m >= 7) { m = 12; } else { m = 7; } return `${y}-${String(m).padStart(2, '0')}`; }
 
-function parseMoney(s) {
-  if (s == null || s === '') return null;
-  if (typeof s === 'number') return isFinite(s) ? s : null;
-  let t = String(s).replace(/[^\d.,-]/g, '').trim();
-  if (!t) return null;
-  if (t.includes(',') && t.includes('.')) {
-    if (t.lastIndexOf(',') > t.lastIndexOf('.')) t = t.replace(/\./g, '').replace(',', '.');
-    else t = t.replace(/,/g, '');
-  } else if (t.includes(',')) t = t.replace(',', '.');
-  const n = parseFloat(t);
-  return isNaN(n) ? null : n;
-}
 
-// ── Maths (génériques : acceptent une liste — scellés OU cartes) ──
-function sealedVal(p, key) { const v = p.values ? p.values[key] : null; return (v != null && isFinite(v)) ? Number(v) : null; }
-function sealedLatestDataIndex(list) {
-  list = list || state.sealed; const P = sealedPeriods(); let idx = -1;
-  P.forEach((k, i) => { if (list.some(p => sealedVal(p, k) != null)) idx = i; });
-  return idx;
-}
-function sealedValueAt(p, i) {
-  const P = sealedPeriods(); let v = null;
-  for (let j = 0; j <= i && j < P.length; j++) { const x = sealedVal(p, P[j]); if (x != null) v = x; }
-  return v == null ? (Number(p.buyPrice) || 0) : v;
-}
-function sealedInvested(p) { return Number(p.buyPrice) || 0; }
-function sealedCurrent(p, list) { const i = sealedLatestDataIndex(list || state.sealed); return i < 0 ? sealedInvested(p) : sealedValueAt(p, i); }
-function sealedPnL(p, list) { return sealedCurrent(p, list || state.sealed) - sealedInvested(p); }
-function sealedByCat(cat) { return state.sealed.filter(p => (p.cat || 'item') === cat); }
-function sealedCatPeriodRawTotal(cat, key) { let s = 0, n = 0; for (const p of sealedByCat(cat)) { const v = sealedVal(p, key); if (v != null) { s += v; n++; } } return n ? s : null; }
-function sealedCatTotals(cat) {
-  const list = sealedByCat(cat); let invested = 0, value = 0;
-  for (const p of list) { invested += sealedInvested(p); value += sealedCurrent(p); }
-  return { invested, value, pnl: value - invested, perf: invested > 0 ? (value - invested) / invested : 0, count: list.length };
-}
-function sealedTotals(list) {
-  list = list || state.sealed; let invested = 0, value = 0;
-  for (const p of list) { invested += sealedInvested(p); value += sealedCurrent(p, list); }
-  return { invested, value, pnl: value - invested, perf: invested > 0 ? (value - invested) / invested : 0, count: list.length };
-}
-function fmtPct(x) { return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(0)} %`; }
 function fmtSign(v) { return `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`; }
 // La pastille du Portefeuille a été retirée (voir renderViewChrome) : cette
 // fonction ne fait donc plus rien, mais ses deux appelants restent lisibles —
@@ -9724,81 +9001,6 @@ function renderValueBody(body) {
   if (!window._valuePrefetched && list.some(c => c.cote == null)) { window._valuePrefetched = true; prefetchCardPrices(); }
 }
 
-function investKpisHTML(t) {
-  const pos = t.pnl >= 0;
-  return `<div class="inv-kpis">
-      <div class="inv-kpi"><span class="inv-kpi-val">${fmt(t.invested)}</span><span class="inv-kpi-lab">Total investi</span></div>
-      <div class="inv-kpi"><span class="inv-kpi-val" id="inv-kpi-value">${fmt(t.value)}</span><span class="inv-kpi-lab">Valeur actuelle</span></div>
-      <div class="inv-kpi"><span class="inv-kpi-val ${pos ? 'pos' : 'neg'}" id="inv-kpi-pnl">${fmtSign(t.pnl)}</span><span class="inv-kpi-lab">Plus-value</span></div>
-      <div class="inv-kpi"><span class="inv-kpi-val ${pos ? 'pos' : 'neg'}" id="inv-kpi-perf">${fmtPct(t.perf)}</span><span class="inv-kpi-lab">Performance</span></div>
-    </div>`;
-}
-
-// ── Volet SCELLÉ ────────────────────────────────────────────────
-function investSealedBodyHTML() {
-  const t = sealedTotals(state.sealed);
-  const cats = SEALED_CATS.map(([k]) => k).filter(k => sealedByCat(k).length);
-  const shownCats = cats.length ? cats : ['etb'];
-  return `
-    <div class="inv-hero spot">
-      <div class="inv-hero-glow" aria-hidden="true"></div>
-      <div class="inv-hero-top">
-        <div><h1 class="page-title">Portefeuille scellé</h1><div class="inv-sub">Displays, ETB &amp; coffrets — la valeur de ta collection, semestre après semestre.</div></div>
-        <label class="btn btn-ghost btn-import">
-          <svg viewBox="0 0 24 24" fill="none" width="15" height="15"><path d="M12 15V4m0 0 4 4m-4-4L8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <span>Importer Excel</span><input type="file" accept=".xlsx,.xls,.csv" hidden onchange="onSealedFile(this)">
-        </label>
-      </div>
-      ${investKpisHTML(t)}
-    </div>
-    ${state.sealed.length ? `<div class="panel inv-chart-panel">
-      <div class="inv-chart-top"><div class="panel-title" style="margin:0">Évolution du portefeuille</div><button class="inv-add ghost" onclick="addSealedPeriod()">${ICO.plus}<span>Semestre</span></button></div>
-      <div class="inv-chart" id="inv-chart-portfolio"></div></div>` : ''}
-    ${shownCats.map(sealedCatSectionHTML).join('')}`;
-}
-function sealedCatSectionHTML(cat) {
-  const P = sealedPeriods();
-  const list = sealedByCat(cat);
-  const periodHeads = P.map(k => `<th class="c-num c-per">${periodShort(k)}${P.length > 1 ? `<button class="per-x" title="Retirer ${periodLabel(k)}" aria-label="Retirer ${periodLabel(k)}" onclick="removeSealedPeriod('${k}')">${ICO.close}</button>` : ''}</th>`).join('');
-  return `<section class="inv-cat">
-    <div class="inv-cat-head">
-      <h2 class="inv-cat-title">${esc(SEALED_CAT_LABEL[cat] || cat)}</h2>
-      <div class="inv-cat-meta" id="meta-${cat}">${sealedCatMetaHTML(cat)}</div>
-    </div>
-    <div class="inv-table-scroll">
-      <table class="inv-table">
-        <thead><tr><th class="c-name">Produit</th><th class="c-num">Prix d'achat</th>${periodHeads}<th class="c-num">Plus-value</th><th class="c-act"></th></tr></thead>
-        <tbody>${list.map(sealedRowHTML).join('') || `<tr class="inv-empty-row"><td colspan="${P.length + 4}">Rien ici pour l'instant — ajoute ta première ligne ci-dessous.</td></tr>`}</tbody>
-        <tfoot id="foot-${cat}">${sealedFooterHTML(cat)}</tfoot>
-      </table>
-    </div>
-    <div class="inv-cat-actions"><button class="inv-add" onclick="addSealedRow('${cat}')">${ICO.plus}<span>Ajouter une ligne</span></button></div>
-  </section>`;
-}
-function sealedCatMetaHTML(cat) {
-  const list = sealedByCat(cat); if (!list.length) return '';
-  const ct = sealedCatTotals(cat), pos = ct.pnl >= 0;
-  return `<span>${list.length} produit${list.length > 1 ? 's' : ''}</span><span class="dot">·</span><span>investi ${fmt(ct.invested)}</span><span class="dot">·</span><span>valeur ${fmt(ct.value)}</span><span class="inv-cat-perf ${pos ? 'pos' : 'neg'}">${fmtPct(ct.perf)}</span>`;
-}
-function sealedFooterHTML(cat) {
-  const list = sealedByCat(cat); if (!list.length) return '';
-  const P = sealedPeriods(), ct = sealedCatTotals(cat), pos = ct.pnl >= 0;
-  return `<tr><td class="c-name">Sous-total</td><td class="c-num">${fmt(ct.invested)}</td>
-    ${P.map(k => { const v = sealedCatPeriodRawTotal(cat, k); return `<td class="c-num">${v == null ? '—' : fmt(v)}</td>`; }).join('')}
-    <td class="c-num ${pos ? 'pos' : 'neg'}">${fmtSign(ct.pnl)}</td><td class="c-act"></td></tr>`;
-}
-function sealedRowHTML(p) {
-  const P = sealedPeriods();
-  const pnl = sealedPnL(p), pos = pnl >= 0;
-  const cells = P.map(k => `<td class="c-num"><input class="inv-in inv-num" type="number" step="0.01" inputmode="decimal" value="${p.values && p.values[k] != null ? p.values[k] : ''}" placeholder="—" onchange="updateSealedValue('${p.id}','${k}',this.value)"></td>`).join('');
-  return `<tr data-id="${p.id}">
-    <td class="c-name"><input class="inv-in inv-in-name" value="${esc(p.name || '')}" placeholder="Nom du produit" onchange="updateSealedField('${p.id}','name',this.value)"></td>
-    <td class="c-num"><input class="inv-in inv-num" type="number" step="0.01" inputmode="decimal" value="${p.buyPrice ?? ''}" placeholder="—" onchange="updateSealedField('${p.id}','buyPrice',this.value)"></td>
-    ${cells}
-    <td class="c-num inv-pnl-cell ${pos ? 'pos' : 'neg'}" id="sp-${p.id}">${fmtSign(pnl)}</td>
-    <td class="c-act"><button class="inv-del" title="Supprimer la ligne" aria-label="Supprimer la ligne" onclick="deleteSealedRow('${p.id}')">${ICO.close}</button></td>
-  </tr>`;
-}
 
 // ── Volet CARTES (bulles par série → détail trié par prix) ──────
 function cardQty(p) { return Math.max(1, Number(p.qty) || 1); }
@@ -10511,102 +9713,6 @@ function addMissingCard(cardId) {
     paintCardValues([cardId]);
     refreshInvestTotals();
   }).catch(() => {});
-}
-// Puce de rareté : couleur portée par la rareté elle-même (lecture immédiate).
-function rarityClass(r) {
-  const s = _cardNorm(r);
-  if (/secrete|hyper/.test(s)) return 'r-secret';
-  if (/illustration speciale/.test(s)) return 'r-special';
-  if (/illustration/.test(s)) return 'r-illus';
-  if (/ultra/.test(s)) return 'r-ultra';
-  if (/double/.test(s)) return 'r-double';
-  if (/promo/.test(s)) return 'r-promo';
-  return 'r-base';
-}
-function cardTileHTML(p) {
-  const cote = cardCote(p);
-  const qty = cardQty(p);
-  const img = p.image ? IMG(p.image, 'low') : '';
-  const total = cote != null ? cote * qty : null;
-  const pnl = (p.buyPrice != null && cote != null) ? (cote - p.buyPrice) * qty : null;
-  const cmHref = (p.cardId && _cmUrlStore[p.cardId]) || cmSearchLink(p.name);
-  // COULEUR DE LA CARTE, SANS REQUÊTE. `data-cc` déclenche paintCards(), qui
-  // demandait la fiche de CHAQUE carte à l'API pour en lire le type — 48
-  // requêtes mesurées à l'ouverture d'une seule série, alors que le type est
-  // DÉJÀ enregistré dans le portefeuille. On l'écrit donc en dur, et on ne
-  // laisse `data-cc` que pour les rares cartes importées sans type.
-  const tc = p.type ? TYPE_COLOR[p.type] : null;
-  /* ══════════════════════════════════════════════════════════════════════
-     LA TUILE D'UNE CARTE SUIVIE — refonte
-
-     CE QUI N'ALLAIT PAS, précisément :
-      · le VISUEL était l'élément le plus petit de la tuile (92 px) et rogné
-        (`object-fit:cover`). Dans une app de collection, la carte EST le sujet ;
-      · cinq lignes de même poids se succédaient dans le corps — nom, numéro +
-        rareté, cote + recote, achat + plus-value, quantité + Cardmarket +
-        corbeille. Rien ne menait la lecture, et le pied débordait si bien qu'il
-        avait fallu l'autoriser à passer à la ligne ;
-      · les deux chiffres qu'on COMPARE (la cote et la plus-value) étaient sur
-        deux lignes différentes, séparés par un bouton.
-
-     CE QUE FAIT CELLE-CI :
-      · le visuel est plus grand et ENTIER (`contain` sur une plaque sombre) ;
-      · une seule ligne de titre, avec la quantité en pastille quand il y en a
-        plusieurs — c'est une information de lecture, pas un réglage ;
-      · la cote et la plus-value côte à côte, la plus-value alignée à droite :
-        les deux nombres se lisent d'un seul regard ;
-      · les commandes (recoter, Cardmarket, quantité, retirer) descendent dans
-        UNE barre d'actions discrète, en icônes de même poids. Elle ne se
-        dispute plus la place avec les chiffres.
-     Les identifiants (`cote-`, `sum-`, `pnl-`, `qty-`, `cm-`) et les classes
-     lues par refreshCardTile / syncCardPrice sont conservés à l'identique : la
-     mise à jour en place continue de marcher sans reconstruire la tuile.
-     ══════════════════════════════════════════════════════════════════════ */
-  return `<article class="cardtile" data-id="${p.id}"${tc ? ` style="--tc:${tc}"` : ` data-cc="${esc(p.cardId || '')}"`}>
-    <button class="cardtile-art" onclick="openInvestCardPreview('${p.id}')" title="Agrandir ${esc(p.name)}" aria-label="Agrandir ${esc(p.name)}">
-      ${p.image ? `<img ${artAttrs(p.image)} alt="" onload="artOk(this)" onerror="imgFail(this,'${esc(String(p.localId || ''))}','${esc(p.setId || '')}','${jss(p.name)}')">` : noImgHTML(p.localId, p.name, p.setId)}
-      <span class="cardtile-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
-    </button>
-    <div class="cardtile-body">
-      <div class="cardtile-head">
-        <h3 class="cardtile-name" title="${esc(p.name)}">${esc(p.name)}</h3>
-        <span class="cardtile-mult" id="mult-${p.id}"${qty > 1 ? '' : ' hidden'}>×${qty}</span>
-      </div>
-      <div class="cardtile-meta">
-        ${p.number ? `<span class="cardtile-num">${esc(String(p.number))}</span>` : ''}
-        ${p.rarity ? `<span class="cardtile-rar ${rarityClass(p.rarity)}">${esc(p.rarity)}</span>` : ''}
-      </div>
-      <div class="cardtile-price">
-        <span class="cardtile-cote" id="cote-${p.id}">${cote != null ? fmt(cote) : '<span class="cote-wait">cote…</span>'}</span>
-        <span class="cardtile-pnl ${pnl == null ? '' : pnl >= 0 ? 'pos' : 'neg'}" id="pnl-${p.id}">${pnl == null ? '' : fmtSign(pnl)}</span>
-      </div>
-      <div class="cardtile-buyline">
-        <button class="buy-chip ${p.buyPrice != null ? 'set' : ''}" onclick="toggleCardBuy(event,'${p.id}')"
-          aria-label="Valeur d'achat de ${esc(p.name)}">${p.buyPrice != null ? `achat ${fmt(p.buyPrice)}` : `+ achat`}</button>
-        <span class="cardtile-sum" id="sum-${p.id}">${qty > 1 && total != null ? `×${qty} = ${fmt(total)}` : ''}</span>
-      </div>
-      <div class="cardtile-foot">
-        <div class="qty" role="group" aria-label="Quantité de ${esc(p.name)}">
-          <button class="qty-btn" onclick="bumpCardQty('${p.id}',-1)" aria-label="Retirer un exemplaire" ${qty <= 1 ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
-          <span class="qty-val" id="qty-${p.id}">${qty}</span>
-          <button class="qty-btn" onclick="bumpCardQty('${p.id}',1)" aria-label="Ajouter un exemplaire">${ICO.plus}</button>
-        </div>
-        <span class="cardtile-acts">
-          <button class="cardtile-sync" onclick="syncCardPrice('${p.id}',event)"
-            title="Refaire la cote de cette carte" aria-label="Refaire la cote de ${esc(p.name)}">
-            <svg class="ico-sync" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 0 1-13.9 6.6M3.5 12a8.5 8.5 0 0 1 13.9-6.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17.4 2.2v3.6h-3.6M6.6 21.8v-3.6h3.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <a class="cm-link" id="cm-${p.id}" href="${cmHref}" target="_blank" rel="noopener"
-            title="Voir la fiche Cardmarket" aria-label="Fiche Cardmarket de ${esc(p.name)}">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4 11 13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M18 15v3.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-          </a>
-          <button class="cardtile-del" onclick="deleteInvestCard('${p.id}')" aria-label="Retirer ${esc(p.name)}" title="Retirer la carte">
-            ${ICO.close}
-          </button>
-        </span>
-      </div>
-    </div>
-  </article>`;
 }
 /* ══════════════════════════════════════════════════════════════════════
    LE CATALOGUE D'UNE SÉRIE — ce qu'il reste à trouver
@@ -11375,47 +10481,6 @@ function msSlotHTML(m, c, hasRev, i) {
   </div>`;
 }
 
-// ── Édition SCELLÉ ──────────────────────────────────────────────
-function updateSealedValue(id, key, value) {
-  const p = state.sealed.find(x => x.id === id); if (!p) return;
-  p.values = p.values || {}; p.values[key] = value === '' ? null : parseMoney(value);
-  save(); refreshSealedTotalsUI();
-}
-function updateSealedField(id, field, value) {
-  const p = state.sealed.find(x => x.id === id); if (!p) return;
-  if (field === 'buyPrice') p.buyPrice = parseMoney(value); else if (field === 'name') p.name = value.trim();
-  save(); refreshSealedTotalsUI();
-}
-function addSealedRow(cat) {
-  state.sealed.push({ id: sealedUid(), cat, name: '', buyPrice: null, values: {} });
-  save(); renderInvestBody(); investBadge();
-  requestAnimationFrame(() => { const n = document.querySelectorAll('#inv-mode-body tr[data-id] .inv-in-name'); n[n.length - 1]?.focus(); });
-}
-function deleteSealedRow(id) {
-  const i = state.sealed.findIndex(x => x.id === id); if (i < 0) return;
-  state.sealed.splice(i, 1); save(); renderInvestBody(); investBadge();
-}
-function addSealedPeriod() {
-  const P = sealedPeriods(); P.push(nextPeriod(P[P.length - 1] || '2026-07'));
-  save(); renderInvestBody();
-}
-function removeSealedPeriod(key) {
-  const P = sealedPeriods(); const i = P.indexOf(key); if (i < 0 || P.length <= 1) return;
-  P.splice(i, 1);
-  for (const p of state.sealed) if (p.values) delete p.values[key];
-  for (const p of state.investCards) if (p.values) delete p.values[key];
-  save(); renderInvestBody();
-}
-function refreshSealedTotalsUI() {
-  const t = sealedTotals(state.sealed), pos = t.pnl >= 0;
-  const setTxt = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-  setTxt('inv-kpi-value', fmt(t.value));
-  const pnlEl = document.getElementById('inv-kpi-pnl'); if (pnlEl) { pnlEl.textContent = fmtSign(t.pnl); pnlEl.className = `inv-kpi-val ${pos ? 'pos' : 'neg'}`; }
-  const perfEl = document.getElementById('inv-kpi-perf'); if (perfEl) { perfEl.textContent = fmtPct(t.perf); perfEl.className = `inv-kpi-val ${pos ? 'pos' : 'neg'}`; }
-  for (const p of state.sealed) { const sp = document.getElementById('sp-' + p.id); if (sp) { const pnl = sealedPnL(p), pp = pnl >= 0; sp.textContent = fmtSign(pnl); sp.className = `c-num inv-pnl-cell ${pp ? 'pos' : 'neg'}`; } }
-  for (const [cat] of SEALED_CATS) { const meta = document.getElementById('meta-' + cat); if (meta) meta.innerHTML = sealedCatMetaHTML(cat); const foot = document.getElementById('foot-' + cat); if (foot) foot.innerHTML = sealedFooterHTML(cat); }
-  drawPortfolioChart(state.sealed);
-}
 
 // ── Édition CARTES ──────────────────────────────────────────────
 // « Ajouter une carte » n'crée RIEN tant qu'une carte n'a pas été choisie :
@@ -11474,33 +10539,6 @@ function refreshCardTile(p) {
     else { pn.textContent = ''; pn.className = 'cardtile-pnl'; }
   }
 }
-// Valeur d'achat (optionnelle) : le bouton se transforme en champ le temps de
-// la saisie, puis reprend sa place — pas de modal pour une seule valeur.
-function toggleCardBuy(ev, id) {
-  const btn = ev.currentTarget.closest('.buy-chip'); const p = state.investCards.find(x => x.id === id);
-  if (!btn || !p) return;
-  const inp = document.createElement('input');
-  inp.className = 'buy-input'; inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.inputMode = 'decimal';
-  inp.placeholder = 'achat €'; inp.value = p.buyPrice ?? '';
-  inp.setAttribute('aria-label', "Valeur d'achat");
-  let done = false;
-  const commit = () => {
-    if (done) return; done = true;
-    p.buyPrice = inp.value === '' ? null : parseMoney(inp.value);
-    save();
-    inp.replaceWith(btn);
-    btn.textContent = p.buyPrice != null ? `achat ${fmt(p.buyPrice)}` : '+ achat';
-    btn.classList.toggle('set', p.buyPrice != null);
-    refreshCardTile(p);
-  };
-  // Deux voies de validation (commit est idempotent) : `change` couvre les cas
-  // où `blur` n'arrive pas (claviers mobiles, autofill).
-  inp.onblur = commit;
-  inp.onchange = commit;
-  inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); else if (e.key === 'Escape') { inp.value = p.buyPrice ?? ''; inp.blur(); } };
-  btn.replaceWith(inp); inp.focus(); inp.select();
-}
-function pickInvestCard(id) { state._investCardTarget = id; openCardPicker('investCard'); }
 function openInvestCardPreview(id) {
   const p = state.investCards.find(x => x.id === id); if (!p || !p.image) return;
   openPhotoLightbox(IMG(p.image, 'high'), p.name || '');
@@ -11743,122 +10781,8 @@ function prefetchCardPrices() {
   });
 }
 
-// ── Courbe (SVG maison) — générique sur une liste ───────────────
-function drawPortfolioChart(list) {
-  list = list || state.sealed;
-  const box = document.getElementById('inv-chart-portfolio'); if (!box) return;
-  const P = sealedPeriods(), li = sealedLatestDataIndex(list);
-  const invested = list.reduce((a, p) => a + sealedInvested(p), 0);
-  const labels = ['Achat'], vals = [invested];
-  for (let i = 0; i <= li; i++) { labels.push(periodShort(P[i])); vals.push(list.reduce((a, p) => a + sealedValueAt(p, i), 0)); }
-  if (vals.length < 2) { box.innerHTML = `<div class="chart-empty">Renseigne les valeurs d'un semestre pour voir la courbe se dessiner.</div>`; return; }
-  const W = 760, H = 200, padL = 8, padR = 12, padT = 20, padB = 12;
-  let min = Math.min(...vals), max = Math.max(...vals);
-  if (min === max) { min = min * 0.9 || 0; max = max * 1.1 || 1; }
-  const rng = max - min || 1;
-  const X = i => padL + i * ((W - padL - padR) / (vals.length - 1));
-  const Y = v => padT + (1 - (v - min) / rng) * (H - padT - padB);
-  const line = vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
-  const area = `${line} L ${X(vals.length - 1).toFixed(1)} ${(H - padB).toFixed(1)} L ${X(0).toFixed(1)} ${(H - padB).toFixed(1)} Z`;
-  const dots = vals.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${i === vals.length - 1 ? 4 : 2.6}" fill="var(--acc)"/>`).join('');
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="inv-svg">
-      <defs><linearGradient id="invGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--acc)" stop-opacity=".30"/><stop offset="100%" stop-color="var(--acc)" stop-opacity="0"/></linearGradient></defs>
-      <path d="${area}" fill="url(#invGrad)"/>
-      <path d="${line}" fill="none" stroke="var(--acc)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      ${dots}
-    </svg>
-    <div class="inv-chart-axis">${labels.map((l, i) => `<span>${esc(l)}<b>${fmt(vals[i])}</b></span>`).join('')}</div>`;
-}
 
 // ── Import Excel / CSV (format « Suivi de collection ») ──────────
-let _sealedImport = null;
-function onSealedFile(input) {
-  const file = input.files && input.files[0]; if (!file) return;
-  // SheetJS n'est plus chargé avec la page : on va le chercher maintenant.
-  if (typeof XLSX === 'undefined') {
-    const el = input, f0 = el.files && el.files[0];
-    if (!f0) { el.value = ''; return; }
-    toast('Préparation du lecteur Excel…', '');
-    ensureXlsx().then(ok => {
-      if (!ok) { toast('Lecteur Excel injoignable (vérifie ta connexion)', 'error'); el.value = ''; return; }
-      onSealedFile(el);   // le fichier est toujours dans l'input : on reprend au début
-    });
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-      const parsed = parseSealedWorkbook(rows);
-      if (!parsed.products.length) { toast('Aucun produit détecté dans ce fichier', 'error'); return; }
-      _sealedImport = parsed; openSealedImportConfirm(parsed);
-    } catch (err) { console.warn('import', err); toast('Fichier illisible (.xlsx, .xls, .csv)', 'error'); }
-  };
-  reader.onerror = () => toast('Lecture du fichier échouée', 'error');
-  reader.readAsArrayBuffer(file);
-  input.value = '';
-}
-function parseSealedWorkbook(rows) {
-  let products = [], curCat = null, colBuy = 1, periodCols = {};
-  for (const r of rows) {
-    const first = String(r[0] || '').trim(), low = first.toLowerCase();
-    if (!first) continue;
-    if (/nom du banger|^produit$|^nom$/.test(low) && r.some(c => /valeur/i.test(String(c)))) {
-      periodCols = {};
-      r.forEach((c, i) => {
-        const m = String(c).match(/valeur\s*(\d{1,2})[\/.\-](\d{4})/i);
-        if (m) periodCols[`${m[2]}-${String(m[1]).padStart(2, '0')}`] = i;
-        if (/prix\s*d.?achat/i.test(String(c))) colBuy = i;
-      });
-      continue;
-    }
-    if (/sous-total|total global|total invest|performance globale|valeur actuelle/i.test(low)) continue;
-    const buyVal = parseMoney(r[colBuy]);
-    const hasVal = Object.values(periodCols).some(i => parseMoney(r[i]) != null);
-    const filled = r.filter(c => String(c).trim() !== '').length;
-    if (filled <= 1 || (buyVal == null && !hasVal)) { curCat = sealedCatOf(first); continue; }
-    const values = {};
-    for (const [key, i] of Object.entries(periodCols)) { const v = parseMoney(r[i]); if (v != null) values[key] = v; }
-    products.push({ id: sealedUid(), cat: curCat || sealedCatOf(first), name: first, buyPrice: buyVal, values });
-  }
-  const dataPeriods = new Set();
-  for (const p of products) for (const k in p.values) dataPeriods.add(k);
-  const periods = Array.from(new Set([...DEFAULT_SEALED_PERIODS, ...dataPeriods])).sort();
-  return { periods, products };
-}
-function ensureSealedModal() {
-  let m = document.getElementById('modal-sealed-import');
-  if (m) return m;
-  m = document.createElement('div');
-  m.className = 'modal-overlay'; m.id = 'modal-sealed-import';
-  m.innerHTML = `<div class="modal" style="max-width:480px">
-      <div class="modal-header"><div class="modal-title">Importer le portefeuille</div><button class="modal-close" onclick="closeModal('modal-sealed-import')" aria-label="Fermer">${ICO.close}</button></div>
-      <div class="modal-body" id="sealed-import-body"></div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-sealed-import')">Annuler</button><button class="btn btn-primary" onclick="confirmSealedImport()">Remplacer le portefeuille</button></div>
-    </div>`;
-  document.body.appendChild(m);
-  return m;
-}
-function openSealedImportConfirm(parsed) {
-  ensureSealedModal();
-  const byCat = {};
-  for (const p of parsed.products) byCat[p.cat] = (byCat[p.cat] || 0) + 1;
-  document.getElementById('sealed-import-body').innerHTML = `
-    <p class="sealed-imp-hint">J'ai lu <b>${parsed.products.length} produit${parsed.products.length > 1 ? 's' : ''}</b> répartis en :</p>
-    <ul class="sealed-imp-list">${SEALED_CATS.filter(([k]) => byCat[k]).map(([k, lbl]) => `<li><span>${esc(lbl)}</span><b>${byCat[k]}</b></li>`).join('')}</ul>
-    <p class="sealed-imp-note">Colonnes de valeur : ${parsed.periods.map(periodLabel).join(' · ')}.<br>Importer <b>remplacera</b> le portefeuille scellé actuel (${state.sealed.length} ligne${state.sealed.length > 1 ? 's' : ''}).</p>`;
-  openModal('modal-sealed-import');
-}
-function confirmSealedImport() {
-  if (!_sealedImport) return;
-  state.sealed = _sealedImport.products; state.sealedPeriods = _sealedImport.periods.slice();
-  _sealedImport = null; window._investCountedSealed = false;
-  save(); closeModal('modal-sealed-import');
-  state.investMode = 'sealed'; renderInvest();
-  toast(`${state.sealed.length} produits importés`, 'success');
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    AUTO-MISE À JOUR — que le code déployé ARRIVE, sans rien demander
