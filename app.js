@@ -559,7 +559,7 @@ function idbDel(key) {
 // moment le plus risqué). On conserve les BACKUP_KEEP plus récents.
 // Le préfixe porte l'identifiant du compte, pour la même raison que dbKey() :
 // la récupération ne doit jamais proposer à quelqu'un l'instantané d'un autre.
-const BACKUP_PREFIX = 'backup:', BACKUP_KEEP = 6;
+const BACKUP_PREFIX = 'backup:', BACKUP_KEEP = 15;   // un par jour + un avant chaque fusion
 function backupPrefix() { return vaultUid() ? BACKUP_PREFIX + vaultUid() + ':' : BACKUP_PREFIX; }
 function autoBackup(tag) {
   const key = backupPrefix() + tag;
@@ -603,6 +603,168 @@ function collectionSnapshot() {
 
    Règle générale, pas un rustine : ce qui part sur le réseau ne contient que
    ce qui sert. Toute section devenue morte se retire d'abord de la synchro. */
+/* ══════════════════════════════════════════════════════════════════════
+   FUSIONNER AU LIEU D'ÉCRASER (2026-10-20)
+
+   « J'ai ajouté des cartes hier sur le PC fixe, elles étaient sur tous mes
+   appareils, et ce matin elles n'y sont plus. »
+
+   LA CAUSE. La synchro était « le dernier qui écrit gagne », sur l'instantané
+   COMPLET. Or l'app écrit aussi toute seule : une image réparée, une date de
+   sortie récupérée, une case de masterset cochée d'office… Un appareil resté
+   en arrière (l'iPhone, le Mac de la veille) faisait une de ces écritures
+   avant d'avoir relu le compte — et renvoyait SA vieille copie, qui écrasait
+   la bonne. Le temps réel la propageait ensuite sur tous les autres appareils.
+
+   LE REMÈDE : une fusion À TROIS. Chaque appareil garde la « base » — la
+   dernière version du compte qu'il connaît. Face à une copie locale (L) et à
+   celle du compte (R), on regarde ce que CHACUNE a changé depuis la base (B) :
+   · un ajout, d'un côté ou de l'autre, est gardé ;
+   · une suppression n'est appliquée que si l'autre côté n'a pas touché à
+     l'élément entre-temps ;
+   · une modification d'un seul côté l'emporte ; si les deux ont modifié le
+     même champ, la modification d'ici gagne (c'est le geste qu'on vient de
+     faire).
+   Sans base (premier passage après cette mise à jour), on ne peut pas
+   distinguer une suppression d'un ajout : on fait l'UNION — au pire une carte
+   retirée revient, jamais une carte ajoutée ne disparaît.
+   ══════════════════════════════════════════════════════════════════════ */
+function stableStr(v) {
+  if (v === undefined) return 'u';
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStr).join(',') + ']';
+  return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stableStr(v[k])).join(',') + '}';
+}
+const same = (a, b) => stableStr(a) === stableStr(b);
+// Une valeur « atomique » : ce qui a bougé depuis la base gagne.
+function merge3(b, l, r, noBase) {
+  if (noBase) return l !== undefined ? l : r;
+  if (same(l, b)) return r;
+  if (same(r, b)) return l;
+  return l;   // les deux ont changé : la modification d'ici l'emporte
+}
+// Un objet champ par champ (une carte, une wishlist, un masterset…).
+function mergeObj(b, l, r, noBase, deep = {}) {
+  if (l == null || r == null) return merge3(b, l, r, noBase);
+  const out = {};
+  for (const k of new Set([...Object.keys(r), ...Object.keys(l)])) {
+    const bv = b ? b[k] : undefined;
+    const v = deep[k] ? deep[k](bv, l[k], r[k], noBase) : merge3(bv, l[k], r[k], noBase || !b);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+// Une liste dont chaque élément a une clé (cartes, wishlists, classeurs…).
+function mergeList(B, L, R, keyOf, mergeItem, noBase) {
+  const toMap = a => { const m = new Map(); for (const x of (a || [])) if (x) { const k = keyOf(x); if (k != null && !m.has(k)) m.set(k, x); } return m; };
+  const bm = toMap(B), lm = toMap(L), rm = toMap(R);
+  const order = [...rm.keys(), ...[...lm.keys()].filter(k => !rm.has(k))];
+  const out = [];
+  for (const k of order) {
+    const b = noBase ? undefined : bm.get(k), l = lm.get(k), r = rm.get(k);
+    if (l && r) { out.push(mergeItem(b, l, r, noBase || !b)); continue; }
+    if (noBase || !b) { out.push(l || r); continue; }     // ajouté d'un côté
+    // Présent dans la base, absent d'un côté : supprimé là-bas…
+    const kept = l || r;
+    if (!same(kept, b)) out.push(kept);                    // …mais modifié ici : on garde
+  }
+  return out;
+}
+// Un dictionnaire (cases Milobellus, cases d'un masterset, dates de sortie…).
+function mergeMap(B, L, R, noBase) {
+  B = B || {}; L = L || {}; R = R || {};
+  const out = {};
+  for (const k of new Set([...Object.keys(R), ...Object.keys(L)])) {
+    let v;
+    if (noBase) {
+      // Union : une case cochée d'un côté reste cochée (les bits normale /
+      // reverse d'un masterset se cumulent).
+      v = (typeof L[k] === 'number' || typeof R[k] === 'number') ? ((L[k] | 0) | (R[k] | 0)) : (L[k] || R[k]);
+    } else v = merge3(B[k], L[k], R[k]);
+    if (v) out[k] = v;   // décoché = clé absente (0, false, null, undefined)
+  }
+  return out;
+}
+function mergeSnapshots(B, L, R) {
+  const noBase = !B;
+  B = B || {};
+  const cardKey = p => p.cardId ? 'c:' + p.cardId : 'id:' + p.id;
+  const field = (bv, lv, rv, nb) => merge3(bv, lv, rv, nb);
+  const out = {
+    investCards: mergeList(B.investCards, L.investCards, R.investCards, cardKey, (b, l, r, nb) => mergeObj(b, l, r, nb), noBase),
+    wishlists: mergeList(B.wishlists, L.wishlists, R.wishlists, w => w.id, (b, l, r, nb) => mergeObj(b, l, r, nb, {
+      cards: (bc, lc, rc, nb2) => mergeList(bc, lc, rc, c => c.id, (b2, l2, r2, nb3) => mergeObj(b2, l2, r2, nb3), nb2),
+    }), noBase),
+    binders: mergeList(B.binders, L.binders, R.binders, x => x.id, (b, l, r, nb) => mergeObj(b, l, r, nb), noBase),
+    sealed: mergeList(B.sealed, L.sealed, R.sealed, x => x.id, (b, l, r, nb) => mergeObj(b, l, r, nb), noBase),
+    mastersets: mergeList(B.mastersets, L.mastersets, R.mastersets, m => String(m.setId), (b, l, r, nb) => mergeObj(b, l, r, nb, {
+      owned: (bo, lo, ro, nb2) => mergeMap(bo, lo, ro, nb2),
+    }), noBase),
+    milobellus: mergeMap(B.milobellus, L.milobellus, R.milobellus, noBase),
+    setDates: { ...(R.setDates || {}), ...(L.setDates || {}) },
+    setBlocs: { ...(R.setBlocs || {}), ...(L.setBlocs || {}) },
+    sealedPeriods: field(B.sealedPeriods, L.sealedPeriods, R.sealedPeriods, noBase),
+    investMode: field(B.investMode, L.investMode, R.investMode, noBase),
+    serieShow: field(B.serieShow, L.serieShow, R.serieShow, noBase),
+    heroRef: field(B.heroRef, L.heroRef, R.heroRef, noBase),
+    lastUpdated: new Date().toISOString(),
+  };
+  if (out.heroRef === undefined) out.heroRef = null;
+  return out;
+}
+/* LE RATTRAPAGE DU 2026-10-20 — une fois par appareil.
+   Les cartes perdues à cause de l'ancienne synchro sont encore dans les
+   sauvegardes automatiques d'au moins un appareil (celle d'avant la relecture
+   du compte, surtout, sur le PC où elles avaient été ajoutées). On fait l'UNION
+   de ces sauvegardes récentes avec la collection actuelle : rien n'est retiré,
+   ce qui manque revient. Bornée aux sauvegardes depuis le 15 octobre, pour ne
+   pas ressusciter des retraits plus anciens. */
+const RECOVER_KEY = 'milodex:recover-backups-2026-10-20', RECOVER_SINCE = '2026-10-15';
+let _recoverRunning = false;
+async function recoverLostFromBackups() {
+  if (_recoverRunning || !vaultOn()) return;
+  try { if (localStorage.getItem(RECOVER_KEY)) return; } catch { return; }
+  _recoverRunning = true;
+  try {
+    const keys = (await idbKeys()).filter(k => typeof k === 'string' && k.startsWith(backupPrefix())).sort();
+    const before = syncSnapshot();
+    let cur = before;
+    for (const k of keys) {
+      const b = await idbGet(k).catch(() => null);
+      if (!b || String(b.lastUpdated || '') < RECOVER_SINCE) continue;
+      cur = mergeSnapshots(null, cur, b);   // union : la collection actuelle garde la main
+    }
+    if (!same(syncContent(cur), syncContent(before))) {
+      const n = (cur.investCards || []).length - (before.investCards || []).length;
+      applyLoaded(cur);
+      save();
+      repaintAll();
+      if (n > 0) toast(`${n} carte${n > 1 ? 's' : ''} retrouvée${n > 1 ? 's' : ''} dans les sauvegardes de cet appareil`, 'success');
+    }
+    try { localStorage.setItem(RECOVER_KEY, '1'); } catch {}
+  } catch (e) { console.warn('[rattrapage]', e); }
+  finally { _recoverRunning = false; }
+}
+// La « base » de la fusion : la dernière version du compte connue ici.
+function syncBaseKey() { return 'syncbase:' + (vaultUid() || ''); }
+let _syncBase = null, _syncBaseLoaded = false;
+async function loadSyncBase() {
+  if (_syncBaseLoaded) return _syncBase;
+  try { _syncBase = (await idbGet(syncBaseKey())) || null; } catch { _syncBase = null; }
+  _syncBaseLoaded = true;
+  return _syncBase;
+}
+function setSyncBase(snap) {
+  _syncBase = snap ? JSON.parse(JSON.stringify(snap)) : null; _syncBaseLoaded = true;
+  idbSet(syncBaseKey(), _syncBase).catch(() => {});
+}
+// Le contenu qui compte pour la synchro (sans horodatage ni sections omises).
+function syncContent(snap) {
+  const o = { ...(snap || {}) };
+  delete o.lastUpdated; for (const k of SYNC_OMIT) delete o[k];
+  return o;
+}
+
 const SYNC_OMIT = ['gradedCards'];
 function syncSnapshot() {
   const snap = collectionSnapshot();
@@ -838,7 +1000,7 @@ function applyLoaded(d) {
     if (p && p.cote != null && !Object.keys(values).length) values[state.sealedPeriods[0]] = Number(p.cote);
     return { id: (p && p.id) || sealedUid(), cat, name: (p && p.name) || '', buyPrice: (p && p.buyPrice != null) ? p.buyPrice : null, values };
   });
-  state.investCards = (d.investCards || []).map(p => ({ id: p.id || sealedUid(), cardId: p.cardId || null, name: p.name || '', setId: p.setId || '', setName: p.setName || 'Série inconnue', logo: p.logo || null, number: p.number || '', localId: p.localId || '', rarity: p.rarity || '', type: p.type || '', qty: Math.max(1, Number(p.qty) || 1), image: p.image || '', buyPrice: p.buyPrice != null ? p.buyPrice : null }));
+  state.investCards = (d.investCards || []).map(p => ({ ...p, id: p.id || sealedUid(), cardId: p.cardId || null, name: p.name || '', setId: p.setId || '', setName: p.setName || 'Série inconnue', logo: p.logo || null, number: p.number || '', localId: p.localId || '', rarity: p.rarity || '', type: p.type || '', qty: Math.max(1, Number(p.qty) || 1), image: p.image || '', buyPrice: p.buyPrice != null ? p.buyPrice : null }));
   /* MASTERSET — les cases cochées, et rien de plus.
      On ne persiste PAS la liste des cartes du set ni celle des reverses :
      elles viennent de l'API (et de son cache), ne changent jamais, et
@@ -1099,6 +1261,8 @@ async function vaultSignOut(wipe) {
 
 // ── CE QUI SE PASSE QUAND ON ARRIVE / QUAND ON PART ────────────────
 async function onSignedIn() {
+  // Nouveau compte (ou retour) : ni relecture faite, ni base de fusion connue.
+  _pulledOnce = false; _syncBaseLoaded = false; _syncBase = null; _remoteStamp = '';
   hideAuthGate();
   fetchProfile();
   paintAccountButton();
@@ -1120,6 +1284,7 @@ async function onSignedIn() {
   }
 }
 function onSignedOut() {
+  _pulledOnce = false; _syncBaseLoaded = false; _syncBase = null; _remoteStamp = '';
   vaultUnwatch();
   resetCollection();
   _localUpdated = 0;
@@ -1149,6 +1314,9 @@ function repaintAll() {
 // ── ÉTAT DE LA SYNCHRO ─────────────────────────────────────────────
 let _vaultTimer = null, _vaultBusy = false, _vaultPend = {}, _vaultStatus = 'off', _vaultErr = '';
 let _localUpdated = 0, _vaultLastPull = 0, _pushWarned = false;
+// Vrai dès que CE démarrage a relu le compte au moins une fois. Avant ça, cet
+// appareil n'a aucun droit d'écrire : sa copie peut dater d'hier.
+let _pulledOnce = false;
 const _priceDirty = new Set();
 // Dernier `updated_at` vu côté serveur : sert de sonde pour éviter de
 // retélécharger un instantané identique (voir vaultPull).
@@ -1203,6 +1371,19 @@ async function vaultFlush() {
   try {
     const sb = await sbClient();
     if (pend.collection) {
+      /* JAMAIS D'ENVOI À L'AVEUGLE. Avant d'écrire, on s'assure de connaître
+         la dernière version du compte : relue au moins une fois pendant ce
+         démarrage, et inchangée depuis (sonde de quelques octets). Sinon on
+         la relit et on FUSIONNE d'abord — c'est ce qui empêche un appareil
+         resté en arrière d'écraser les ajouts faits ailleurs. */
+      let stale = !_pulledOnce;
+      if (!stale) {
+        const probe = await sb.from('collections').select('updated_at').eq('user_id', _user.id).maybeSingle();
+        if (probe.error) throw probe.error;
+        const stamp = probe.data && probe.data.updated_at;
+        stale = !!stamp && stamp !== _remoteStamp;
+      }
+      if (stale) { await vaultPull({ quiet: true, force: true }); delete _vaultPend.collection; }
       const snap = syncSnapshot();
       warnIfHeavy(snap);
       // On demande à l'écriture de RENVOYER son `updated_at`. Sans ça la sonde
@@ -1215,7 +1396,8 @@ async function vaultFlush() {
       if (error) throw error;
       _localUpdated = Date.parse(snap.lastUpdated) || Date.now();
       if (row && row.updated_at) _remoteStamp = row.updated_at;
-      markPushPending(false);
+      setSyncBase(snap);        // ce que le compte contient maintenant
+      if (!_saveDirty) markPushPending(false);
     }
     if (pend.prices) await vaultPushPrices();
   } catch (e) {
@@ -1258,7 +1440,15 @@ function vaultErrText(e) {
 // Règle d'arbitrage INCHANGÉE par rapport à la version dépôt : le plus récent
 // gagne, et la comparaison porte sur le `lastUpdated` écrit DANS l'instantané
 // (donc la même grandeur des deux côtés).
-async function vaultPull(opts) {
+// Une seule relecture à la fois : le temps réel et un envoi peuvent la demander
+// au même instant, et deux fusions concurrentes se marcheraient dessus.
+let _pullRunning = null;
+function vaultPull(opts) {
+  if (_pullRunning) return _pullRunning.then(() => vaultPull(opts));
+  _pullRunning = vaultPullOnce(opts).finally(() => { _pullRunning = null; });
+  return _pullRunning;
+}
+async function vaultPullOnce(opts) {
   opts = opts || {};
   if (!vaultOn()) return false;
   const sb = await sbClient();
@@ -1271,41 +1461,54 @@ async function vaultPull(opts) {
     const probe = await sb.from('collections').select('updated_at').eq('user_id', _user.id).maybeSingle();
     if (probe.error) { console.warn('[coffre] sonde', probe.error); return false; }
     const stamp = probe.data && probe.data.updated_at;
-    if (stamp && stamp === _remoteStamp && !vaultLocalEmpty()) { _vaultLastPull = Date.now(); return false; }
-    _remoteStamp = stamp || '';
+    if (stamp && stamp === _remoteStamp && !vaultLocalEmpty()) { _vaultLastPull = Date.now(); _pulledOnce = true; setTimeout(recoverLostFromBackups, 0); return false; }
   }
   const { data, error } = await sb.from('collections')
-    .select('data').eq('user_id', _user.id).maybeSingle();
+    .select('data,updated_at').eq('user_id', _user.id).maybeSingle();
   if (error) { console.warn('[coffre] relecture', error); vaultPaintStatus('error', vaultErrText(error)); return false; }
   _vaultLastPull = Date.now();
+  if (data && data.updated_at) _remoteStamp = data.updated_at;
   const remote = data && data.data;
   if (!remote || typeof remote !== 'object') {
     // Compte neuf : rien à lire. S'il y a quelque chose ici, c'est ce qui fait
     // foi et il faut l'envoyer.
+    _pulledOnce = true;
     if (!vaultLocalEmpty()) vaultPushSoon('collection');
     return false;
   }
-  const rt = Date.parse(remote.lastUpdated || 0) || 0;
-  const empty = vaultLocalEmpty();
-  if (!empty && rt <= _localUpdated) {
-    if (rt < _localUpdated) vaultPushSoon('collection');   // le local est en avance
-    vaultPaintStatus('ok');
-    return false;
+  /* FUSION, plus jamais d'écrasement (voir mergeSnapshots). La copie d'ici et
+     celle du compte sont réconciliées par rapport à la dernière version du
+     compte connue ici. Le résultat est appliqué ici, et renvoyé au compte s'il
+     contient quelque chose que le compte n'a pas. */
+  await loadSyncBase();
+  const local = syncSnapshot();
+  const merged = vaultLocalEmpty() ? remote : mergeSnapshots(_syncBase, local, remote);
+  const localChanged = !same(syncContent(merged), syncContent(local));
+  const remoteBehind = !same(syncContent(merged), syncContent(remote));
+  if (localChanged) {
+    if (!vaultLocalEmpty()) await autoBackup(new Date().toISOString() + '-avant-fusion');  // filet avant de toucher à quoi que ce soit
+    // Une fusion arrivée par le temps réel ne doit pas faire sortir de la série
+    // ou du masterset qu'on regarde (applyLoaded les referme).
+    const keepOpen = { s: state.investSeriesOpen, m: state.mastersetOpen };
+    applyLoaded(merged);
+    state.investSeriesOpen = keepOpen.s; state.mastersetOpen = keepOpen.m;
+    _localUpdated = Date.now();
+    await idbSet(dbKey(), collectionSnapshot()).catch(() => {});
   }
-  if (!empty) await autoBackup('avant-relecture-compte');  // filet avant d'écraser
-  applyLoaded(remote);
-  _localUpdated = rt;
-  await idbSet(dbKey(), collectionSnapshot()).catch(() => {});
-  markPushPending(false);
-  vaultPaintStatus('ok');
-  // Le compte a pu arriver APRÈS le rattrapage du démarrage (qui n'avait alors
-  // rien à lire) : on le tente ici aussi. Il ne tourne qu'une fois par appareil.
-  setTimeout(syncWishOwnedToCollection, 0);
-  if (!opts.boot) {
+  setSyncBase(remote);
+  _pulledOnce = true;
+  if (remoteBehind) vaultPushSoon('collection');
+  else if (!_saveDirty) markPushPending(false);
+  vaultPaintStatus(remoteBehind ? 'pending' : 'ok');
+  if (localChanged && !opts.boot) {
     repaintAll();
     if (!opts.quiet) toast('Collection mise à jour depuis ton compte', 'success');
   }
-  return true;
+  // Le compte a pu arriver APRÈS le rattrapage du démarrage (qui n'avait alors
+  // rien à lire) : on le tente ici aussi. Il ne tourne qu'une fois par appareil.
+  setTimeout(syncWishOwnedToCollection, 0);
+  setTimeout(recoverLostFromBackups, 0);
+  return localChanged;
 }
 
 // ── TEMPS RÉEL ─────────────────────────────────────────────────────
@@ -9435,12 +9638,14 @@ function valueCardsList() {
   return [...by.values()].sort((a, b) =>
     (b.cote ?? -1) - (a.cote ?? -1) || String(a.name).localeCompare(String(b.name)));
 }
+const VALUE_FIRST = 40, VALUE_CHUNK = 120;
 function renderValueBody(body) {
   const list = valueCardsList();
   const hidden = homeValueHidden();
   const total = cardsTotalValue();
   const copies = list.reduce((a, c) => a + c.qty, 0);
   const MEDAL = ['vmedal-1', 'vmedal-2', 'vmedal-3'];
+  list.forEach((c, i) => { c.rank = i; });
   body.innerHTML = `
     <section class="vtop">
       <span class="vtop-coin" aria-hidden="true">€</span>
@@ -9449,24 +9654,40 @@ function renderValueBody(body) {
       <button class="hvalue-eye js-eye" onclick="toggleHomeValue()" aria-pressed="${hidden}"
         title="${hidden ? 'Afficher' : 'Masquer'} la valeur" aria-label="${hidden ? 'Afficher' : 'Masquer'} la valeur">${hidden ? EYE_SVG.off : EYE_SVG.on}</button>
     </section>
-    ${list.length ? `<div class="vgrid">${list.map((c, i) => `
+    ${list.length ? `<div class="vgrid" id="vgrid">${list.slice(0, VALUE_FIRST).map(valueCardHTML).join('')}</div>`
+    : `<div class="empty-state"><div class="empty-state-icon">${ICO.plus}</div><div class="empty-state-title">Pas encore de carte</div>
+        <button class="btn btn-primary" onclick="setInvestMode('cards')"><span>Ouvrir une série</span></button></div>`}`;
+  /* AUSSI RAPIDE QUE LES AUTRES VOLETS. Construire les 1 400 vignettes d'un
+     coup bloquait l'onglet ~1 s avant le premier affichage (et paintCards
+     interrogeait la couleur de chaque carte). Les 40 premières sont là tout
+     de suite — c'est tout l'écran — et la suite arrive par paquets, une image
+     à la fois, sans jamais geler le défilement. */
+  const tok = (renderValueBody._tok = (renderValueBody._tok || 0) + 1);
+  let next = VALUE_FIRST;
+  const pump = () => {
+    if (tok !== renderValueBody._tok) return;          // le volet a été re-rendu entre-temps
+    const grid = document.getElementById('vgrid');
+    if (!grid || !grid.isConnected || next >= list.length) { if (grid) hydrateFallbackImages(grid); return; }
+    grid.insertAdjacentHTML('beforeend', list.slice(next, next + VALUE_CHUNK).map(valueCardHTML).join(''));
+    next += VALUE_CHUNK;
+    requestAnimationFrame(pump);
+  };
+  requestAnimationFrame(pump);
+  function valueCardHTML(c, i) {
+    i = i == null ? 99 : i;
+    return `
       <button class="vcard" data-cc="${esc(c.id)}" style="--i:${Math.min(i, 14)}" onclick="openCardDetail('${esc(c.id)}')"
         aria-label="${esc(c.name)}${c.cote != null ? ' — ' + esc(fmt(c.cote)) : ''}">
         <span class="vcard-art">${c.image
           ? `<img src="${IMG(c.image, 'low')}" alt="" loading="lazy" decoding="async"
               onerror="imgFail(this,'${esc(String(c.localId || ''))}','${esc(c.setId)}','${jss(c.name)}')">`
           : noImgHTML(c.localId, c.name, c.setId)}</span>
-        ${i < 3 && c.cote != null ? `<span class="vmedal ${MEDAL[i]}" aria-hidden="true">${i + 1}</span>` : ''}
+        ${c.rank < 3 && c.cote != null ? `<span class="vmedal ${MEDAL[c.rank]}" aria-hidden="true">${c.rank + 1}</span>` : ''}
         ${c.qty > 1 ? `<span class="vcard-qty">×${c.qty}</span>` : ''}
         ${c.cote != null ? `<span class="vcard-tag" data-v="${esc(fmt(c.cote))}">${hidden ? '***' : esc(fmt(c.cote))}</span>` : `<span class="vcard-tag vcard-tag-none">?</span>`}
         <span class="vcard-name">${esc(c.name)}</span>
-      </button>`).join('')}</div>`
-    : `<div class="empty-state"><div class="empty-state-icon">${ICO.plus}</div><div class="empty-state-title">Pas encore de carte</div>
-        <button class="btn btn-primary" onclick="setInvestMode('cards')"><span>Ouvrir une série</span></button></div>`}`;
-  hydrateFallbackImages(body);
-  paintCards(body);
-  // Les cartes jamais cotées le sont en arrière-plan ; prefetchCardPrices
-  // re-rend ce volet quand elles arrivent.
+      </button>`;
+  }
   // Une seule fois par session : chaque palier re-rend le volet, et relancer
   // la recherche à chaque rendu redemanderait sans fin les cartes introuvables.
   if (!window._valuePrefetched && list.some(c => c.cote == null)) { window._valuePrefetched = true; prefetchCardPrices(); }
@@ -10730,10 +10951,25 @@ async function mastersetCards(setId) {
    On ne DEVINE pas les sous-séries : on regarde celles qui existent vraiment
    dans la série (un /sets/inexistant coûte 3 tentatives et ~3 s). */
 const _setBundle = {};
+/* UN SET LU AVANT SES IMAGES. La liste d'un set est gardée sur l'appareil
+   (apiFetch → IndexedDB). Lue à la sortie du 30ᵉ Anniversaire, elle n'avait
+   AUCUN visuel — TCGdex ne les avait pas encore — et le masterset continuait
+   d'afficher « visuel indisponible » des semaines après leur arrivée. Une liste
+   où il manque des images est donc relue une fois par session. */
+const _setImgRefreshed = new Set();
+async function setFreshIfImageless(path) {
+  let d = await apiFetch(path);
+  if (!_setImgRefreshed.has(path) && (d?.cards || []).some(c => !c.image)) {
+    _setImgRefreshed.add(path);
+    const fresh = await apiFetchFresh(path).catch(() => null);
+    if (fresh?.cards?.length) d = fresh;
+  }
+  return d;
+}
 async function setWithSubsets(setId) {
   setId = String(setId);
   if (_setBundle[setId]) return _setBundle[setId];
-  const set = await apiFetch('/sets/' + setId);
+  const set = await setFreshIfImageless('/sets/' + setId);
   // `__setName` en plus de `__set` : une carte de galerie s'enregistre sous SON
   // set et sous SON nom (« Tempête Argentée Galerie de Dresseurs »), comme le
   // fait déjà le sélecteur — c'est ce nom qui regroupe les bulles.
@@ -10747,7 +10983,7 @@ async function setWithSubsets(setId) {
   for (const suf of SUBSET_SUFFIXES) {
     const subId = setId + suf;
     if (setId.endsWith(suf) || !known || !known.includes(subId)) continue;
-    const sub = await apiFetch('/sets/' + subId).catch(() => null);
+    const sub = await setFreshIfImageless('/sets/' + subId).catch(() => null);
     if (sub?.cards?.length) {
       cards = cards.concat(sub.cards.map(c => Object.assign({}, c, { __set: String(sub.id), __setName: sub.name || String(sub.id) })));
       ids.push(String(sub.id));
@@ -10996,6 +11232,10 @@ function renderMastersetDetail(body, setId) {
   if (msSeedFromCollection(m, d)) save();
   body.innerHTML = msHeadHTML(m, d) + mastersetGridHTML(m, d);
   attachArtUpgrade(body);
+  // Les cases sans visuel cherchent le leur ailleurs (autres langues TCGdex,
+  // miroir pokemontcg.io / scrydex), exactement comme dans la Collection : le
+  // masterset était le seul écran à ne jamais le faire.
+  hydrateFallbackImages(body);
   // Les visuels de la suite du set sont mis en cache pendant qu'on regarde le
   // haut : descendre dans un set de 250 cartes ne doit pas rallumer un mur noir.
   warmArt(d.cards.slice(ART_EAGER, ART_EAGER + 40).map(c => c.image && IMG(c.image, 'low')).filter(Boolean));
@@ -11707,7 +11947,11 @@ document.addEventListener('DOMContentLoaded', async () => {
        version, et la modification jamais envoyée disparaissait — exactement le
        symptôme « mes modifs iPhone ne se voient pas sur le Mac ». En envoyant
        d'abord, le travail de cet appareil existe sur le serveur avant que quoi
-       que ce soit ne puisse l'écraser. */
+       que ce soit ne puisse l'écraser.
+       2026-10-20 : cet envoi ne part plus à l'aveugle — vaultFlush relit et
+       FUSIONNE d'abord (voir mergeSnapshots). C'était le chemin de la perte :
+       une écriture automatique posait le drapeau « en attente », et au
+       démarrage suivant cet appareil renvoyait sa vieille copie sans lire. */
     if (pushPending()) {
       _vaultPend.collection = true;
       try { await vaultFlush(); } catch (e) { console.warn('envoi en attente', e); }
